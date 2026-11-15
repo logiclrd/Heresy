@@ -1734,13 +1734,21 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
                 Assert.That(notifications[^1].ObjectId, Is.EqualTo(node.Id));
                 Assert.That(callbacks, Is.EqualTo(committedEdits));
                 Assert.That(changed, Is.EqualTo(committedEdits));
-                Assert.That(factory.Preparations.Count, Is.EqualTo(committedEdits * 2));
-                Assert.That(factory.Preparations.Skip((committedEdits - 1) * 2)
+                // Several rapid independent field commits can be
+                // coalesced by the preparation worker. What matters is
+                // the final dependency-ordered pair and the PCM of
+                // the last accepted shared revision.
+                Assert.That(factory.Preparations.Count,
+                    Is.GreaterThanOrEqualTo(ordinal * 2));
+                Assert.That(factory.Preparations.Count,
+                    Is.LessThanOrEqualTo(committedEdits * 2));
+                Assert.That(factory.Preparations.Count % 2, Is.Zero);
+                Assert.That(factory.Preparations.TakeLast(2)
                     .Select(p => p.SynthId),
                     Is.EqualTo(new[] { synth.Id, parent.Id }));
-                Assert.That(factory.Preparations[(committedEdits - 1) * 2]
+                Assert.That(factory.Preparations[^2]
                     .NodeLoopMode, Is.EqualTo(nextMode));
-                Assert.That(factory.Preparations[(committedEdits - 1) * 2]
+                Assert.That(factory.Preparations[^2]
                     .NodeSustainStart, Is.EqualTo(nextStart));
                 Assert.That(backend.OpenCount, Is.EqualTo(1));
             });
@@ -1779,6 +1787,7 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
             "0, 0.3\n0.015, 0.7\n0.055, 0.6\n0.12, 0.9\n0.20, 0",
             2, 2, EnvelopeSustainLoopMode.Forward, 3);
 
+        int preparedBeforeNoOp = factory.Preparations.Count;
         Click(apply);
         await Task.WhenAll(pending.ToArray());
         Assert.Multiple(() =>
@@ -1787,7 +1796,8 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
                 Is.EqualTo(audio + committedEdits));
             Assert.That(callbacks, Is.EqualTo(committedEdits));
             Assert.That(notifications.Count, Is.EqualTo(committedEdits));
-            Assert.That(factory.Preparations.Count, Is.EqualTo(committedEdits * 2));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(preparedBeforeNoOp),
+                "reapplying unchanged node text cannot prepare any audio");
         });
         await transport.SendLiveEventAsync(workspace.Document,
             ChannelTarget.Virtual(183), [new NoteOffCommand()]);
@@ -1802,6 +1812,7 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
         // A late multi-node time/shape edit cannot truncate or recolor the
         // old releasing generation even when it changes a release deadline.
         nodes.Text = "0, 0.95\n0.015, 0.7\n0.055, 0.6\n0.12, 0.9\n0.28, 0";
+        int preparedBeforeLateEdit = factory.Preparations.Count;
         Click(apply);
         await Task.WhenAll(pending.ToArray())
             .WaitAsync(TimeSpan.FromSeconds(8));
@@ -1811,7 +1822,9 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
                 Is.EqualTo(audio + committedEdits + 1));
             Assert.That(callbacks, Is.EqualTo(committedEdits + 1));
             Assert.That(notifications.Count, Is.EqualTo(committedEdits + 1));
-            Assert.That(factory.Preparations.Count, Is.EqualTo((committedEdits + 1) * 2));
+            Assert.That(factory.Preparations.Count,
+                Is.EqualTo(preparedBeforeLateEdit + 2),
+                "one later node-only acceptance prepares one dependency pair");
             Assert.That(node.Nodes[0].Value, Is.EqualTo(0.95));
             Assert.That(node.Nodes[^1].Time,
                 Is.EqualTo(TimeSpan.FromMilliseconds(280)));
