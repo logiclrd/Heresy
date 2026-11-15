@@ -128,8 +128,8 @@ public sealed class BufferedAudioDeadlineRecoveryTests
                 "opt-in Stopwatch measurement is disabled by default");
             Assert.That(normal.ProducerRenderedFrames, Is.Zero);
             Assert.That(normal.ProducerBlocksOverBudget, Is.Zero);
-            Assert.That(normal.ProducerRenderElapsedTime, Is.Zero);
-            Assert.That(normal.PeakProducerRenderBlockTime, Is.Zero);
+            Assert.That(normal.ProducerRenderElapsedTime, Is.EqualTo(TimeSpan.Zero));
+            Assert.That(normal.PeakProducerRenderBlockTime, Is.EqualTo(TimeSpan.Zero));
             Assert.That(measured.ProducerRenderBlockCount,
                 Is.GreaterThanOrEqualTo(3));
             Assert.That(measured.ProducerRenderedFrames,
