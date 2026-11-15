@@ -55,6 +55,11 @@ public sealed class FmSynthEditorControl : UserControl
 		};
 
 	private int? _selectedNodeId;
+	// The selected Filter's embedded inspector survives shared-definition
+	// commits: replacing it would silently discard an unsaved per-use draft.
+	private int? _activeFilterInspectorNodeId;
+	private FilterInstanceEditorControl? _activeFilterInstanceEditor;
+	private StackPanel? _activeFilterStageSummary;
 
 	public FmSynthEditorControl(
 		DocumentWorkspace workspace,
@@ -500,6 +505,9 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void RebuildInspector()
 	{
+		_activeFilterInspectorNodeId = null;
+		_activeFilterInstanceEditor = null;
+		_activeFilterStageSummary = null;
 		_inspector.Children.Clear();
 
 		FmSynthNode? node =
@@ -1423,29 +1431,19 @@ public sealed class FmSynthEditorControl : UserControl
 					Width = 950,
 					Height = 690,
 				};
-				FilterStageDefinition[] originalStages =
-					configuration.Definition.Stages.ToArray();
 				popup.Content = new FilterEditorControl(
 					_workspace, configuration.Definition,
 					() => popup.Close(), message =>
 					{
 						_message.Text = message;
 						_changed(message);
-						_canvas.Refresh();
-						_canvas.SetSelectedNode(_selectedNodeId);
+						OnSharedFilterDefinitionCommitted(node.Id);
 					});
+				// Reconcile once more when the modal-less shared editor closes.
+				// A clean instance editor reloads immediately, while a pending
+				// per-use override draft is retained and marked stale.
 				popup.Closed += (_, _) =>
-				{
-					_canvas.Refresh();
-					// Rebuilding here would silently discard any unfinished
-					// per-use parameter draft. The instance editor remains
-					// mounted and correctly detects a stale shared topology;
-					// reselecting the graph node deliberately refreshes it.
-					if (!configuration.Definition.Stages.SequenceEqual(originalStages))
-						_message.Text = "Shared Filter topology changed. "
-							+ "Reselect this node to refresh its ports and parameters, "
-							+ "or reload your existing per-use draft explicitly.";
-				};
+					OnSharedFilterDefinitionCommitted(node.Id);
 				popup.Show(owner);
 			}
 			catch (Exception ex)
@@ -1557,18 +1555,13 @@ public sealed class FmSynthEditorControl : UserControl
 		if (node.Configuration is not FilterInstance configured)
 			return;
 
-		foreach (ConfiguredFilterStage stage in configured.GetStages())
+		StackPanel stageSummary = new()
 		{
-			FilterParameterDescriptor[] inputs = stage.Parameters.Parameters
-				.Where(descriptor => descriptor.IsModulatable).ToArray();
-			if (inputs.Length > 0)
-				_inspector.Children.Add(new TextBlock
-				{
-					Text = $"{stage.Name} (stage #{stage.StageId}): "
-						+ string.Join(", ", inputs.Select(x => x.Name)),
-					TextWrapping = TextWrapping.Wrap,
-				});
-		}
+			Name = "SharedFilterStageSummary",
+			Spacing = 4,
+		};
+		PopulateFilterStageSummary(stageSummary, configured);
+		_inspector.Children.Add(stageSummary);
 		_inspector.Children.Add(new Separator());
 		_inspector.Children.Add(new TextBlock
 		{
@@ -1584,12 +1577,57 @@ public sealed class FmSynthEditorControl : UserControl
 				UpdateParameter(node.Id, current =>
 					((FmFilterNode)current).WithConfiguration(proposed));
 			});
-		_inspector.Children.Add(new FilterInstanceEditorControl(
+		FilterInstanceEditorControl instanceEditor = new(
 			session, message =>
 			{
 				_message.Text = message;
 				_changed(message);
-			}));
+			});
+		_inspector.Children.Add(instanceEditor);
+		_activeFilterInspectorNodeId = node.Id;
+		_activeFilterInstanceEditor = instanceEditor;
+		_activeFilterStageSummary = stageSummary;
+	}
+
+	private static void PopulateFilterStageSummary(
+		StackPanel summary, FilterInstance configuration)
+	{
+		summary.Children.Clear();
+		foreach (ConfiguredFilterStage stage in configuration.GetStages())
+		{
+			FilterParameterDescriptor[] inputs = stage.Parameters.Parameters
+				.Where(descriptor => descriptor.IsModulatable).ToArray();
+			if (inputs.Length > 0)
+				summary.Children.Add(new TextBlock
+				{
+					Text = $"{stage.Name} (stage #{stage.StageId}): "
+						+ string.Join(", ", inputs.Select(x => x.Name)),
+					TextWrapping = TextWrapping.Wrap,
+				});
+		}
+	}
+
+	/// <summary>
+	/// Refresh the *existing* selected per-use editor on a shared Filter
+	/// commit or on return from its modeless definition window. Never
+	/// rebuild the inspector here: an unapplied override draft must survive.
+	/// If the popup outlives this selection, do not touch another node's UI.
+	/// </summary>
+	private void OnSharedFilterDefinitionCommitted(int filterNodeId)
+	{
+		_canvas.Refresh();
+		_canvas.SetSelectedNode(_selectedNodeId);
+		if (_selectedNodeId != filterNodeId
+			|| _activeFilterInspectorNodeId != filterNodeId
+			|| _activeFilterInstanceEditor is not FilterInstanceEditorControl instance
+			|| _activeFilterStageSummary is not StackPanel summary
+			|| !_inspector.Children.Contains(instance))
+			return;
+		if (CurrentNode(filterNodeId) is not FmFilterNode current
+			|| current.Configuration is not FilterInstance configuration)
+			return;
+		PopulateFilterStageSummary(summary, configuration);
+		instance.NotifyConfigurationChanged();
 	}
 
 	private void AddOperatorInspector(FmOperatorNode node)
