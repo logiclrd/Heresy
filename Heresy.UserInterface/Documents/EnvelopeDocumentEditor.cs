@@ -93,11 +93,10 @@ public static class EnvelopeDocumentEditor
 			|| envelope.Vmax != newMax;
 		if (!audioChanged && !viewportChanged)
 			return;
-		if (audioChanged)
-			envelope.ReplaceCurve(copy, sustainStartIndex, sustainEndIndex,
-				sustainLoopMode);
-		if (viewportChanged)
-			envelope.SetDisplayRange(newMin, newMax);
+		// Publish one coherent model notification for a compound update
+		// (the numeric inspector and graphical editor share this instance).
+		envelope.UpdateDefinition(copy, sustainStartIndex, sustainEndIndex,
+			sustainLoopMode, newMin, newMax);
 		workspace.Document.MarkChanged(affectsAudio: audioChanged);
 		if (audioChanged)
 			workspace.NotifySharedAudioObjectCommitted(envelope.Id);
