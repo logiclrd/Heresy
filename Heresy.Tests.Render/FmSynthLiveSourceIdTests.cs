@@ -278,6 +278,50 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
+    public void RemovingOnlySampleBoundsNaturalNoteEndAndPreservesOnePoleTail()
+    {
+        const int start = 128, fade = 4800, tail = 144;
+        FilterInstance filter = OnePole();
+        SampleSound sample = Sample(FirstId,
+            Enumerable.Repeat(0.40f, 16000).ToArray());
+        SourceResolver resolver = new(FirstId, sample, AliasId, sample);
+        FmSynthSound before = FilteredSound(FirstId, resolver, filter);
+        FmSynthSound after = FilteredSound(ObjectId.None, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, start, new float[start]);
+
+        before.CanAdoptRunningState(after, held).Should().BeTrue();
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+        after.GetEndFrameExclusive(context, held).Should().Be(start + fade + tail,
+            "a silence fade bounds the only Source, followed by the existing Filter tail");
+
+        float[] baked = new float[start + fade + tail + 8];
+        for (int frame = 0; frame < baked.Length; frame++)
+        {
+            double t = Math.Clamp((double)(frame - start) / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[frame] = frame < start ? 0.40f : (float)(0.40 * (1 - w));
+        }
+        FmSynthSound oracle = FilteredReference(filter, baked);
+        float[] expected = new float[baked.Length];
+        oracle.Render(context, oracle.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0);
+        for (int frame = 0; frame < actual.Length; frame++)
+        {
+            long parent = start + frame;
+            float reference = parent < start + fade + tail ? expected[parent] : 0.0f;
+            actual[frame].Should().BeApproximately(reference, 3e-5f,
+                $"retiring the only Source must preserve the original Filter tail at {parent}");
+        }
+        actual[fade + tail].Should().Be(0.0f);
+    }
+
+    [Test]
     public void ShortSampleAssignedFromNoneEofsAtNewLocalAgeWithoutSilencingSibling()
     {
         const int start = 128, fade = 4800, shortLength = 48;
