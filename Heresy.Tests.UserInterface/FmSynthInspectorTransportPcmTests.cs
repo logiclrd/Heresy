@@ -689,7 +689,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 .OfType<FmOscillatorNode>().Single();
             Assert.Multiple(() =>
             {
-                Assert.That(committed, Is.EqualTo(authored));
+                Assert.That(SameOscillator(committed, authored), Is.True);
                 Assert.That(workspace.Document.AudioRevision,
                     Is.EqualTo(audio + operations));
                 Assert.That(workspace.Document.DocumentRevision,
@@ -699,8 +699,9 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Assert.That(factory.Preparations.Count, Is.EqualTo(operations * 2));
                 Assert.That(factory.Preparations.Skip((operations - 1) * 2)
                     .Select(p => p.Id), Is.EqualTo(new[] { synth.Id, parent.Id }));
-                Assert.That(factory.Preparations[(operations - 1) * 2].Oscillator,
-                    Is.EqualTo(authored), "transport worker sees frozen UI Oscillator");
+                Assert.That(SameOscillator(
+                    factory.Preparations[(operations - 1) * 2].Oscillator,
+                    authored), Is.True, "transport worker sees frozen UI Oscillator");
                 Assert.That(factory.Preparations.Skip((operations - 1) * 2)
                     .All(p => p.AudioRevision == audio + operations), Is.True);
                 Assert.That(backend.OpenCount, Is.EqualTo(1));
@@ -866,7 +867,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 .OfType<FmSoundSourceNode>().Single();
             Assert.Multiple(() =>
             {
-                Assert.That(committed, Is.EqualTo(authored));
+                Assert.That(SameSource(committed, authored), Is.True);
                 Assert.That(workspace.Document.AudioRevision,
                     Is.EqualTo(audio + operations));
                 Assert.That(workspace.Document.DocumentRevision,
@@ -876,8 +877,9 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Assert.That(factory.Preparations.Count, Is.EqualTo(operations * 2));
                 Assert.That(factory.Preparations.Skip((operations - 1) * 2)
                     .Select(p => p.Id), Is.EqualTo(new[] { synth.Id, parent.Id }));
-                Assert.That(factory.Preparations[(operations - 1) * 2].Source,
-                    Is.EqualTo(authored), "frozen worker Source frequency and modes");
+                Assert.That(SameSource(
+                    factory.Preparations[(operations - 1) * 2].Source,
+                    authored), Is.True, "frozen worker Source frequency and modes");
                 Assert.That(factory.Preparations.Skip((operations - 1) * 2)
                     .All(p => p.AudioRevision == audio + operations), Is.True);
                 Assert.That(backend.OpenCount, Is.EqualTo(1));
@@ -936,6 +938,29 @@ public sealed class FmSynthInspectorTransportPcmTests
             Assert.That(factory.OlderAudioCount, Is.Zero);
         });
     }
+
+    private static bool SameOscillator(
+        FmOscillatorNode? actual, FmOscillatorNode expected)
+        => actual is not null
+            && actual.Id == expected.Id
+            && actual.Waveform == expected.Waveform
+            && actual.FrequencyHz == expected.FrequencyHz
+            && actual.Minimum == expected.Minimum
+            && actual.Maximum == expected.Maximum
+            && actual.Curvature == expected.Curvature
+            && actual.MultiplierNodeId == expected.MultiplierNodeId
+            && actual.ExponentialMultiplier == expected.ExponentialMultiplier
+            && actual.Constant == expected.Constant;
+
+    private static bool SameSource(
+        FmSoundSourceNode? actual, FmSoundSourceNode expected)
+        => actual is not null
+            && actual.Id == expected.Id
+            && actual.SourceId == expected.SourceId
+            && actual.FrequencyHz == expected.FrequencyHz
+            && actual.MultiplierNodeId == expected.MultiplierNodeId
+            && actual.ExponentialMultiplier == expected.ExponentialMultiplier
+            && actual.Constant == expected.Constant;
 
     private static RenderConfiguration Mono()
         => new(Rate, [
