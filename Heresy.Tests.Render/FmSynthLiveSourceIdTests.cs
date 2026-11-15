@@ -180,6 +180,104 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
+    public void UnassignedSourceAdoptsWorkerPreparedSampleAtCurrentAgeBeforeSharedOnePole()
+    {
+        const int start = 128, fade = 4800;
+        FilterInstance filter = OnePole();
+        SampleSound incoming = Sample(FirstId,
+            Enumerable.Repeat(0.50f, 16000).ToArray());
+        SampleSound sibling = Sample(AliasId,
+            Enumerable.Repeat(0.10f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, incoming), (AliasId, sibling));
+        FmSynthSound before = FilteredMixSound(ObjectId.None, AliasId, resolver, filter);
+        FmSynthSound after = FilteredMixSound(FirstId, AliasId, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, start, new float[start]);
+
+        before.CanAdoptRunningState(after, held).Should().BeFalse(
+            "the missing Source has no invocation to reuse on PCM");
+        before.CanPrepareMultiExpansion(after, held).Should().BeTrue(
+            "a still-active sibling permits a new Sample onset on the worker");
+        PrepareReplacement(before, after, held);
+
+        // Bake the *Source-local* silence-to-Sample transition. One
+        // uninterrupted OnePole must process both it and the sibling.
+        float[] baked = new float[start + fade + 64];
+        for (int frame = 0; frame < baked.Length; frame++)
+        {
+            double t = Math.Clamp((double)(frame - start) / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[frame] = frame < start ? 0.10f : (float)(0.10 + 0.50 * w);
+        }
+        FmSynthSound oracle = FilteredReference(filter, baked);
+        float[] expected = new float[baked.Length];
+        oracle.Render(context, oracle.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0);
+        for (int frame = 0; frame < actual.Length; frame++)
+            actual[frame].Should().BeApproximately(expected[start + frame], 3e-5f,
+                $"new Sample onset must not rewind the sibling or reset OnePole at {start + frame}");
+
+        // A freshly started note immediately has the newly authored Sample;
+        // only the already-held note uses an audition transition.
+        SoundState fresh = after.CreateState();
+        float[] first = new float[64];
+        after.Render(context, fresh, 0, first.Length, first);
+        first[63].Should().BeGreaterThan(actual[0],
+            "the fresh note must not inherit the held note's silent onset fade");
+    }
+
+    [Test]
+    public void SampleToUnassignedSourceFadesOutWithoutResettingSiblingOrSharedOnePole()
+    {
+        const int start = 128, fade = 4800;
+        FilterInstance filter = OnePole();
+        SampleSound retiring = Sample(FirstId,
+            Enumerable.Repeat(0.50f, 16000).ToArray());
+        SampleSound sibling = Sample(AliasId,
+            Enumerable.Repeat(0.10f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, retiring), (AliasId, sibling));
+        FmSynthSound before = FilteredMixSound(FirstId, AliasId, resolver, filter);
+        FmSynthSound after = FilteredMixSound(ObjectId.None, AliasId, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, start, new float[start]);
+
+        before.CanPrepareMultiExpansion(after, held).Should().BeTrue(
+            "no new Source invocation should be required to fade toward silence");
+        before.CanAdoptRunningState(after, held).Should().BeTrue();
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+
+        float[] baked = new float[start + fade + 64];
+        for (int frame = 0; frame < baked.Length; frame++)
+        {
+            double t = Math.Clamp((double)(frame - start) / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[frame] = frame < start ? 0.60f : (float)(0.10 + 0.50 * (1 - w));
+        }
+        FmSynthSound oracle = FilteredReference(filter, baked);
+        float[] expected = new float[baked.Length];
+        oracle.Render(context, oracle.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0);
+        for (int frame = 0; frame < actual.Length; frame++)
+            actual[frame].Should().BeApproximately(expected[start + frame], 3e-5f,
+                $"outgoing Sample must fade before shared Filter with sibling intact at {start + frame}");
+
+        SoundState fresh = after.CreateState();
+        float[] freshOutput = new float[64];
+        after.Render(context, fresh, 0, freshOutput.Length, freshOutput);
+        freshOutput[63].Should().BeLessThan(actual[0],
+            "fresh notes must start from the selected None, not an outgoing Sample");
+    }
+
+    [Test]
     public void DifferentSampleSourceIdRequiresWorkerAndCrossfadesFreshOnset()
     {
         SampleSound originalSample = Sample(FirstId,
