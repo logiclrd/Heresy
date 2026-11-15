@@ -129,4 +129,9 @@ public sealed class FmSynthDefinition : SongObject
 	public List<FmSynthNodePosition> NodePositions { get; } = [];
 
 	public List<FmSynthConnectionRoutingHint> ConnectionRoutingHints { get; } = [];
+
+	/// <summary>Filter node IDs whose per-use inspector batches edits until
+	/// Apply/teardown. Persistent editor preference; never part of audio graph
+	/// evaluation. Missing IDs mean the default immediate-commit mode.</summary>
+	public HashSet<int> FilterBatchChangesNodeIds { get; } = [];
 }
