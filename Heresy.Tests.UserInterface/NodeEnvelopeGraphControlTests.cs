@@ -430,6 +430,106 @@ public sealed class NodeEnvelopeGraphControlTests
 	}
 
 	[AvaloniaTest]
+	public void NodeDragCtrlTransitionsImmediatelyReprojectWithoutMouseMotion()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Ctrl drag");
+		NodeEnvelopeGraphControl graph = new(workspace, envelope);
+		Control surface = (Control)typeof(NodeEnvelopeGraphControl)
+			.GetField("_surface", BindingFlags.Instance
+				| BindingFlags.NonPublic)!.GetValue(graph)!;
+		Window host = new() { Width = 550, Height = 370, Content = graph };
+		host.Show();
+		try
+		{
+			BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+			Type type = surface.GetType();
+			NodeEnvelopeGraphGeometry layout =
+				(NodeEnvelopeGraphGeometry)type.GetMethod("Layout", flags)!
+					.Invoke(surface, [])!;
+			EnvelopeNode[] Preview() => (EnvelopeNode[])type
+				.GetField("_previewNodes", flags)!.GetValue(surface)!;
+			var (x, y) = layout.Point(2);
+			Point start = surface.TranslatePoint(new Point(x, y), host)!.Value;
+			Point outside = surface.TranslatePoint(
+				new Point(x + 12, layout.Y(1.07)), host)!.Value;
+			uint revision = workspace.Document.AudioRevision;
+			host.MouseMove(start);
+			host.MouseDown(start, MouseButton.Left);
+			host.MouseMove(outside);
+			Preview()[2].Value.Should().BeApproximately(1, 1e-10,
+				"default node dragging clamps to Vmax");
+			TimeSpan draggedTime = Preview()[2].Time;
+			envelope.Nodes[2].Value.Should().Be(0.5,
+				"the pointer preview must not commit the Envelope");
+
+			host.KeyPress(Key.LeftCtrl, RawInputModifiers.Control,
+				PhysicalKey.ControlLeft, null);
+			Preview()[2].Value.Should().BeApproximately(1.07, 1e-10,
+				"pressing Ctrl must reproject the stationary pointer");
+			Preview()[2].Time.Should().Be(draggedTime);
+			host.KeyRelease(Key.LeftCtrl, RawInputModifiers.None,
+				PhysicalKey.ControlLeft, null);
+			Preview()[2].Value.Should().BeApproximately(1, 1e-10,
+				"releasing Ctrl must snap immediately without a mouse event");
+			Preview()[2].Time.Should().Be(draggedTime);
+			host.KeyPress(Key.LeftCtrl, RawInputModifiers.Control,
+				PhysicalKey.ControlLeft, null);
+			Preview()[2].Value.Should().BeApproximately(1.07, 1e-10);
+			workspace.Document.AudioRevision.Should().Be(revision,
+				"modifier transitions only affect the drag preview");
+			host.MouseUp(outside, MouseButton.Left, RawInputModifiers.Control);
+			envelope.Nodes[2].Value.Should().BeApproximately(1.07, 1e-10);
+			envelope.Nodes[2].Time.Should().Be(draggedTime);
+			workspace.Document.AudioRevision.Should().Be(revision + 1,
+				"a captured drag is a single atomic edit");
+			host.KeyRelease(Key.LeftCtrl, RawInputModifiers.None,
+				PhysicalKey.ControlLeft, null);
+		}
+		finally { host.Close(); }
+	}
+
+	[AvaloniaTest]
+	public void NodeDragCtrlHeldFromPressAllowsBelowVminAndCancellationRestoresOriginal()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Ctrl start");
+		NodeEnvelopeGraphControl graph = new(workspace, envelope);
+		Control surface = (Control)typeof(NodeEnvelopeGraphControl)
+			.GetField("_surface", BindingFlags.Instance
+				| BindingFlags.NonPublic)!.GetValue(graph)!;
+		Window host = new() { Width = 550, Height = 370, Content = graph };
+		host.Show();
+		try
+		{
+			BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+			Type type = surface.GetType();
+			NodeEnvelopeGraphGeometry layout =
+				(NodeEnvelopeGraphGeometry)type.GetMethod("Layout", flags)!
+					.Invoke(surface, [])!;
+			EnvelopeNode[] Preview() => (EnvelopeNode[])type
+				.GetField("_previewNodes", flags)!.GetValue(surface)!;
+			var (x, y) = layout.Point(2);
+			Point start = surface.TranslatePoint(new Point(x, y), host)!.Value;
+			Point outside = surface.TranslatePoint(
+				new Point(x + 12, layout.Y(-0.07)), host)!.Value;
+			uint revision = workspace.Document.AudioRevision;
+			host.MouseMove(start, RawInputModifiers.Control);
+			host.MouseDown(start, MouseButton.Left, RawInputModifiers.Control);
+			host.MouseMove(outside, RawInputModifiers.Control);
+			Preview()[2].Value.Should().BeApproximately(-0.07, 1e-10,
+				"Ctrl held at drag start bypasses Vmin");
+			type.GetMethod("CancelDrag")!.Invoke(surface, []);
+			Preview()[2].Should().Be(envelope.Nodes[2]);
+			workspace.Document.AudioRevision.Should().Be(revision,
+				"lost capture/cancellation must discard the entire preview");
+		}
+		finally { host.Close(); }
+	}
+
+	[AvaloniaTest]
 	public void KeyboardNavigationAndNudgesCommitThroughSharedEditor()
 	{
 		DocumentWorkspace workspace = new();
