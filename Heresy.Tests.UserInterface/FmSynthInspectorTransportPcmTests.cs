@@ -2470,6 +2470,10 @@ public sealed class FmSynthInspectorTransportPcmTests
             StartIndependent(oldUnchanged, synth.Id);
             float[] initial = backend.Render(260), expectedInitial = new float[260];
             older.Render(0, 260, expectedInitial);
+            // The untouched comparison session must advance chronologically
+            // even though its first PCM is not part of the initial assertion.
+            float[] unchangedInitial = new float[260];
+            oldUnchanged.Render(0, 260, unchangedInitial);
             for (int i = 0; i < initial.Length; i++)
                 Assert.That(initial[i], Is.EqualTo(expectedInitial[i])
                     .Within(8e-4f),
