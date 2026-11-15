@@ -85,6 +85,139 @@ public sealed class FilterInstanceEditorControlTests
 	}
 
 	[AvaloniaTest]
+	public void SynthFocusLossAutoAppliesInPlaceAndDoesNotRecreateInputs()
+	{
+		FilterDefinition definition = new((ObjectId)49U, "Focus");
+		FilterInstance current = new(definition);
+		int publishes = 0;
+		FilterInstanceEditorControl editor = new(
+			new FilterInstanceEditSession(() => current, next =>
+			{
+				current = next;
+				publishes++;
+			}), _ => { }, synthBatchMode: true);
+		CheckBox batch = Field<CheckBox>(editor, "_batchChanges");
+		Assert.That(batch.IsChecked, Is.False);
+		var toggles = Field<Dictionary<string, CheckBox>>(editor, "_overrideToggles");
+		var values = Field<Dictionary<string, Control>>(editor, "_editors");
+		TextBox cutoff = (TextBox)values["CutoffHz"];
+		toggles["CutoffHz"].IsChecked = true;
+		Invoke(editor, "ApplyOnFocusLoss");
+		Assert.That(publishes, Is.EqualTo(1),
+			"leaving Override commits an explicit use even at the shared default");
+		Assert.That(values["CutoffHz"], Is.SameAs(cutoff),
+			"auto-apply must preserve the next focused input");
+		cutoff.Text = "3900";
+		Invoke(editor, "ApplyOnFocusLoss");
+		Assert.That(publishes, Is.EqualTo(2));
+		Assert.That(current.GetStageParameters(1).GetParameter("CutoffHz")
+			.NumericValue, Is.EqualTo(3900));
+		Assert.That(Field<Dictionary<string, Control>>(
+			editor, "_editors")["CutoffHz"], Is.SameAs(cutoff));
+		Invoke(editor, "ApplyOnFocusLoss");
+		Assert.That(publishes, Is.EqualTo(2), "clean input must not republish");
+		cutoff.Text = "not numeric";
+		Invoke(editor, "ApplyOnFocusLoss");
+		Assert.That(publishes, Is.EqualTo(2));
+		Assert.That(((TextBox)values["CutoffHz"]).Text, Is.EqualTo("not numeric"));
+		Assert.That(editor.TryCommitPendingChanges(), Is.False,
+			"invalid draft blocks safe navigation without discarding input");
+		cutoff.Text = "2200";
+		Assert.That(editor.TryCommitPendingChanges(), Is.True);
+		Assert.That(publishes, Is.EqualTo(3));
+		// Explicit teardown commit reconstructs the editor; only subsequent
+		// focus-loss commits are required to preserve these new controls.
+		cutoff = (TextBox)Field<Dictionary<string, Control>>(
+			editor, "_editors")["CutoffHz"];
+		toggles = Field<Dictionary<string, CheckBox>>(editor, "_overrideToggles");
+		toggles["CutoffHz"].IsChecked = false;
+		Invoke(editor, "ApplyOnFocusLoss");
+		Assert.That(publishes, Is.EqualTo(4));
+		Assert.That(current.GetOverrides(1), Is.Empty);
+		Assert.That(Field<Dictionary<string, Control>>(editor, "_editors")
+			["CutoffHz"], Is.SameAs(cutoff));
+		Assert.That(cutoff.Text, Is.EqualTo("1000"),
+			"reinheriting must immediately redisplay the shared default");
+	}
+
+	[AvaloniaTest]
+	public void BatchModeDefersFocusLossButCommitsDirtyChoiceAndNumericAtExit()
+	{
+		FilterDefinition definition = new((ObjectId)50U, "Choices", [
+			new FilterStageDefinition(1, "band", FilterKind.FirBandPass),
+		]);
+		FilterInstance current = new(definition);
+		int publishes = 0;
+		bool? lastPreference = null;
+		FilterInstanceEditorControl editor = new(
+			new FilterInstanceEditSession(() => current, next =>
+			{
+				current = next;
+				publishes++;
+			}), _ => { }, synthBatchMode: true,
+			initialBatchChanges: true,
+			batchChangesChanged: state => lastPreference = state);
+		CheckBox batch = Field<CheckBox>(editor, "_batchChanges");
+		Assert.That(batch.IsChecked, Is.True);
+		var toggles = Field<Dictionary<string, CheckBox>>(editor, "_overrideToggles");
+		var values = Field<Dictionary<string, Control>>(editor, "_editors");
+		foreach (string name in new[] { "LowCutoffHz", "HighCutoffHz", "PhaseResponse" })
+			toggles[name].IsChecked = true;
+		((TextBox)values["LowCutoffHz"]).Text = "2000";
+		((TextBox)values["HighCutoffHz"]).Text = "9500";
+		((ComboBox)values["PhaseResponse"]).SelectedItem = "Minimum";
+		Invoke(editor, "ApplyOnFocusLoss");
+		Assert.That(publishes, Is.Zero, "batch mode must defer focus-loss edits");
+		Assert.That(editor.TryCommitPendingChanges(), Is.True);
+		Assert.That(publishes, Is.EqualTo(1));
+		Assert.That(current.GetStageParameters(1)
+			.GetParameter("PhaseResponse").ChoiceValue, Is.EqualTo("Minimum"));
+		Assert.That(current.GetStageParameters(1)
+			.GetParameter("LowCutoffHz").NumericValue, Is.EqualTo(2000));
+		batch.IsChecked = false;
+		Assert.That(lastPreference, Is.False);
+		Assert.That(publishes, Is.EqualTo(1),
+			"changing batch preference alone cannot mutate the song");
+		batch.IsChecked = true;
+		var refreshed = Field<Dictionary<string, Control>>(editor, "_editors");
+		((TextBox)refreshed["LowCutoffHz"]).Text = "2500";
+		batch.IsChecked = false;
+		Assert.That(publishes, Is.EqualTo(2),
+			"exiting Batch changes must commit already-unfocused valid edits");
+		Assert.That(current.GetStageParameters(1)
+			.GetParameter("LowCutoffHz").NumericValue, Is.EqualTo(2500));
+	}
+
+	[AvaloniaTest]
+	public void DirtyStageSwitchInSynthBatchModeCommitsBeforeSwitchAndRejectsInvalid()
+	{
+		FilterDefinition definition = new((ObjectId)51U, "Stages", [
+			new FilterStageDefinition(1, "first", FilterKind.OnePole),
+			new FilterStageDefinition(2, "second", FilterKind.BiquadPeaking),
+		]);
+		FilterInstance current = new(definition);
+		FilterInstanceEditorControl editor = new(
+			new FilterInstanceEditSession(() => current,
+				next => current = next), _ => { },
+			synthBatchMode: true, initialBatchChanges: true);
+		var toggles = Field<Dictionary<string, CheckBox>>(editor, "_overrideToggles");
+		var values = Field<Dictionary<string, Control>>(editor, "_editors");
+		toggles["CutoffHz"].IsChecked = true;
+		((TextBox)values["CutoffHz"]).Text = "bad";
+		ListBox stages = Field<ListBox>(editor, "_stages");
+		stages.SelectedIndex = 1;
+		Assert.That(stages.SelectedIndex, Is.Zero);
+		Assert.That(((TextBox)values["CutoffHz"]).Text, Is.EqualTo("bad"));
+		((TextBox)values["CutoffHz"]).Text = "2800";
+		stages.SelectedIndex = 1;
+		Assert.That(stages.SelectedIndex, Is.EqualTo(1));
+		Assert.That(current.GetStageParameters(1)
+			.GetParameter("CutoffHz").NumericValue, Is.EqualTo(2800));
+		Assert.That(Field<Dictionary<string, Control>>(
+			editor, "_editors").Keys, Does.Contain("GainDb"));
+	}
+
+	[AvaloniaTest]
 	public void InheritedFieldsAreDisabledAndDisplaySharedDefaultsWithUnits()
 	{
 		FilterDefinition definition = new((ObjectId)40U, "Pole");

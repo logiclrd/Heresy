@@ -1066,8 +1066,31 @@ public sealed class MainWindow : Window
 		}
 	}
 
+	private bool TryLeaveSynthEditor()
+	{
+		if (_mainContent.Content is not FmSynthEditorControl synth
+			|| synth.TryCommitPendingFilterChanges())
+			return true;
+		SetStatus("The Synth Filter's unsaved override draft could not "
+			+ "be applied. Fix it or Reload before leaving this editor.");
+		return false;
+	}
+
+	private bool TrySetEditorContent(Control editor)
+	{
+		if (!TryLeaveSynthEditor())
+			return false;
+		_mainContent.Content = editor;
+		return true;
+	}
+
 	private async Task<bool> ConfirmCanReplaceDocumentAsync()
-		=> await UnsavedChangesGuard.CanProceedAsync(
+	{
+		// Commit in-editor drafts before deciding whether the document
+		// needs saving or is safe to replace.
+		if (!TryLeaveSynthEditor())
+			return false;
+		return await UnsavedChangesGuard.CanProceedAsync(
 			_workspace,
 			async () =>
 			{
@@ -1080,12 +1103,18 @@ public sealed class MainWindow : Window
 					?? UnsavedChangesChoice.Cancel;
 			},
 			SaveDocumentAsync);
+	}
 
 	private async void OnClosing(
 		object? sender,
 		WindowClosingEventArgs e)
 	{
 		_ = sender;
+		if (!TryLeaveSynthEditor())
+		{
+			e.Cancel = true;
+			return;
+		}
 
 		if (_closeApproved
 			|| !_workspace.IsModified)
@@ -1796,9 +1825,9 @@ public sealed class MainWindow : Window
 		string status,
 		SongTreeNode? selectNode = null)
 	{
+		if (_documentView is not null && !TrySetEditorContent(_documentView))
+			return;
 		TrackWorkspaceDocument();
-		if (_documentView is not null)
-			_mainContent.Content = _documentView;
 		UpdateWindowTitle();
 
 		_selectedItem = null;
@@ -2085,7 +2114,8 @@ public sealed class MainWindow : Window
 						selectNode,
 						entryIndex,
 						patternId));
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		UpdateWindowTitle();
 		SetStatus($"Editing sequence {sequence.Name}");
 	}
@@ -2229,7 +2259,8 @@ public sealed class MainWindow : Window
 								liveEvent.Commands)),
 				switchPattern,
 				initialState);
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		editor.SetPlaybackPosition(
 			_playbackPositionTransport
 				?.CurrentPlaybackPosition);
@@ -2296,7 +2327,8 @@ public sealed class MainWindow : Window
 					SetStatus(message);
 				},
 				backLabel);
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		UpdateWindowTitle();
 		SetStatus($"Editing script pattern {pattern.Name}");
 	}
@@ -2321,7 +2353,8 @@ public sealed class MainWindow : Window
 					SetStatus(message);
 				},
 				backLabel);
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		UpdateWindowTitle();
 		SetStatus($"Editing script sequence {sequence.Name}");
 	}
@@ -2352,7 +2385,8 @@ public sealed class MainWindow : Window
 				UpdateWindowTitle();
 				SetStatus(message);
 			});
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		UpdateWindowTitle();
 		SetStatus($"Editing Filter {filter.Name}");
 	}
@@ -2396,7 +2430,8 @@ public sealed class MainWindow : Window
 					UpdateWindowTitle();
 					SetStatus(message);
 				});
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		UpdateWindowTitle();
 		SetStatus($"Editing instrument {instrument.Name}");
 	}
@@ -2414,7 +2449,8 @@ public sealed class MainWindow : Window
 				UpdateWindowTitle();
 				SetStatus(message);
 			});
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		UpdateWindowTitle();
 		SetStatus($"Editing script Instrument {definition.Name}");
 	}
@@ -2458,7 +2494,8 @@ public sealed class MainWindow : Window
 					UpdateWindowTitle();
 					SetStatus(message);
 				});
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		UpdateWindowTitle();
 		SetStatus($"Editing envelope {envelope.Name}");
 	}
@@ -2475,7 +2512,8 @@ public sealed class MainWindow : Window
 					UpdateWindowTitle();
 					SetStatus(message);
 				});
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		UpdateWindowTitle();
 		SetStatus($"Editing script Envelope {envelope.Name}");
 	}
@@ -2523,7 +2561,8 @@ public sealed class MainWindow : Window
 					? () => synthEdits.PublishSynthEditAsync(
 						_workspace.Document, synth.Id)
 					: null);
-		_mainContent.Content = editor;
+		if (!TrySetEditorContent(editor))
+			return;
 		UpdateWindowTitle();
 		SetStatus($"Editing synth {synth.Name}");
 	}

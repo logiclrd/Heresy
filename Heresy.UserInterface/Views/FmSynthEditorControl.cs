@@ -117,6 +117,9 @@ public sealed class FmSynthEditorControl : UserControl
 		// preview's view; leaving this view still stops its voices.
 		DetachedFromVisualTree += (_, _) =>
 		{
+			// Parent navigation normally preflights this; retain a final
+			// best-effort commit if another host detaches us unexpectedly.
+			TryCommitPendingFilterChanges();
 			foreach (Window editor in _sharedVolumeEditors.Values.ToArray())
 				editor.Close();
 			_sharedVolumeEditors.Clear();
@@ -133,7 +136,11 @@ public sealed class FmSynthEditorControl : UserControl
 				Content = "← Document",
 				MinWidth = 100,
 			};
-		back.Click += (_, _) => _close();
+		back.Click += (_, _) =>
+		{
+			if (TryCommitPendingFilterChanges())
+				_close();
+		};
 
 		TextBlock title =
 			new()
@@ -265,6 +272,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddConstant()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double X, double Y) =
@@ -288,6 +297,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddOscillator()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double X, double Y) =
@@ -312,6 +323,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddNoise()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double x, double y) = NextSpawnPosition();
@@ -323,6 +336,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddSoundSource()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double x, double y) = NextSpawnPosition();
@@ -335,6 +350,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddEnvelope()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			// New envelope nodes intentionally begin unassigned, even if
@@ -353,6 +370,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddMulti()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double x, double y) = NextSpawnPosition();
@@ -365,6 +384,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddFilter()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double x, double y) = NextSpawnPosition();
@@ -380,6 +401,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddOperator()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			int input =
@@ -405,9 +428,27 @@ public sealed class FmSynthEditorControl : UserControl
 		}
 	}
 
+	/// <summary>Validate and publish the outgoing Filter's pending overrides
+	/// before switching editors, nodes, or closing the owning window.</summary>
+	public bool TryCommitPendingFilterChanges()
+	{
+		if (_activeFilterInstanceEditor is not FilterInstanceEditorControl editor
+			|| editor.TryCommitPendingChanges())
+			return true;
+		_message.Text = "Cannot leave this Filter node: its unapplied overrides "
+			+ "could not be committed. Correct the invalid or stale draft, "
+			+ "then Apply or Reload the configuration.";
+		return false;
+	}
+
 	private void SelectNode(
 		int nodeId)
 	{
+		if (!TryCommitPendingFilterChanges())
+		{
+			_canvas.SetSelectedNode(_selectedNodeId);
+			return;
+		}
 		_selectedNodeId = nodeId;
 		_canvas.SetSelectedNode(
 			nodeId);
@@ -447,6 +488,8 @@ public sealed class FmSynthEditorControl : UserControl
 		int targetNodeId,
 		int targetInputIndex)
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			uint previousRevision = _workspace.Document.AudioRevision;
@@ -552,6 +595,8 @@ public sealed class FmSynthEditorControl : UserControl
 					"Make output",
 					() =>
 					{
+						if (!TryCommitPendingFilterChanges())
+							return;
 						try
 						{
 							FmSynthDocumentEditor.SetOutputNode(
@@ -644,6 +689,8 @@ public sealed class FmSynthEditorControl : UserControl
 	/// selection, notification and failure semantics.</summary>
 	private void RemoveNode(int nodeId)
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			FmSynthDocumentEditor.RemoveNode(
@@ -1466,6 +1513,23 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			if (choosing || selected.SelectedItem is not object selection)
 				return;
+			// A changed Filter definition selection replaces the configured use.
+			// Commit the old node's draft first, or restore the old selector
+			// when an invalid/stale draft prevents safe replacement.
+			if (!TryCommitPendingFilterChanges())
+			{
+				choosing = true;
+				try
+				{
+					FilterInstance? unchanged =
+						((FmFilterNode)CurrentNode(node.Id)).Configuration;
+					selected.SelectedItem = unchanged is null ? noneItem
+						: definitions.FirstOrDefault(x =>
+							x.Id == unchanged.DefinitionId);
+				}
+				finally { choosing = false; }
+				return;
+			}
 			choosing = true;
 			try
 			{
@@ -1582,6 +1646,22 @@ public sealed class FmSynthEditorControl : UserControl
 			{
 				_message.Text = message;
 				_changed(message);
+			},
+			synthBatchMode: true,
+			initialBatchChanges:
+				_synth.FilterBatchChangesNodeIds.Contains(node.Id),
+			batchChangesChanged: value =>
+			{
+				try
+				{
+					if (FmSynthDocumentEditor.SetFilterBatchChanges(
+						_workspace, _synth, node.Id, value))
+						_changed($"Updated Filter node #{node.Id} Batch changes");
+				}
+				catch (Exception error)
+				{
+					_message.Text = error.Message;
+				}
 			});
 		_inspector.Children.Add(instanceEditor);
 		_activeFilterInspectorNodeId = node.Id;
@@ -1901,6 +1981,8 @@ public sealed class FmSynthEditorControl : UserControl
 		int? selectedNodeId,
 		string message)
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		_selectedNodeId = selectedNodeId;
 		_canvas.Refresh();
 		_canvas.SetSelectedNode(

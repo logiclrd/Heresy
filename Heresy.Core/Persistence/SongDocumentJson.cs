@@ -1066,6 +1066,9 @@ public static class SongDocumentJson
 		{
 			["nodePositions"] = nodePositions,
 			["connectionRoutingHints"] = routingHints,
+			["filterBatchChangesNodeIds"] = JsonSerializer.SerializeToNode(
+				fmSynth.FilterBatchChangesNodeIds.OrderBy(id => id).ToArray(),
+				JsonOptions),
 		};
 	}
 
@@ -1227,6 +1230,35 @@ public static class SongDocumentJson
 					RequiredInt32(hint, "targetInputIndex"),
 					routePoints));
 		}
+
+		// Optional version-1 editor metadata: older songs default every
+		// Filter node to immediate (non-batched) edits.
+		if (editorLayout["filterBatchChangesNodeIds"] is JsonArray batchNodes)
+		{
+			HashSet<int> validFilterNodeIds = result.Graph.Nodes
+				.OfType<FmFilterNode>().Select(node => node.Id).ToHashSet();
+			foreach (JsonNode? item in batchNodes)
+			{
+				if (item is null)
+					throw new InvalidDataException(
+						"Filter batch-mode node IDs must be non-null integers.");
+				int nodeId;
+				try { nodeId = item.GetValue<int>(); }
+				catch (Exception error) when (error is InvalidOperationException
+					or FormatException)
+				{
+					throw new InvalidDataException(
+						"Filter batch-mode node IDs must be integers.", error);
+				}
+				if (!validFilterNodeIds.Contains(nodeId)
+					|| !result.FilterBatchChangesNodeIds.Add(nodeId))
+					throw new InvalidDataException(
+						"Filter batch-mode ID is duplicated or not a Filter node.");
+			}
+		}
+		else if (editorLayout["filterBatchChangesNodeIds"] is not null)
+			throw new InvalidDataException(
+				"Filter batch-mode settings must be a JSON array.");
 
 		return result;
 	}

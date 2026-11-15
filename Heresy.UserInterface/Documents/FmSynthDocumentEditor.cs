@@ -352,6 +352,24 @@ public static class FmSynthDocumentEditor
 		return id;
 	}
 
+	/// <summary>Persist a per-Filter-node editor preference, without
+	/// changing playback state or publishing an audio revision.</summary>
+	public static bool SetFilterBatchChanges(
+		DocumentWorkspace workspace, FmSynthDefinition synth,
+		int nodeId, bool enabled)
+	{
+		ValidateSynth(workspace, synth);
+		if (RequireNode(synth, nodeId) is not FmFilterNode)
+			throw new InvalidOperationException(
+				"Only Filter nodes have a Batch changes mode.");
+		bool changed = enabled
+			? synth.FilterBatchChangesNodeIds.Add(nodeId)
+			: synth.FilterBatchChangesNodeIds.Remove(nodeId);
+		if (changed)
+			workspace.Document.MarkChanged(affectsAudio: false);
+		return changed;
+	}
+
 	public static int AddFilterNode(
 		DocumentWorkspace workspace, FmSynthDefinition synth,
 		double x, double y)
@@ -643,6 +661,9 @@ public static class FmSynthDocumentEditor
 		}
 
 		synth.Graph = replacement;
+		// Avoid assigning the removed Filter's preference to a later node
+		// that happens to reuse its ID.
+		synth.FilterBatchChangesNodeIds.Remove(nodeId);
 		synth.NodePositions.RemoveAll(
 			position => position.NodeId == nodeId);
 		synth.ConnectionRoutingHints.Clear();
@@ -873,6 +894,10 @@ public static class FmSynthDocumentEditor
 		result.CopySourceColourFrom(source);
 		result.NodePositions.AddRange(
 			source.NodePositions);
+		// Node IDs are retained when a Synth is imported, so carry its
+		// persisted per-Filter inspector settings as with other editor layout.
+		result.FilterBatchChangesNodeIds.UnionWith(
+			source.FilterBatchChangesNodeIds);
 		foreach (FmSynthConnectionRoutingHint hint in
 			source.ConnectionRoutingHints)
 		{

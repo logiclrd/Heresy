@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 
@@ -116,6 +118,84 @@ public sealed class FmSynthPersistenceTests
 		route.RoutePoints.Should().Equal(
 			new FmSynthRoutePoint(180.0, 80.25),
 			new FmSynthRoutePoint(180.0, 160.0));
+	}
+
+	[Test]
+	public void FilterBatchModesRoundTripWithinEditorLayoutAndLegacySongDefaultsOff()
+	{
+		SongDocument document = new();
+		ObjectId synthId = document.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "Editor preference",
+			new FmSynthGraph([
+				new FmConstantNode(0, 0),
+				new FmFilterNode(1),
+				new FmFilterNode(2),
+			], 0));
+		synth.FilterBatchChangesNodeIds.Add(2);
+		document.Add(synth);
+
+		string json = SongDocumentJson.Serialize(document, JsonContextPath);
+		JsonObject root = JsonNode.Parse(json)!.AsObject();
+		JsonObject synthJson = root["objects"]![synthId.Value.ToString()]!.AsObject();
+		JsonObject layout = synthJson["editorLayout"]!.AsObject();
+		layout["filterBatchChangesNodeIds"]!.AsArray()
+			.Single()!.GetValue<int>().Should().Be(2);
+		synthJson["graph"]!["nodes"]!.AsArray().Any(node =>
+			node!.AsObject().ContainsKey("filterBatchChangesNodeIds"))
+			.Should().BeFalse("the preference is not an audio-graph parameter");
+
+		SongDocument copy = SongDocumentJson.Deserialize(json, JsonContextPath);
+		FmSynthDefinition loaded = (FmSynthDefinition)copy.Objects[synthId];
+		loaded.FilterBatchChangesNodeIds.Should().BeEquivalentTo(new[] { 2 });
+		loaded.Graph.Nodes.OfType<FmFilterNode>().Should().HaveCount(2);
+		SongDocumentSnapshot snapshot = SongDocumentSnapshot.Create(document);
+		((FmSynthDefinition)snapshot.Document.Objects[synthId])
+			.FilterBatchChangesNodeIds.Should().BeEquivalentTo(new[] { 2 });
+		synth.FilterBatchChangesNodeIds.Clear();
+		((FmSynthDefinition)snapshot.Document.Objects[synthId])
+			.FilterBatchChangesNodeIds.Should().BeEquivalentTo(new[] { 2 },
+				"editor metadata must also be deep-copied in playback snapshots");
+
+		// Previously saved v1 songs never contained the new optional field.
+		layout.Remove("filterBatchChangesNodeIds").Should().BeTrue();
+		FmSynthDefinition legacy = (FmSynthDefinition)
+			SongDocumentJson.Deserialize(root.ToJsonString(), JsonContextPath)
+				.Objects[synthId];
+		legacy.FilterBatchChangesNodeIds.Should().BeEmpty();
+
+		layout["filterBatchChangesNodeIds"] = new JsonArray(JsonValue.Create(0));
+		Assert.Throws<InvalidDataException>(() =>
+			SongDocumentJson.Deserialize(root.ToJsonString(), JsonContextPath),
+			"editor metadata may only select actual Filter node IDs");
+	}
+
+	[TestCase(".hm.json")]
+	[TestCase(".hm")]
+	public void BatchModesRoundTripThroughActualSongFiles(string extension)
+	{
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-filter-batch-{Guid.NewGuid():N}{extension}");
+		try
+		{
+			SongDocument document = new();
+			ObjectId id = document.AllocateObjectId();
+			FmSynthDefinition synth = new(id, "Saved",
+				new FmSynthGraph([
+					new FmFilterNode(0),
+					new FmFilterNode(1),
+				], 0));
+			synth.FilterBatchChangesNodeIds.Add(1);
+			document.Add(synth);
+			SongDocumentStorage.Save(path, document);
+			FmSynthDefinition restored = (FmSynthDefinition)
+				SongDocumentStorage.Load(path).Objects[id];
+			restored.FilterBatchChangesNodeIds.Should().BeEquivalentTo([1]);
+		}
+		finally
+		{
+			if (File.Exists(path))
+				File.Delete(path);
+		}
 	}
 
 	[Test]

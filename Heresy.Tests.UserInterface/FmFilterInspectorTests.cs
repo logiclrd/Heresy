@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 
@@ -264,6 +265,222 @@ public sealed class FmFilterInspectorTests
 			.GetMethod("OnSharedFilterDefinitionCommitted",
 				BindingFlags.NonPublic | BindingFlags.Instance)!
 			.Invoke(editor, new object[] { nodeId });
+
+	[AvaloniaTest]
+	public void BatchPreferenceIsPerFilterNodeAndSurvivesReopeningSynthView()
+	{
+		DocumentWorkspace workspace = new();
+		FilterDefinition filter = FilterDocumentEditor.CreateFilter(workspace, "Shared");
+		FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int one = FmSynthDocumentEditor.AddFilterNode(workspace, synth, 100, 100);
+		int two = FmSynthDocumentEditor.AddFilterNode(workspace, synth, 300, 100);
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			workspace, synth, one, new FilterInstance(filter));
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			workspace, synth, two, new FilterInstance(filter));
+		FmSynthEditorControl view = SynthEditor(workspace, synth, one);
+		FilterInstanceEditorControl current = Inspector(view).Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		CheckBox toggle = InstanceField<CheckBox>(current, "_batchChanges");
+		Assert.That(toggle.IsChecked, Is.False);
+		uint audioRevision = workspace.Document.AudioRevision;
+		uint documentRevision = workspace.Document.DocumentRevision;
+		toggle.IsChecked = true;
+		Assert.That(synth.FilterBatchChangesNodeIds.Contains(one), Is.True);
+		Assert.That(synth.FilterBatchChangesNodeIds.Contains(two), Is.False);
+		Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audioRevision),
+			"Batch changes is stored editor metadata, not an audio revision");
+		Assert.That(workspace.Document.DocumentRevision,
+			Is.GreaterThan(documentRevision),
+			"changing the persisted preference must mark the song modified");
+		SelectFilterNode(view, two);
+		current = Inspector(view).Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		Assert.That(InstanceField<CheckBox>(
+			current, "_batchChanges").IsChecked, Is.False);
+		SelectFilterNode(view, one);
+		current = Inspector(view).Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		Assert.That(InstanceField<CheckBox>(
+			current, "_batchChanges").IsChecked, Is.True);
+		view = SynthEditor(workspace, synth, one);
+		Assert.That(InstanceField<CheckBox>(
+			Inspector(view).Children.OfType<FilterInstanceEditorControl>().Single(),
+			"_batchChanges").IsChecked, Is.True,
+			"reopening the Synth within this document workspace retains node mode");
+		// A saved+reopened song retains the setting because it belongs
+		// to its Synth authoring metadata, not a transient workspace dictionary.
+		string json = Heresy.Core.Persistence.SongDocumentJson.Serialize(
+			workspace.Document, "/tmp/heresy-batch-mode/song.hm.json");
+		Heresy.Core.Objects.SongDocument reopened =
+			Heresy.Core.Persistence.SongDocumentJson.Deserialize(
+				json, "/tmp/heresy-batch-mode/song.hm.json");
+		FmSynthDefinition saved = (FmSynthDefinition)reopened.Objects[synth.Id];
+		Assert.That(saved.FilterBatchChangesNodeIds.SetEquals([one]), Is.True);
+
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-batch-ui-{Guid.NewGuid():N}.hm.json");
+		try
+		{
+			workspace.SaveAs(path);
+			Assert.That(workspace.IsModified, Is.False);
+			DocumentWorkspace reloaded = new();
+			reloaded.Open(path);
+			FmSynthDefinition restored = (FmSynthDefinition)
+				reloaded.Document.Objects[synth.Id];
+			FmSynthEditorControl reopenedView = SynthEditor(reloaded, restored, one);
+			FilterInstanceEditorControl reopenedFilter = Inspector(reopenedView)
+				.Children.OfType<FilterInstanceEditorControl>().Single();
+			Assert.That(InstanceField<CheckBox>(
+				reopenedFilter, "_batchChanges").IsChecked, Is.True,
+				"SaveAs/Open must reconstruct the enabled checkbox");
+			SelectFilterNode(reopenedView, two);
+			reopenedFilter = Inspector(reopenedView)
+				.Children.OfType<FilterInstanceEditorControl>().Single();
+			Assert.That(InstanceField<CheckBox>(
+				reopenedFilter, "_batchChanges").IsChecked, Is.False,
+				"other Filter nodes must still default to immediate mode");
+		}
+		finally
+		{
+			if (File.Exists(path))
+				File.Delete(path);
+		}
+		workspace.New();
+		Assert.That(workspace.Document.Objects.ContainsKey(synth.Id), Is.False);
+	}
+
+	[AvaloniaTest]
+	public void LeavingSynthFilterNodePublishesValidDraftButRejectsInvalidDraft()
+	{
+		DocumentWorkspace workspace = new();
+		FilterDefinition filter = FilterDocumentEditor.CreateFilter(workspace, "Shared");
+		FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int one = FmSynthDocumentEditor.AddFilterNode(workspace, synth, 100, 100);
+		int two = FmSynthDocumentEditor.AddFilterNode(workspace, synth, 300, 100);
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			workspace, synth, one, new FilterInstance(filter));
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			workspace, synth, two, new FilterInstance(filter));
+		FmSynthEditorControl view = SynthEditor(workspace, synth, one);
+		FilterInstanceEditorControl current = Inspector(view).Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		InstanceField<CheckBox>(current, "_batchChanges").IsChecked = true;
+		var flags = InstanceField<Dictionary<string, CheckBox>>(
+			current, "_overrideToggles");
+		var inputs = InstanceField<Dictionary<string, Control>>(
+			current, "_editors");
+		flags["CutoffHz"].IsChecked = true;
+		((TextBox)inputs["CutoffHz"]).Text = "3700";
+		uint before = workspace.Document.AudioRevision;
+		SelectFilterNode(view, two);
+		Assert.That(workspace.Document.AudioRevision, Is.GreaterThan(before));
+		Assert.That(((FmFilterNode)synth.Graph.Nodes.Single(n => n.Id == one))
+			.Configuration!.GetStageParameters(1)
+			.GetParameter("CutoffHz").NumericValue, Is.EqualTo(3700),
+			"outgoing edits belong to the original Filter node");
+		Assert.That(InstanceField<int?>(view, "_selectedNodeId"),
+			Is.EqualTo(two));
+		SelectFilterNode(view, one);
+		current = Inspector(view).Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		Assert.That(InstanceField<CheckBox>(
+			current, "_batchChanges").IsChecked, Is.True);
+		inputs = InstanceField<Dictionary<string, Control>>(current, "_editors");
+		((TextBox)inputs["CutoffHz"]).Text = "not a cutoff";
+		SelectFilterNode(view, two);
+		Assert.That(InstanceField<int?>(view, "_selectedNodeId"),
+			Is.EqualTo(one), "invalid pending edit must block teardown");
+		Assert.That(((TextBox)inputs["CutoffHz"]).Text, Is.EqualTo("not a cutoff"));
+		Assert.That(view.TryCommitPendingFilterChanges(), Is.False);
+		((TextBox)inputs["CutoffHz"]).Text = "1800";
+		Assert.That(view.TryCommitPendingFilterChanges(), Is.True);
+		SelectFilterNode(view, two);
+		Assert.That(InstanceField<int?>(view, "_selectedNodeId"),
+			Is.EqualTo(two));
+	}
+
+	[AvaloniaTest]
+	public void InvalidFilterDraftBlocksNewNodeCreationBeforeMutatingGraph()
+	{
+		DocumentWorkspace workspace = new();
+		FilterDefinition filter = FilterDocumentEditor.CreateFilter(workspace, "Shared");
+		FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int id = FmSynthDocumentEditor.AddFilterNode(workspace, synth, 100, 100);
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			workspace, synth, id, new FilterInstance(filter));
+		FmSynthEditorControl view = SynthEditor(workspace, synth, id);
+		FilterInstanceEditorControl instance = Inspector(view).Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		InstanceField<CheckBox>(instance, "_batchChanges").IsChecked = true;
+		var flags = InstanceField<Dictionary<string, CheckBox>>(
+			instance, "_overrideToggles");
+		var inputs = InstanceField<Dictionary<string, Control>>(
+			instance, "_editors");
+		flags["CutoffHz"].IsChecked = true;
+		((TextBox)inputs["CutoffHz"]).Text = "invalid";
+		int count = synth.Graph.Nodes.Count;
+		typeof(FmSynthEditorControl).GetMethod("AddConstant",
+			BindingFlags.NonPublic | BindingFlags.Instance)!
+			.Invoke(view, null);
+		Assert.That(synth.Graph.Nodes.Count, Is.EqualTo(count));
+		Assert.That(InstanceField<int?>(view, "_selectedNodeId"), Is.EqualTo(id));
+		Assert.That(((TextBox)inputs["CutoffHz"]).Text, Is.EqualTo("invalid"));
+		((TextBox)inputs["CutoffHz"]).Text = "2500";
+		typeof(FmSynthEditorControl).GetMethod("AddConstant",
+			BindingFlags.NonPublic | BindingFlags.Instance)!
+			.Invoke(view, null);
+		Assert.That(synth.Graph.Nodes.Count, Is.EqualTo(count + 1));
+		Assert.That(((FmFilterNode)synth.Graph.Nodes.Single(n => n.Id == id))
+			.Configuration!.GetStageParameters(1)
+			.GetParameter("CutoffHz").NumericValue, Is.EqualTo(2500));
+	}
+
+	[AvaloniaTest]
+	public void InvalidPendingOverridePreventsReplacingFilterDefinitionSelection()
+	{
+		DocumentWorkspace workspace = new();
+		FilterDefinition filter = FilterDocumentEditor.CreateFilter(workspace, "Shared");
+		FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int id = FmSynthDocumentEditor.AddFilterNode(workspace, synth, 100, 100);
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			workspace, synth, id, new FilterInstance(filter));
+		FmSynthEditorControl view = SynthEditor(workspace, synth, id);
+		StackPanel panel = Inspector(view);
+		FilterInstanceEditorControl instance = panel.Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		InstanceField<CheckBox>(instance, "_batchChanges").IsChecked = true;
+		var flags = InstanceField<Dictionary<string, CheckBox>>(
+			instance, "_overrideToggles");
+		var inputs = InstanceField<Dictionary<string, Control>>(
+			instance, "_editors");
+		flags["CutoffHz"].IsChecked = true;
+		((TextBox)inputs["CutoffHz"]).Text = "invalid";
+		int selectorLabel = panel.Children
+			.Select((child, index) => (child, index))
+			.Single(pair => pair.child is TextBlock text
+				&& text.Text == "Shared Filter definition").index;
+		StackPanel selectorRow = (StackPanel)panel.Children[selectorLabel + 1];
+		ComboBox selection = (ComboBox)selectorRow.Children[0];
+		object previous = selection.SelectedItem!;
+		uint rev = workspace.Document.AudioRevision;
+		selection.SelectedIndex = 1; // (None) would discard the entire configured use.
+		Assert.That(selection.SelectedItem, Is.SameAs(previous));
+		Assert.That(((FmFilterNode)synth.Graph.Nodes.Single(n => n.Id == id))
+			.Configuration, Is.Not.Null);
+		Assert.That(workspace.Document.AudioRevision, Is.EqualTo(rev));
+		Assert.That(((TextBox)inputs["CutoffHz"]).Text, Is.EqualTo("invalid"));
+	}
+
+	private static void SelectFilterNode(FmSynthEditorControl view, int nodeId)
+		=> typeof(FmSynthEditorControl).GetMethod("SelectNode",
+			BindingFlags.NonPublic | BindingFlags.Instance)!
+			.Invoke(view, new object[] { nodeId });
+
+	private static T InstanceField<T>(FmSynthEditorControl view, string name)
+		=> (T)typeof(FmSynthEditorControl)
+			.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!
+			.GetValue(view)!;
 
 	[Test]
 	public void FilterPortsExpandOnlyForModulatableParameters()
