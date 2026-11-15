@@ -125,6 +125,10 @@ public sealed class FilterInstanceEditorControlTests
 		cutoff.Text = "2200";
 		Assert.That(editor.TryCommitPendingChanges(), Is.True);
 		Assert.That(publishes, Is.EqualTo(3));
+		// Explicit teardown commit reconstructs the editor; only subsequent
+		// focus-loss commits are required to preserve these new controls.
+		cutoff = (TextBox)Field<Dictionary<string, Control>>(
+			editor, "_editors")["CutoffHz"];
 		toggles = Field<Dictionary<string, CheckBox>>(editor, "_overrideToggles");
 		toggles["CutoffHz"].IsChecked = false;
 		Invoke(editor, "ApplyOnFocusLoss");
