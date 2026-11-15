@@ -2097,6 +2097,246 @@ public sealed class FmSynthInspectorTransportPcmTests
 
 
     [AvaloniaTest]
+    public async Task AllFourFirKindsWindowPhaseTapAndWidthRefuseStructuralLiveMigration()
+    {
+        // C2(z): eight per-kind Window/PhaseResponse structural choice
+        // changes plus representative TapCount and TransitionWidthHz
+        // structural numbers. They are not numeric live-retune requests.
+        // The original convolution history stays older; a fresh note
+        // uses the independently prewarmed revised FIR kernel.
+        const int rate = 8000;
+        (FilterKind Kind, string Parameter, string? Choice, double? Value)[] cases =
+        [
+            (FilterKind.FirLowPass, "Window", "Hann", null),
+            (FilterKind.FirLowPass, "PhaseResponse", "Minimum", null),
+            (FilterKind.FirHighPass, "Window", "Blackman", null),
+            (FilterKind.FirHighPass, "PhaseResponse", "Maximum", null),
+            (FilterKind.FirBandPass, "Window", "Hann", null),
+            (FilterKind.FirBandPass, "PhaseResponse", "Minimum", null),
+            (FilterKind.FirNotch, "Window", "Blackman", null),
+            (FilterKind.FirNotch, "PhaseResponse", "Maximum", null),
+            (FilterKind.FirLowPass, "TapCount", null, 63),
+            (FilterKind.FirNotch, "TransitionWidthHz", null, 350),
+        ];
+        foreach (var item in cases)
+        {
+            DocumentWorkspace workspace = new();
+            FilterDefinition definition = FilterDocumentEditor.CreateFilter(
+                workspace, "C2(z) structural " + item.Kind);
+            FilterStageDefinition oldStage = definition.GetStage(1);
+            FilterStageDefinition newStage = new(1, oldStage.Name, item.Kind);
+            bool band = item.Kind is FilterKind.FirBandPass or FilterKind.FirNotch;
+            newStage = band
+                ? newStage.WithDefaults([
+                    new KeyValuePair<string, FilterParameterValue>(
+                        "LowCutoffHz", FilterParameterValue.FromNumber(400)),
+                    new KeyValuePair<string, FilterParameterValue>(
+                        "HighCutoffHz", FilterParameterValue.FromNumber(2600)),
+                ])
+                : newStage.WithDefaults([
+                    new KeyValuePair<string, FilterParameterValue>(
+                        "CutoffHz", FilterParameterValue.FromNumber(1000)),
+                ]);
+            FilterDocumentEditor.ApplyStage(workspace, definition, 1,
+                oldStage, newStage.Name, newStage.Kind, newStage.DefaultParameters);
+            FilterParameterDescriptor descriptor =
+                FilterCatalogue.GetParameters(item.Kind).Single(d =>
+                    d.Name == item.Parameter);
+            Assert.That(descriptor.IsStructural, Is.True,
+                item.Kind + ": must be structural in the Filter catalogue");
+
+            FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+                workspace, "C2(z) structural held " + item.Kind);
+            int osc = FmSynthDocumentEditor.AddOscillatorNode(
+                workspace, synth, FmOscillatorWaveform.Square, 575, 80, 90);
+            int filterId = FmSynthDocumentEditor.AddFilterNode(
+                workspace, synth, 310, 95);
+            FmSynthDocumentEditor.SetFilterConfiguration(
+                workspace, synth, filterId, new FilterInstance(definition));
+            FmSynthDocumentEditor.ConnectNodes(workspace, synth,
+                osc, filterId, 0);
+            FmSynthDocumentEditor.SetOutputNode(workspace, synth, filterId);
+            FmSynthDefinition parent = MakeDependentParent(
+                workspace, synth, "C2(z) structural dependent " + item.Kind);
+            RenderConfiguration config = new(rate, [
+                new OutputChannelConfiguration(Vector3.Zero,
+                    positionalImportance: 0),
+            ]);
+            TrackingFactory factory = new(config, synth.Id);
+            ManualBackend backend = new();
+            using SongPlaybackTransport transport = new(backend, factory);
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(245), [new StartNoteCommand(synth.Id)]);
+            PlaybackSnapshotInfo originalSnapshot =
+                transport.CurrentPlaybackSnapshot;
+
+            FmSynthGraph graph = synth.Graph;
+            FmSynthSound Author(FilterInstance use, Resolver resolver)
+            {
+                PreparedToneFilterStageFactory plans = new(rate);
+                plans.Prewarm(use);
+                plans.Freeze();
+                return new(new FmSynthGraph(graph.Nodes.Select(node =>
+                    node.Id == filterId
+                        ? (FmSynthNode)new FmFilterNode(filterId, osc, use)
+                        : node), filterId),
+                    resolver, soundResolver: resolver,
+                    preparedChildFilterFactory: plans,
+                    enableLiveMultiExpansion: true);
+            }
+            Resolver olderResolver = new(synth.Id);
+            FilterInstance uneditedUse = new(definition);
+            olderResolver.Sound = Author(uneditedUse, olderResolver);
+            PlaybackSession older = IndependentSession(config, olderResolver);
+            StartIndependent(older, synth.Id);
+            float[] initial = backend.Render(260), expectedInitial = new float[260];
+            older.Render(0, 260, expectedInitial);
+            for (int i = 0; i < initial.Length; i++)
+                Assert.That(initial[i], Is.EqualTo(expectedInitial[i])
+                    .Within(8e-4f),
+                    item.Kind + ": initial older-reference PCM " + i);
+
+            uint audio = workspace.Document.AudioRevision;
+            uint document = workspace.Document.DocumentRevision;
+            int callbacks = 0, changed = 0;
+            List<Task> pending = [];
+            FmSynthEditorControl editor = new(workspace, synth,
+                () => { }, _ => changed++,
+                publishSynthEditAsync: () =>
+                {
+                    callbacks++;
+                    Task task = transport.PublishSynthEditAsync(
+                        workspace.Document, synth.Id);
+                    pending.Add(task);
+                    return task;
+                });
+            FilterInstanceEditorControl configured = Inspector(editor)
+                .Children.OfType<FilterInstanceEditorControl>().Single();
+            Dictionary<string, CheckBox> overrides =
+                (Dictionary<string, CheckBox>)typeof(FilterInstanceEditorControl)
+                    .GetField("_overrideToggles",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(configured)!;
+            Dictionary<string, Control> fields =
+                (Dictionary<string, Control>)typeof(FilterInstanceEditorControl)
+                    .GetField("_editors",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(configured)!;
+            void Apply() => typeof(FilterInstanceEditorControl)
+                .GetMethod("ApplyDraft",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(configured, null);
+            overrides[item.Parameter].IsChecked = true;
+            if (item.Choice is not null)
+                ((ComboBox)fields[item.Parameter]).SelectedItem = item.Choice;
+            else
+            {
+                ((TextBox)fields[item.Parameter]).Text = "NaN";
+                Apply(); // invalid numeric structural draft never publishes
+                Assert.Multiple(() =>
+                {
+                    Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio));
+                    Assert.That(callbacks, Is.Zero);
+                    Assert.That(factory.Preparations, Is.Empty);
+                });
+                ((TextBox)fields[item.Parameter]).Text =
+                    item.Value!.Value.ToString("R", CultureInfo.InvariantCulture);
+            }
+            Apply();
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(12));
+            FilterParameterValue requested = item.Choice is not null
+                ? FilterParameterValue.FromChoice(item.Choice)
+                : FilterParameterValue.FromNumber(item.Value!.Value);
+            FilterInstance committed = synth.Graph.Nodes
+                .OfType<FmFilterNode>().Single().Configuration!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 1));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + 1));
+                Assert.That(callbacks, Is.EqualTo(1),
+                    "one semantic structural publication");
+                Assert.That(changed, Is.GreaterThanOrEqualTo(1));
+                Assert.That(committed.GetOverrides(1)[item.Parameter],
+                    Is.EqualTo(requested), "real Filter inspector persisted selection");
+                Assert.That(factory.Preparations.Count, Is.EqualTo(2));
+                Assert.That(factory.Preparations.Select(x => x.Id),
+                    Is.EqualTo(new[] { synth.Id, parent.Id }));
+                Assert.That(factory.Preparations.All(x =>
+                    x.AudioRevision == audio + 1), Is.True);
+                Assert.That(factory.Preparations[0].FilterDefinitionId,
+                    Is.EqualTo(definition.Id));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            float[] stillOld = backend.Render(240), oldExpected = new float[240];
+            older.Render(260, 240, oldExpected);
+            for (int i = 0; i < stillOld.Length; i++)
+                Assert.That(stillOld[i], Is.EqualTo(oldExpected[i])
+                    .Within(8e-4f),
+                    item.Kind + ": structurally changed Filter cannot steal original PCM");
+            Assert.That(factory.OlderAudioCount, Is.EqualTo(1),
+                item.Kind + ": structural selection must retain older generation");
+
+            FilterInstance revisedUse = new(definition);
+            revisedUse.SetStageParameter(1, item.Parameter, requested);
+            Resolver freshResolver = new(synth.Id),
+                unchangedFreshResolver = new(synth.Id);
+            freshResolver.Sound = Author(revisedUse, freshResolver);
+            unchangedFreshResolver.Sound = Author(
+                new FilterInstance(definition), unchangedFreshResolver);
+            PlaybackSession fresh = IndependentSession(config, freshResolver),
+                unchangedFresh = IndependentSession(config, unchangedFreshResolver);
+            StartIndependent(fresh, synth.Id);
+            StartIndependent(unchangedFresh, synth.Id);
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(246), [new StartNoteCommand(synth.Id)]);
+            float[] mixed = backend.Render(960);
+            float[] held = new float[960], revised = new float[960],
+                untouched = new float[960];
+            older.Render(500, 960, held);
+            fresh.Render(0, 960, revised);
+            unchangedFresh.Render(0, 960, untouched);
+            double difference = 0;
+            for (int i = 0; i < mixed.Length; i++)
+            {
+                Assert.That(float.IsFinite(mixed[i]), Is.True);
+                Assert.That(mixed[i], Is.EqualTo(held[i] + revised[i])
+                    .Within(0.001f),
+                    item.Kind + ": old FIR history plus fresh kernel at " + i);
+                difference = Math.Max(difference,
+                    Math.Abs(revised[i] - untouched[i]));
+            }
+            Assert.Multiple(() =>
+            {
+                Assert.That(difference, Is.GreaterThan(1e-5),
+                    item.Kind + ": structural choice must affect freshly started PCM");
+                Assert.That(factory.OlderAudioCount, Is.EqualTo(1));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(originalSnapshot.AudioRevision));
+            });
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(245), [new NoteCutCommand()]);
+            backend.Render(7);
+            Assert.That(factory.OlderAudioCount, Is.Zero,
+                item.Kind + ": older status clears only after original owner cut");
+            Apply();
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(12));
+            await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+            Assert.Multiple(() =>
+            {
+                Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 1));
+                Assert.That(callbacks, Is.EqualTo(1));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(2));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+        }
+    }
+
+
+    [AvaloniaTest]
     public async Task SourceSampleSelectorPublishesFrozenWorkerPreparedReplacementAndHeldPcm()
     {
         // C2(j): unlike an ordinary scalar edit, A->B needs a new
