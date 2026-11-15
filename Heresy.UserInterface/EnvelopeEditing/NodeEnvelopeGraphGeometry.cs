@@ -365,7 +365,8 @@ public sealed class NodeEnvelopeGraphGeometry
 
 	public static EnvelopeNode Move(
 		IReadOnlyList<EnvelopeNode> nodes, int index,
-		NodeEnvelopeGraphGeometry layout, double x, double y)
+		NodeEnvelopeGraphGeometry layout, double x, double y,
+		bool bypassValueClamp = false)
 	{
 		ArgumentNullException.ThrowIfNull(nodes);
 		ArgumentNullException.ThrowIfNull(layout);
@@ -378,6 +379,8 @@ public sealed class NodeEnvelopeGraphGeometry
 				? (double)TimeSpan.MaxValue.Ticks
 				: nodes[index + 1].Time.Ticks - 1.0);
 		double value = layout.Value(y);
+		if (!bypassValueClamp)
+			value = Math.Clamp(value, layout._vmin, layout._vmax);
 		return new EnvelopeNode(TimeSpan.FromTicks(ticks), value);
 	}
 }
