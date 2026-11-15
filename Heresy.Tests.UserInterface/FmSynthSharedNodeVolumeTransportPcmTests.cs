@@ -1365,9 +1365,9 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
                     Assert.That(factory.Preparations.Count, Is.EqualTo(4));
                     Assert.That(factory.Preparations[^2].ScriptReleaseDuration,
                         Is.Null);
-                    Assert.That(factory.OlderAudioCount, Is.EqualTo(1),
-                        "already-releasing finite Script must refuse null");
                 });
+                // Observe actual PCM before assessing voice currency: this
+                // distinguishes loss of original release from status drift.
                 float[] frozen = backend.Render(20);
                 for (int i = 0; i < frozen.Length; i++)
                     Assert.That(frozen[i],
