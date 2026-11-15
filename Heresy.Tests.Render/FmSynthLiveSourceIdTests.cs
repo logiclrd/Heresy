@@ -387,7 +387,7 @@ public sealed class FmSynthLiveSourceIdTests
     {
         const int start = 128, fade = 4800;
         float[] varying = Enumerable.Range(0, 16000)
-            .Select(i => i < 500 ? 0.20f : -0.35f).ToArray();
+            .Select(i => i < 500 ? 0.20f : i < 5400 ? -0.35f : 0.65f).ToArray();
         SampleSound originalSample = Sample(FirstId, varying);
         SampleSound sibling = Sample(AliasId,
             Enumerable.Repeat(0.10f, 16000).ToArray());
@@ -422,10 +422,10 @@ public sealed class FmSynthLiveSourceIdTests
             actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0);
         actual[0].Should().BeApproximately(0.1f, 1e-5f);
-        actual[fade / 2].Should().BeApproximately(0.2f, 1e-5f,
-            "freshly reselected Sample starts at its initial 0.2 plateau, not old -0.35");
-        actual[^1].Should().BeApproximately(0.3f, 1e-5f,
-            "full incoming gain uses a new readhead despite the same Sample object");
+        actual[fade / 2].Should().BeApproximately(-0.075f, 1e-5f,
+            "the new readhead is in the -0.35 region, while the old would be at +0.65");
+        actual[^1].Should().BeApproximately(-0.25f, 1e-5f,
+            "the new Sample timeline starts at its own frame zero, not the prior playhead");
     }
 
     [Test]
