@@ -19,6 +19,7 @@ using Heresy.Core.Samples;
 using Heresy.Core.Sequencing;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
+using Heresy.Render.Envelopes;
 using Heresy.Render.Realtime;
 using Heresy.Render.Sounds;
 using Heresy.UserInterface.Documents;
@@ -774,6 +775,219 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
             "the same Script document revision must not be prepared again");
     }
 
+
+    [AvaloniaTest]
+    public async Task SharedNodeLoopModeAndSustainBoundaryRetuneHeldTimelineButNotRelease()
+    {
+        // C2(o): unlike a scalar Envelope level, the real Node editor's
+        // Forward/PingPong mode and sustain boundary alter the held note's
+        // time mapping. Compare the crossfade against two independently
+        // frozen sample-addressable Node curves at the original note clock.
+        DocumentWorkspace workspace = new();
+        NodeEnvelopeDefinition node = EnvelopeDocumentEditor.CreateNodeEnvelope(
+            workspace, "C2(o) loop and sustain", [
+                new EnvelopeNode(TimeSpan.Zero, 0.2),
+                new EnvelopeNode(TimeSpan.FromMilliseconds(20), 0.8),
+                new EnvelopeNode(TimeSpan.FromMilliseconds(60), 0.4),
+                new EnvelopeNode(TimeSpan.FromMilliseconds(120), 0.0),
+            ], 1, 2, EnvelopeSustainLoopMode.Forward);
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(o) held Node loop");
+        int id = FmSynthDocumentEditor.AddEnvelopeNode(
+            workspace, synth, node.Id, 230, 90);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, id);
+        FmSynthDefinition parent = ReferencingParent(workspace, synth);
+        TrackingFactory actualFactory = new(MonoConfiguration(), node.Id);
+        TrackingFactory referenceFactory = new(MonoConfiguration(), node.Id);
+        ManualBackend backend = new(), referenceBackend = new();
+        using SongPlaybackTransport transport = new(backend, actualFactory);
+        using SongPlaybackTransport reference = new(
+            referenceBackend, referenceFactory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(98), [new StartNoteCommand(synth.Id)]);
+        await reference.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(98), [new StartNoteCommand(synth.Id)]);
+
+        NodeEnvelopeCurve previous = new(node);
+        int frame = 0;
+        void Initial(int frames)
+        {
+            float[] actual = backend.Render(frames), untouched =
+                referenceBackend.Render(frames);
+            for (int i = 0; i < frames; i++)
+            {
+                Assert.That(actual[i], Is.EqualTo(untouched[i]).Within(2e-6f));
+                Assert.That(actual[i], Is.EqualTo(
+                    (float)previous.GetValue(frame + i, Rate, null))
+                    .Within(2e-5f), "initial authored Forward curve");
+            }
+            frame += frames;
+        }
+        Initial(145);
+        uint baseRevision = transport.CurrentPlaybackSnapshot.AudioRevision;
+        uint originalAudio = workspace.Document.AudioRevision;
+        int directPublishes = 0, changed = 0;
+        List<Task> pending = [];
+        List<SharedAudioObjectCommittedEventArgs> shared = [];
+        workspace.SharedAudioObjectCommitted += (_, evt) =>
+        {
+            shared.Add(evt);
+            pending.Add(transport.PublishSharedObjectEditAsync(
+                evt.Document, evt.ObjectId));
+        };
+        FmSynthEditorControl synthEditor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                directPublishes++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        NodeEnvelopeEditorControl editor = Inspector(synthEditor).Children
+            .OfType<NodeEnvelopeEditorControl>().Single();
+        ComboBox mode = Private<ComboBox>(editor, "_loopMode");
+        TextBox start = Private<TextBox>(editor, "_sustainStart");
+        TextBox nodes = Private<TextBox>(editor, "_nodesInput");
+        Button apply = ApplyButton(editor);
+
+        async Task Fade(string label, int ordinal,
+            EnvelopeSustainLoopMode expectedMode, int expectedStart)
+        {
+            Click(apply);
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.Multiple(() =>
+            {
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(originalAudio + ordinal));
+                Assert.That(shared.Count, Is.EqualTo(ordinal));
+                Assert.That(shared.Last().ObjectId, Is.EqualTo(node.Id));
+                Assert.That(directPublishes, Is.EqualTo(ordinal));
+                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(node.SustainLoopMode, Is.EqualTo(expectedMode));
+                Assert.That(node.SustainStartIndex, Is.EqualTo(expectedStart));
+                Assert.That(actualFactory.Preparations.Count, Is.EqualTo(2 * ordinal));
+                Assert.That(actualFactory.Preparations.Skip((ordinal - 1) * 2)
+                    .Select(p => p.SynthId),
+                    Is.EqualTo(new[] { synth.Id, parent.Id }));
+                Assert.That(actualFactory.Preparations[2 * (ordinal - 1)]
+                    .NodeLoopMode, Is.EqualTo(expectedMode));
+                Assert.That(actualFactory.Preparations[2 * (ordinal - 1)]
+                    .NodeSustainStart, Is.EqualTo(expectedStart));
+            });
+
+            NodeEnvelopeCurve revised = new(node);
+            // The independently frozen old/revised curves are evaluated at
+            // the original 145-frame-onward note clock, not restarted
+            // from the beginning on each edit.
+            float[] actual = backend.Render(101);
+            double maxDifference = 0;
+            for (int i = 0; i < actual.Length; i++)
+            {
+                double t = i / 100.0;
+                double w = t * t * (3 - 2 * t);
+                double oldValue = previous.GetValue(frame + i, Rate, null);
+                double newValue = revised.GetValue(frame + i, Rate, null);
+                double expected = oldValue * (1 - w) + newValue * w;
+                maxDifference = Math.Max(maxDifference,
+                    Math.Abs(oldValue - newValue));
+                Assert.That(actual[i], Is.EqualTo((float)expected)
+                    .Within(3e-5f),
+                    label + ": independent frozen-timeline PCM at " + (frame + i));
+            }
+            Assert.That(maxDifference, Is.GreaterThan(0.1),
+                label + ": loop-timeline edit must be audible");
+            // The untouched second transport accepts the same independently
+            // prepared current shared revision but only after the actual
+            // inspector path was validated. This second producer will act
+            // as the *unchanged release* reference after Note Off.
+            await reference.PublishSharedObjectEditAsync(
+                workspace.Document, node.Id);
+            Assert.That(referenceBackend.Render(101),
+                Is.EqualTo(actual).Within(3e-5f),
+                label + ": independent producer matches authored change");
+            Assert.Multiple(() =>
+            {
+                Assert.That(actualFactory.OlderAudioCount, Is.Zero);
+                Assert.That(referenceFactory.OlderAudioCount, Is.Zero);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseRevision));
+            });
+            previous = revised;
+            frame += 101;
+        }
+
+        mode.SelectedItem = EnvelopeSustainLoopMode.PingPong;
+        await Fade("Forward to PingPong", 1,
+            EnvelopeSustainLoopMode.PingPong, 1);
+        start.Text = "0";
+        await Fade("Sustain start 1 to 0", 2,
+            EnvelopeSustainLoopMode.PingPong, 0);
+
+        // Both producers have the same original-note clock and latest
+        // compatible retained curve at this point.
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(98), [new NoteOffCommand()]);
+        await reference.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(98), [new NoteOffCommand()]);
+        Assert.That(backend.Render(9),
+            Is.EqualTo(referenceBackend.Render(9)).Within(3e-5f));
+
+        // Change the first node's audible value and the final release
+        // timestamp after Note Off. The new definition must NOT be spliced
+        // into the existing release, which keeps its original clock/end.
+        nodes.Text = "0, 0.9\n0.02, 0.8\n0.06, 0.4\n0.20, 0";
+        Click(apply);
+        await Task.WhenAll(pending.ToArray())
+            .WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(originalAudio + 3));
+            Assert.That(shared.Count, Is.EqualTo(3));
+            Assert.That(directPublishes, Is.EqualTo(3));
+            Assert.That(node.Nodes[0].Value, Is.EqualTo(0.9));
+            Assert.That(node.Nodes[^1].Time,
+                Is.EqualTo(TimeSpan.FromMilliseconds(200)));
+            Assert.That(actualFactory.Preparations.Count, Is.EqualTo(6));
+            Assert.That(actualFactory.OlderAudioCount, Is.EqualTo(0),
+                "currency is evaluated on the actual PCM boundary");
+        });
+        float[] originalRelease = referenceBackend.Render(24);
+        float[] stillOld = backend.Render(24);
+        Assert.That(stillOld, Is.EqualTo(originalRelease).Within(3e-5f),
+            "already-releasing original Node timeline and PCM must survive");
+        Assert.That(actualFactory.OlderAudioCount, Is.EqualTo(1),
+            "release-lifetime change is a deliberate sticky older generation");
+
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(99), [new StartNoteCommand(synth.Id)]);
+        float[] newAndOld = backend.Render(3),
+            oldOnly = referenceBackend.Render(3);
+        Assert.That(newAndOld.Zip(oldOnly,
+            (a, b) => Math.Abs(a - b)).Max(), Is.GreaterThan(0.85),
+            "new note must hear revised 0.9 initial Node level");
+        Assert.That(actualFactory.OlderAudioCount, Is.EqualTo(1));
+        backend.Render(550);
+        referenceBackend.Render(550);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actualFactory.OlderAudioCount, Is.Zero);
+            Assert.That(referenceFactory.OlderAudioCount, Is.Zero);
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                Is.EqualTo(baseRevision));
+        });
+        Click(apply);
+        await Task.WhenAll(pending.ToArray());
+        Assert.That(directPublishes, Is.EqualTo(3),
+            "unchanged shared Node draft is a no-op");
+        Assert.That(actualFactory.Preparations.Count, Is.EqualTo(6));
+    }
+
     private static ComboBox EnvelopeChoiceBox(FmSynthEditorControl editor)
     {
         StackPanel panel = Inspector(editor);
@@ -842,7 +1056,8 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
     private sealed record Prepared(ObjectId SynthId, uint AudioRevision,
         double EnvelopeLevel, ObjectId? SelectedEnvelopeId = null,
         string? ScriptSource = null, TimeSpan? ScriptReleaseDuration = null,
-        EnvelopeSustainLoopMode? NodeLoopMode = null);
+        EnvelopeSustainLoopMode? NodeLoopMode = null,
+        int? NodeSustainStart = null);
 
     private sealed class TrackingFactory(RenderConfiguration configuration,
         ObjectId envelopeId)
@@ -881,7 +1096,7 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
             Preparations.Add(new Prepared(sourceId,
                 snapshot.AudioRevision, frozenNode?.Nodes[0].Value ?? double.NaN,
                 selected, frozenScript?.Source, frozenScript?.ReleaseDuration,
-                frozenNode?.SustainLoopMode));
+                frozenNode?.SustainLoopMode, frozenNode?.SustainStartIndex));
             return _real.PrepareLiveSynthSource(snapshot, sourceId);
         }
     }
