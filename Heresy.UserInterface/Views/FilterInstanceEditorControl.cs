@@ -381,18 +381,43 @@ public sealed class FilterInstanceEditorControl : UserControl
 		catch (Exception error) { _message.Text = error.Message; }
 	}
 
-	/// <summary>The owner calls this after an external edit. Dirty local
-	/// drafts remain intact; clean editors reload from the new configuration.</summary>
+	/// <summary>The owner calls this after an external edit. Clean fields
+	/// reload in place; dirty fields retain their exact previous-version draft
+	/// while the stage list itself displays the current shared definition.</summary>
 	public void NotifyConfigurationChanged()
 	{
-		if (_session.IsStale)
+		if (!_session.IsStale)
+			return;
+		if (!HasUnsavedDraft())
 		{
-			if (HasUnsavedDraft())
-				_message.Text = "This configured Filter or shared definition "
-					+ "changed in another editor. Your draft is preserved. "
-					+ "Reload before applying.";
-			else
-				Reload();
+			Reload();
+			return;
 		}
+
+		// Rebuilding the editors would lose a tentative per-use override.
+		// Refresh only the stage choices against the *live* shared definition.
+		// The old controls stay visibly labelled as a stale draft until Reload.
+		int? draftStageId = _loadedStage?.StageId;
+		_loading = true;
+		try
+		{
+			ListBoxItem[] items = _session.Current.Definition.Stages
+				.Select(stage => new ListBoxItem
+				{
+					Tag = stage.StageId,
+					Content = $"{stage.Name} — {stage.Kind}",
+				}).ToArray();
+			_stages.ItemsSource = items;
+			_stages.SelectedItem = items.FirstOrDefault(item =>
+				item.Tag is int id && id == draftStageId);
+			if (_loadedStage is FilterStageDefinition old)
+				_stageLabel.Text = $"Unapplied older-version draft: "
+					+ $"{old.Name} — {old.Kind} (stage #{old.StageId})";
+		}
+		finally { _loading = false; }
+		_message.Text = "This configured Filter or shared definition "
+			+ "changed in another editor. Your draft is preserved; "
+			+ "the stage list shows the new definition. "
+			+ "Reload before applying.";
 	}
 }
