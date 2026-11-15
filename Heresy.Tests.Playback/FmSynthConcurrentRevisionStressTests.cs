@@ -166,12 +166,17 @@ public sealed class FmSynthConcurrentRevisionStressTests
             output.Render(512, new float[512]);
             AssertOlder(0, "the remaining original owner has not missed an adopted generation");
 
-            // Supersede yet again with a count within the original four
-            // reserved audition slots. Must not wait for the saturated
-            // stale expansion queue to use the valid latest authoring.
+            // Nested Multi children *never* receive the top-level +4
+            // audition reserve. The final 4-child revision is still a
+            // legitimate off-worker expansion from their original 2.
+            // The original note must remain on two until the saturated
+            // queue drains and the latest version is actually prepared.
             Publish(4);
-            RenderSettled(8 * Gain,
-                "one surviving original owner after nested 9->12->4");
+            float[] pending = new float[256];
+            output.Render(pending.Length, pending);
+            Assert.That(pending[^1], Is.EqualTo(4 * Gain).Within(0.0015f),
+                "pending nested growth must retain old uninterrupted PCM");
+            AssertOlder(0, "a queued nested revision is not older sounding audio");
             release.Set();
             Assert.That(SpinWait.SpinUntil(
                 () => worker.CompletedPreparationCount >= fillers.Count
@@ -183,12 +188,34 @@ public sealed class FmSynthConcurrentRevisionStressTests
             foreach (CountingWorkItem item in fillers)
                 Assert.That(item.Completed, Is.EqualTo(1),
                     "independent queued work must not be lost");
-            output.Render(1000, new float[1000]);
-            preparing.AdoptPreparedFirControls();
+
+            // A refused request stays in its invocation mailbox. Explicit
+            // producer-boundary Queue/Adopt calls model the actual buffered
+            // producer and retry its latest frozen 4-child intent only as
+            // slots become available. No worker allocation in source.Render.
+            bool preparedLatest = false;
+            long waitingSince = Stopwatch.GetTimestamp();
+            while (Stopwatch.GetElapsedTime(waitingSince) <
+                TimeSpan.FromSeconds(10))
+            {
+                preparing.AdoptPreparedFirControls();
+                output.Render(256, new float[256]);
+                preparing.QueuePendingFirControls(worker);
+                if (worker.CompletedMultiExpansionCount >= 2)
+                {
+                    preparing.AdoptPreparedFirControls();
+                    preparedLatest = true;
+                    break;
+                }
+                Thread.Yield();
+            }
+            Assert.That(preparedLatest, Is.True,
+                "both surviving outer children need latest nested expansion");
             RenderSettled(8 * Gain,
-                "stale worker output must not overwrite latest reduced graph");
+                "original owner adopts latest nested 4 after worker recovery");
             Assert.That(worker.CancelledMultiExpansionCount,
                 Is.GreaterThanOrEqualTo(1));
+            Assert.That(worker.Fault, Is.Null);
 
             live.EnqueueLiveEvent(ChannelTarget.Virtual(404),
                 [new StartNoteCommand(synthId)]);
