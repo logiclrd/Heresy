@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Threading;
 
 using Heresy.Core.Assets;
+using Heresy.Core.Envelopes;
 using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
@@ -983,6 +984,162 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         session.Render(212, newestOnly.Length, newestOnly);
         Assert.That(newestOnly[^1], Is.EqualTo(0.5f).Within(1e-5f),
             "the fresh newest-generation note and its sibling stay independent");
+    }
+
+    [TestCase(5)]
+    [TestCase(85)]
+    public void ReleasingAudibleNodeEnvelopeEditRefusesWholeGraphAndRetainsStickyCurrency(
+        int editedReleaseMilliseconds)
+    {
+        // C4(n): audible Node Envelope is already releasing. A revised
+        // curve cannot alter release PCM, completion or shared Filter
+        // history. Simultaneous Constant/Filter changes must be atomic.
+        const int noteOff = 12, refusedAt = 16, scalarAt = 22, freshAt = 24;
+        ObjectId envelopeId = (ObjectId)72701U;
+        ObjectId freshEnvelopeId = (ObjectId)72702U;
+        ObjectId filterId = (ObjectId)72703U;
+        Registry registry = new();
+
+        static NodeEnvelopeCurve Curve(ObjectId id, int duration)
+        {
+            NodeEnvelopeDefinition definition = new(id, "C4(n) audible release");
+            definition.ReplaceCurve([
+                new(TimeSpan.Zero, 1.0),
+                new(TimeSpan.FromMilliseconds(1), 1.0),
+                new(TimeSpan.FromMilliseconds(duration), 0.0),
+            ], 1, 1, EnvelopeSustainLoopMode.Forward);
+            return new NodeEnvelopeCurve(definition);
+        }
+        NodeEnvelopeCurve oldCurve = Curve(envelopeId, 40);
+        NodeEnvelopeCurve editedCurve = Curve(envelopeId, editedReleaseMilliseconds);
+        registry.AddEnvelope(envelopeId, oldCurve);
+        registry.AddEnvelope(freshEnvelopeId, Curve(freshEnvelopeId, 18));
+
+        FmSynthSound Sound(ObjectId curveId, double level, int cutoff)
+        {
+            FilterInstance pole = new(new FilterDefinition(filterId,
+                "C4(n) continuously running OnePole"));
+            pole.SetStageParameter(1, "CutoffHz",
+                FilterParameterValue.FromNumber(cutoff));
+            return new FmSynthSound(new FmSynthGraph([
+                new FmConstantNode(1, level),
+                new FmEnvelopeNode(2, curveId),
+                new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2]),
+                new FmFilterNode(4, 3, pole, tailSeconds: 0.004),
+            ], 4), registry,
+                new NewNotePolicy(NewNoteAction.Continue, TimeSpan.Zero),
+                soundResolver: registry, enableLiveMultiExpansion: true);
+        }
+        FmSynthSound original = Sound(envelopeId, 0.4, 240);
+        registry.ReplaceEnvelope(envelopeId, editedCurve);
+        FmSynthSound rejected = Sound(envelopeId, 0.9, 60);
+        registry.ReplaceEnvelope(envelopeId, oldCurve);
+        FmSynthSound compatible = Sound(envelopeId, 0.65, 240);
+        FmSynthSound latestForFresh = Sound(freshEnvelopeId, 0.75, 150);
+        registry.Add(SourceId, original);
+
+        PlaybackSession actual = Session(registry, Schedule());
+        PlaybackSession reference = Session(registry, Schedule());
+        void Both(Action<PlaybackSession> action)
+        {
+            action(actual);
+            action(reference);
+        }
+        void Compare(int start, int count)
+        {
+            float[] got = new float[count], expected = new float[count];
+            actual.Render(start, count, got);
+            reference.Render(start, count, expected);
+            for (int i = 0; i < count; i++)
+                Assert.That(got[i], Is.EqualTo(expected[i]).Within(1e-5f),
+                    $"C4(n) original release/OnePole PCM at {start + i}");
+        }
+        Both(s => s.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]));
+        Compare(0, noteOff);
+        Both(s => s.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new NoteOffCommand()]));
+        Compare(noteOff, refusedAt - noteOff);
+        PlaybackVoice sounding = actual.GetChannelState(0).CurrentVoice!;
+        TimeSpan offTime = sounding.SoundState.NoteOffTime!.Value;
+        RenderContext context = new(new RenderConfiguration(Rate, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ]));
+        long originalEnd = original.GetEndFrameExclusive(
+            context, sounding.SoundState)!.Value;
+        Assert.Multiple(() =>
+        {
+            Assert.That(offTime, Is.EqualTo(TimeSpan.FromMilliseconds(noteOff)));
+            Assert.That(originalEnd, Is.EqualTo(original.GetEndFrameExclusive(
+                context, reference.GetChannelState(0).CurrentVoice!.SoundState)));
+            Assert.That(originalEnd, Is.GreaterThan(freshAt + 10));
+        });
+
+        Assert.That(original.CanPrepareMultiExpansion(rejected, sounding.SoundState),
+            Is.False, "a changed audible release must refuse whole-graph adoption");
+        actual.AdoptLiveSynthParameters(SourceId, original, rejected);
+        Assert.Multiple(() =>
+        {
+            Assert.That(sounding.Sound, Is.SameAs(original),
+                "not even simultaneous Constant or Filter edits may partially publish");
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(1));
+            Assert.That(sounding.SoundState.NoteOffTime, Is.EqualTo(offTime));
+            Assert.That(original.GetEndFrameExclusive(context, sounding.SoundState),
+                Is.EqualTo(originalEnd));
+        });
+        Compare(refusedAt, 4);
+
+        // An authored successor to the REFUSED definition has no
+        // migratable predecessor on this still-sounding old voice.
+        FmSynthSound successor = Sound(envelopeId, 0.55, 240);
+        actual.AdoptLiveSynthParameters(SourceId, rejected, successor);
+        Assert.That(sounding.Sound, Is.SameAs(original));
+        Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(1));
+        Compare(20, scalarAt - 20);
+
+        // An independent compatible revision explicitly addressed to the
+        // actual sounding generation can still update the Constant.
+        // Currency must remain sticky for the earlier missed edit.
+        Assert.That(original.CanAdoptRunningState(compatible, sounding.SoundState),
+            Is.True, "same frozen Node Envelope is compatible during release");
+        actual.AdoptLiveSynthParameters(SourceId, original, compatible);
+        reference.AdoptLiveSynthParameters(SourceId, original, compatible);
+        Assert.Multiple(() =>
+        {
+            Assert.That(sounding.Sound, Is.SameAs(compatible));
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(1),
+                "a later compatible edit cannot erase an actual missed revision");
+            Assert.That(sounding.SoundState.NoteOffTime, Is.EqualTo(offTime));
+            Assert.That(compatible.GetEndFrameExclusive(context, sounding.SoundState),
+                Is.EqualTo(originalEnd));
+        });
+        Compare(scalarAt, freshAt - scalarAt);
+
+        // Both sessions now start a new current-generation virtual voice;
+        // it must remain independent of the old physical release.
+        registry.Replace(SourceId, latestForFresh);
+        Both(s => s.ApplyLiveEvent(ChannelTarget.Virtual(99),
+            [new StartNoteCommand(SourceId)]));
+        int untilLastTailFrame = checked((int)originalEnd - freshAt - 1);
+        Assert.That(untilLastTailFrame, Is.GreaterThan(0));
+        Compare(freshAt, untilLastTailFrame);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.GetChannelState(0).CurrentVoice, Is.SameAs(sounding));
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(1),
+                "the original Envelope and Filter tail still count as old audio");
+            Assert.That(sounding.SoundState.NoteOffTime, Is.EqualTo(offTime));
+        });
+        Compare((int)originalEnd - 1, 2);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.GetChannelState(0).CurrentVoice, Is.Null,
+                "old physical voice retires at its authored release/tail end");
+            Assert.That(actual.CountOlderAudioVoices(), Is.Zero,
+                "older status clears on real retirement rather than new publication");
+        });
+        Compare((int)originalEnd + 1, 12);
+        Assert.That(actual.CountOlderAudioVoices(), Is.Zero);
     }
 
     [TestCase(true)]
@@ -2013,6 +2170,8 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         public void Replace(ObjectId id, ISound sound) => _sounds[id] = sound;
         public void AddEnvelope(ObjectId id, IEnvelopeCurve envelope) =>
             _envelopes.Add(id, envelope);
+        public void ReplaceEnvelope(ObjectId id, IEnvelopeCurve envelope) =>
+            _envelopes[id] = envelope;
         public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
         {
             SoundLookups++;
