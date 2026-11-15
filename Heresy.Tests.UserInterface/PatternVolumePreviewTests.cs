@@ -155,7 +155,48 @@ public sealed class PatternVolumePreviewTests
                 .RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
             Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audioBefore),
                 "cancelled first digit must not resurrect during focus loss");
+
+            // A cancelled first digit cannot become the tens digit for
+            // the next key. The new key starts an entirely fresh preview.
+            Type(editor, 0, 0, "3");
+            Assert.That(string.Concat(((Run)display.Inlines![0]).Text,
+                ((Run)display.Inlines[1]).Text),
+                Is.EqualTo(PatternVolumePreviewRenderer.PendingText(3, initial)));
+            Assert.That(pattern.Grid[0, 0]?.Volume,
+                Is.EqualTo(initial == ".." ? (double?)null
+                    : int.Parse(initial) / 64.0));
         }
+    }
+
+    [AvaloniaTest]
+    public void CompletedTwoDigitEntryClampsButStillAdvancesAndRenders64()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 4, 1);
+        PatternEditorControl editor = Editor(workspace, pattern);
+        SetCursor(editor, 0, 0, PatternCellField.Volume);
+        uint audioBefore = workspace.Document.AudioRevision;
+
+        Type(editor, 0, 0, "6");
+        TextBlock first = Fields<TextBlock>(editor, "_volumeTexts")[(0, 0)];
+        Assert.That(string.Concat(((Run)first.Inlines![0]).Text,
+            ((Run)first.Inlines[1]).Text), Is.EqualTo("60"));
+        Type(editor, 0, 0, "9");
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(1.0));
+        Assert.That(first.Text, Is.EqualTo("64"));
+        Assert.That(Cursor(editor).Row, Is.EqualTo(1));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audioBefore + 1));
+
+        Type(editor, 1, 0, "9");
+        TextBlock second = Fields<TextBlock>(editor, "_volumeTexts")[(1, 0)];
+        Assert.That(string.Concat(((Run)second.Inlines![0]).Text,
+            ((Run)second.Inlines[1]).Text), Is.EqualTo("90"));
+        Type(editor, 1, 0, "9");
+        Assert.That(pattern.Grid[1, 0]!.Volume, Is.EqualTo(1.0));
+        Assert.That(second.Text, Is.EqualTo("64"));
+        Assert.That(Cursor(editor).Row, Is.EqualTo(2));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audioBefore + 2));
     }
 
     [AvaloniaTest]
