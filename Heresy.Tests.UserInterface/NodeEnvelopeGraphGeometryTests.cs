@@ -418,25 +418,40 @@ public sealed class NodeEnvelopeGraphGeometryTests
 	}
 
 	[Test]
-	public void DragClampsNeighbourCrossingButPreservesValuesOutsideZeroToOne()
+	public void DragClampsValueToConfiguredLimitsUnlessCtrlBypassesThem()
 	{
 		EnvelopeNode[] nodes = Nodes();
-		NodeEnvelopeGraphGeometry g = Layout(nodes);
+		NodeEnvelopeGraphGeometry g = new(nodes, 440, 250, -2, 3);
 		EnvelopeNode farRight = NodeEnvelopeGraphGeometry.Move(
-			nodes, 1, g, g.Right + 1000, g.Y(3.25));
+			nodes, 1, g, g.Right + 1000, g.Y(5.25));
 		Assert.That(farRight.Time.Ticks,
 			Is.EqualTo(nodes[2].Time.Ticks - 1));
-		Assert.That(farRight.Value, Is.EqualTo(3.25).Within(1e-10));
+		Assert.That(farRight.Value, Is.EqualTo(3).Within(1e-10));
+		EnvelopeNode ctrlRight = NodeEnvelopeGraphGeometry.Move(
+			nodes, 1, g, g.Right + 1000, g.Y(5.25),
+			bypassValueClamp: true);
+		Assert.That(ctrlRight.Time, Is.EqualTo(farRight.Time));
+		Assert.That(ctrlRight.Value, Is.EqualTo(5.25).Within(1e-10));
+
 		EnvelopeNode farLeft = NodeEnvelopeGraphGeometry.Move(
-			nodes, 1, g, -1000, g.Y(-2.5));
+			nodes, 1, g, -1000, g.Y(-4.5));
 		Assert.That(farLeft.Time.Ticks,
 			Is.EqualTo(nodes[0].Time.Ticks + 1));
-		Assert.That(farLeft.Value, Is.EqualTo(-2.5).Within(1e-10));
+		Assert.That(farLeft.Value, Is.EqualTo(-2).Within(1e-10));
+		EnvelopeNode ctrlLeft = NodeEnvelopeGraphGeometry.Move(
+			nodes, 1, g, -1000, g.Y(-4.5),
+			bypassValueClamp: true);
+		Assert.That(ctrlLeft.Time, Is.EqualTo(farLeft.Time));
+		Assert.That(ctrlLeft.Value, Is.EqualTo(-4.5).Within(1e-10));
 
 		EnvelopeNode first = NodeEnvelopeGraphGeometry.Move(
 			nodes, 0, g, g.Right, g.Y(7));
 		Assert.That(first.Time, Is.EqualTo(TimeSpan.Zero));
-		Assert.That(first.Value, Is.EqualTo(7).Within(1e-10));
+		Assert.That(first.Value, Is.EqualTo(3).Within(1e-10));
+		EnvelopeNode ctrlFirst = NodeEnvelopeGraphGeometry.Move(
+			nodes, 0, g, g.Right, g.Y(7), bypassValueClamp: true);
+		Assert.That(ctrlFirst.Time, Is.EqualTo(TimeSpan.Zero));
+		Assert.That(ctrlFirst.Value, Is.EqualTo(7).Within(1e-10));
 	}
 
 	[Test]
