@@ -957,11 +957,22 @@ public sealed class FmSynthInspectorTransportPcmTests
 
             await transport.SendLiveEventAsync(workspace.Document,
                 ChannelTarget.Virtual(111), [new NoteCutCommand()]);
-            Assert.That(backend.Render(7),
-                Is.All.EqualTo(0.375f).Within(4e-5f),
-                "retiring only the older A leaves revised Instrument sounding");
-            Assert.That(factory.OlderAudioCount, Is.Zero,
-                "the sticky older count clears only after A retires");
+            // NoteCut uses the playback owner's short de-click ramp;
+            // the first frame still contains A's last sample, but no
+            // new Sample/Instrument state is created or resurrected.
+            float[] afterCut = backend.Render(7);
+            Assert.Multiple(() =>
+            {
+                Assert.That(afterCut[0], Is.EqualTo(0.625f).Within(4e-5f),
+                    "cut transition begins at the previously audible mixture");
+                Assert.That(afterCut[^1], Is.EqualTo(0.375f).Within(4e-5f),
+                    "after the de-click ramp only the revised Instrument remains");
+                Assert.That(afterCut.Zip(afterCut.Skip(1),
+                    (previous, next) => previous >= next - 1e-6f),
+                    Is.All.True, "de-click ramp is monotonically retiring A");
+                Assert.That(factory.OlderAudioCount, Is.Zero,
+                    "the sticky older count clears only after A retires");
+            });
             apply.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(
                 Button.ClickEvent));
             await Task.WhenAll(pending.ToArray());
