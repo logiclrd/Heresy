@@ -282,9 +282,16 @@ public sealed class FmFilterInspectorTests
 			.OfType<FilterInstanceEditorControl>().Single();
 		CheckBox toggle = InstanceField<CheckBox>(current, "_batchChanges");
 		Assert.That(toggle.IsChecked, Is.False);
+		uint audioRevision = workspace.Document.AudioRevision;
+		uint documentRevision = workspace.Document.DocumentRevision;
 		toggle.IsChecked = true;
-		Assert.That(workspace.GetSynthFilterBatchChanges(synth.Id, one), Is.True);
-		Assert.That(workspace.GetSynthFilterBatchChanges(synth.Id, two), Is.False);
+		Assert.That(synth.FilterBatchChangesNodeIds.Contains(one), Is.True);
+		Assert.That(synth.FilterBatchChangesNodeIds.Contains(two), Is.False);
+		Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audioRevision),
+			"Batch changes is stored editor metadata, not an audio revision");
+		Assert.That(workspace.Document.DocumentRevision,
+			Is.GreaterThan(documentRevision),
+			"changing the persisted preference must mark the song modified");
 		SelectFilterNode(view, two);
 		current = Inspector(view).Children
 			.OfType<FilterInstanceEditorControl>().Single();
@@ -300,9 +307,17 @@ public sealed class FmFilterInspectorTests
 			Inspector(view).Children.OfType<FilterInstanceEditorControl>().Single(),
 			"_batchChanges").IsChecked, Is.True,
 			"reopening the Synth within this document workspace retains node mode");
+		// A saved+reopened song retains the setting because it belongs
+		// to its Synth authoring metadata, not a transient workspace dictionary.
+		string json = Heresy.Core.Persistence.SongDocumentJson.Serialize(
+			workspace.Document, "/tmp/heresy-batch-mode/song.hm.json");
+		Heresy.Core.Objects.SongDocument reopened =
+			Heresy.Core.Persistence.SongDocumentJson.Deserialize(
+				json, "/tmp/heresy-batch-mode/song.hm.json");
+		FmSynthDefinition saved = (FmSynthDefinition)reopened.Objects[synth.Id];
+		Assert.That(saved.FilterBatchChangesNodeIds.SetEquals([one]), Is.True);
 		workspace.New();
-		Assert.That(workspace.GetSynthFilterBatchChanges(synth.Id, one), Is.False,
-			"new document resets UI-only per-node mode without changing the song");
+		Assert.That(workspace.Document.Objects.ContainsKey(synth.Id), Is.False);
 	}
 
 	[AvaloniaTest]
