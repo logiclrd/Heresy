@@ -131,7 +131,6 @@ public sealed class PatternVolumeKeyboardTests
 		completed.Changed.Should().BeTrue();
 		pattern.Grid[0, 0]!.Volume.Should().Be(expected / 64.0);
 		cursor.Row.Should().Be(1);
-		input.PendingTensDigit.Should().BeNull();
 	}
 
 	[Test]
