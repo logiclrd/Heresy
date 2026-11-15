@@ -315,8 +315,10 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 				_loadedVmaxText = _vmax.Text =
 					_envelope.Vmax.ToString("G17", CultureInfo.InvariantCulture);
 			else if (ReferenceEquals(field, _loopMode))
-				_loadedMode = (EnvelopeSustainLoopMode)
-					(_loopMode.SelectedItem = _envelope.SustainLoopMode)!;
+			{
+				_loadedMode = _envelope.SustainLoopMode;
+				_loopMode.SelectedItem = _loadedMode;
+			}
 		}
 		finally { _loadingFields = false; }
 	}
