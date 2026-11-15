@@ -84,7 +84,7 @@ public sealed class LegacySpeakerRcFilterStageFactory : IStreamingFilterStageFac
                 || cutoffHz >= sampleRate * 0.5 || sampleRate <= 0)
                 return false;
             double alpha = 1.0 - Math.Exp(-2.0 * Math.PI * cutoffHz / sampleRate);
-            if (!double.IsFinite(alpha) || alpha <= 0 || alpha >= 1)
+            if (!double.IsFinite(alpha) || alpha < 0 || alpha >= 1)
                 return false;
             coefficients = new RealtimeTptCoefficients(alpha, 0);
             return true;

@@ -173,7 +173,7 @@ public sealed class OnePoleFilterTests
 	}
 
 	[Test]
-	public void CutoffChangesRetainHistoryAndModeChangesResetState()
+	public void CutoffAndModeTapChangesRetainTheSameIntegratorHistory()
 	{
 		FilterDefinition definition = new((ObjectId)13U, "Changing");
 		FilterInstance use = new(definition);
@@ -198,9 +198,10 @@ public sealed class OnePoleFilterTests
 		use.SetStageParameter(1, "Mode",
 			FilterParameterValue.FromChoice("HighPass"));
 		runtime.Configure(new FilterChain(new[] { use }));
-		float[] afterStructuralChange = { 0f };
-		runtime.ProcessFrame(afterStructuralChange);
-		Assert.That(afterStructuralChange[0], Is.Zero);
+		float[] afterTapChange = { 0f };
+		runtime.ProcessFrame(afterTapChange);
+		Assert.That(afterTapChange[0], Is.LessThan(-1e-5f),
+			"high-pass tap exposes retained nonzero integrator at zero input");
 	}
 
 	[Test]
