@@ -1370,6 +1370,21 @@ public sealed class PatternEditorControl : UserControl
 		if (_cursor.Row != row || _cursor.Channel != channel)
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
+		// Backspace on a partially typed Volume cancels the first digit.
+		// This must run before any navigation or focus-loss commit can
+		// reinterpret the provisional two-digit preview as a real edit.
+		if (_cursor.Field == PatternCellField.Volume
+			&& e.Key == Key.Back
+			&& e.KeyModifiers == KeyModifiers.None
+			&& _volumePreviewAddress == (row, channel)
+			&& _volumeInput.PendingTensDigit.HasValue)
+		{
+			_volumeInput.Reset();
+			RefreshVolumePreview();
+			e.Handled = true;
+			return;
+		}
+
 		PatternEditorRow editorRow = _context.GetRow(row);
 
 		if (PatternSkipKeyboard.TryGetValue(
@@ -4287,16 +4302,17 @@ public sealed class PatternEditorControl : UserControl
 		_volumeInput.Reset();
 
 		if (!int.TryParse(visible, NumberStyles.None,
-			CultureInfo.InvariantCulture, out int level)
-			|| level > 64)
+			CultureInfo.InvariantCulture, out int level))
 		{
-			_message.Text = $"Volume {visible} is outside 00–64. "
+			_message.Text = $"Could not parse volume {visible}. "
 				+ "The previous volume was kept.";
 			RefreshVolumePreview();
 			return;
 		}
 
-		double next = level / 64.0;
+		// Display the originally typed pair until commitment, then clamp
+		// its numeric value to the valid 00–64 tracker range.
+		double next = Math.Min(level, 64) / 64.0;
 		bool changed = mapped.Pattern.Grid[mapped.PatternRow, channel]?.Volume != next;
 		try
 		{
