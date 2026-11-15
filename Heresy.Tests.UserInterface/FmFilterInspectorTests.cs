@@ -355,6 +355,42 @@ public sealed class FmFilterInspectorTests
 			Is.EqualTo(two));
 	}
 
+	[AvaloniaTest]
+	public void InvalidFilterDraftBlocksNewNodeCreationBeforeMutatingGraph()
+	{
+		DocumentWorkspace workspace = new();
+		FilterDefinition filter = FilterDocumentEditor.CreateFilter(workspace, "Shared");
+		FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int id = FmSynthDocumentEditor.AddFilterNode(workspace, synth, 100, 100);
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			workspace, synth, id, new FilterInstance(filter));
+		FmSynthEditorControl view = SynthEditor(workspace, synth, id);
+		FilterInstanceEditorControl instance = Inspector(view).Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		InstanceField<CheckBox>(instance, "_batchChanges").IsChecked = true;
+		var flags = InstanceField<Dictionary<string, CheckBox>>(
+			instance, "_overrideToggles");
+		var inputs = InstanceField<Dictionary<string, Control>>(
+			instance, "_editors");
+		flags["CutoffHz"].IsChecked = true;
+		((TextBox)inputs["CutoffHz"]).Text = "invalid";
+		int count = synth.Graph.Nodes.Count;
+		typeof(FmSynthEditorControl).GetMethod("AddConstant",
+			BindingFlags.NonPublic | BindingFlags.Instance)!
+			.Invoke(view, null);
+		Assert.That(synth.Graph.Nodes.Count, Is.EqualTo(count));
+		Assert.That(InstanceField<int?>(view, "_selectedNodeId"), Is.EqualTo(id));
+		Assert.That(((TextBox)inputs["CutoffHz"]).Text, Is.EqualTo("invalid"));
+		((TextBox)inputs["CutoffHz"]).Text = "2500";
+		typeof(FmSynthEditorControl).GetMethod("AddConstant",
+			BindingFlags.NonPublic | BindingFlags.Instance)!
+			.Invoke(view, null);
+		Assert.That(synth.Graph.Nodes.Count, Is.EqualTo(count + 1));
+		Assert.That(((FmFilterNode)synth.Graph.Nodes.Single(n => n.Id == id))
+			.Configuration!.GetStageParameters(1)
+			.GetParameter("CutoffHz").NumericValue, Is.EqualTo(2500));
+	}
+
 	private static void SelectFilterNode(FmSynthEditorControl view, int nodeId)
 		=> typeof(FmSynthEditorControl).GetMethod("SelectNode",
 			BindingFlags.NonPublic | BindingFlags.Instance)!
