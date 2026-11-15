@@ -1,6 +1,12 @@
 # PR #12 — C5(e) physical audio-device qualification playbook
 
-**Status (2026-11-15): READY FOR TESTER; PHYSICAL ACCEPTANCE OPEN.** C5(a–d) are accepted only under their bounded automated contracts. C5(e) must be performed with an actual Heresy SDL3 output stream on the tester's Linux system (and Windows when practical). C5(f) supported/unsupported load envelope, C6 hands-on listening, C7 final authorization, the all-nonstructural Synth TODO and PR merge remain open.
+**Status (2026-11-15): FIRST LINUX DEVICE RUN RECEIVED — RECOVERY PASS / HEAVIER LOAD FAILS; C5(e) PARTIALLY QUALIFIED.** C5(a–d) are accepted only under their bounded automated contracts. C5(e) must be performed with an actual Heresy SDL3 output stream on the tester's Linux system (and Windows when practical). C5(f) supported/unsupported load envelope, C6 hands-on listening, C7 final authorization, the all-nonstructural Synth TODO and PR merge remain open.
+
+## First Linux tester observation (do not require this run again)
+
+The tester has **already completed** the central Linux **same-original-note 3→17→3** and three-note nine-plus-voice stress/recovery exercises, and supplied a complete 99.8-second real SDL CSV plus an Output Scope image. Both scenarios caused actual ring underruns and audible warbling, **but the original playback recovered promptly after reducing voices to 3**. See the [dated, quantitative C5(e) physical observation](synth-live-pr12-c5-realtime-qualification.md#c5e--first-tester-observed-linux-sdl-device-run-physical-recovery-verified-with-overload-2026-11-15): 236 underrun events (4 startup, 91 first heavy window, 141 second), **zero new underruns in the two long subsequent recovery windows**, 2,191 producer blocks over budget, seven completed worker expansions without an observed worker fault. This is real physical-device evidence and should **not** be repeated merely to satisfy this playbook.
+
+**Remaining information to request from the same machine:** CPU model, actual Linux audio server/default sink and physical output device (`lscpu`, `pactl info` if available), .NET runtime and Linux version, plus whether the UI Runtime Diagnostics reported anything. **Optional** Windows cross-check can follow on a device capable of running .NET 10. C5(f) should characterize the *configuration-specific* safe/unsafe polyphony range with lighter 3/5/7/9-count short runs, if desired; no global claim about 17 voices or three simultaneous notes is warranted.
 
 ## What was added, and what it does not establish
 
