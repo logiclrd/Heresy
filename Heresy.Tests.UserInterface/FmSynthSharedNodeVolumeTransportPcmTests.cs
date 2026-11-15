@@ -1703,14 +1703,22 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
         ComboBox mode = Private<ComboBox>(editor, "_loopMode");
         Button apply = ApplyButton(editor);
 
+        int committedEdits = 0;
         async Task Change(string label, string text, int nextStart,
             int nextEnd, EnvelopeSustainLoopMode nextMode, int ordinal)
         {
+            // The new inspector accepts raw nodes separately from
+            // individual focus-loss parameters. All published intermediate
+            // states must still be prepared; after the last edit the
+            // audible PCM follows the latest accepted shared definition.
+            uint priorRevision = workspace.Document.AudioRevision;
             nodes.Text = text;
             start.Text = nextStart.ToString();
             end.Text = nextEnd.ToString();
             mode.SelectedItem = nextMode;
-            Click(apply);
+            Click(apply); // Set nodes only.
+            Assert.That(editor.TryCommitPendingFields(), Is.True);
+            committedEdits += (int)(workspace.Document.AudioRevision - priorRevision);
             await Task.WhenAll(pending.ToArray())
                 .WaitAsync(TimeSpan.FromSeconds(8));
             Assert.Multiple(() =>
@@ -1719,20 +1727,20 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
                 Assert.That(node.SustainEndIndex, Is.EqualTo(nextEnd), label);
                 Assert.That(node.SustainLoopMode, Is.EqualTo(nextMode), label);
                 Assert.That(node.Nodes.Count, Is.EqualTo(5), label);
-                Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + ordinal));
+                Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + committedEdits));
                 Assert.That(workspace.Document.DocumentRevision,
-                    Is.EqualTo(document + ordinal));
-                Assert.That(notifications.Count, Is.EqualTo(ordinal));
+                    Is.EqualTo(document + committedEdits));
+                Assert.That(notifications.Count, Is.EqualTo(committedEdits));
                 Assert.That(notifications[^1].ObjectId, Is.EqualTo(node.Id));
-                Assert.That(callbacks, Is.EqualTo(ordinal));
-                Assert.That(changed, Is.EqualTo(ordinal));
-                Assert.That(factory.Preparations.Count, Is.EqualTo(ordinal * 2));
-                Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                Assert.That(callbacks, Is.EqualTo(committedEdits));
+                Assert.That(changed, Is.EqualTo(committedEdits));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(committedEdits * 2));
+                Assert.That(factory.Preparations.Skip((committedEdits - 1) * 2)
                     .Select(p => p.SynthId),
                     Is.EqualTo(new[] { synth.Id, parent.Id }));
-                Assert.That(factory.Preparations[(ordinal - 1) * 2]
+                Assert.That(factory.Preparations[(committedEdits - 1) * 2]
                     .NodeLoopMode, Is.EqualTo(nextMode));
-                Assert.That(factory.Preparations[(ordinal - 1) * 2]
+                Assert.That(factory.Preparations[(committedEdits - 1) * 2]
                     .NodeSustainStart, Is.EqualTo(nextStart));
                 Assert.That(backend.OpenCount, Is.EqualTo(1));
             });
@@ -1775,10 +1783,11 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
         await Task.WhenAll(pending.ToArray());
         Assert.Multiple(() =>
         {
-            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 3));
-            Assert.That(callbacks, Is.EqualTo(3));
-            Assert.That(notifications.Count, Is.EqualTo(3));
-            Assert.That(factory.Preparations.Count, Is.EqualTo(6));
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(audio + committedEdits));
+            Assert.That(callbacks, Is.EqualTo(committedEdits));
+            Assert.That(notifications.Count, Is.EqualTo(committedEdits));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(committedEdits * 2));
         });
         await transport.SendLiveEventAsync(workspace.Document,
             ChannelTarget.Virtual(183), [new NoteOffCommand()]);
@@ -1798,10 +1807,11 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
             .WaitAsync(TimeSpan.FromSeconds(8));
         Assert.Multiple(() =>
         {
-            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 4));
-            Assert.That(callbacks, Is.EqualTo(4));
-            Assert.That(notifications.Count, Is.EqualTo(4));
-            Assert.That(factory.Preparations.Count, Is.EqualTo(8));
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(audio + committedEdits + 1));
+            Assert.That(callbacks, Is.EqualTo(committedEdits + 1));
+            Assert.That(notifications.Count, Is.EqualTo(committedEdits + 1));
+            Assert.That(factory.Preparations.Count, Is.EqualTo((committedEdits + 1) * 2));
             Assert.That(node.Nodes[0].Value, Is.EqualTo(0.95));
             Assert.That(node.Nodes[^1].Time,
                 Is.EqualTo(TimeSpan.FromMilliseconds(280)));
