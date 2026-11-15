@@ -1334,13 +1334,113 @@ The final full-workflow conclusions and exact documentation HEAD must
 still be checked independently.
 
 **C4 remains OPEN.** This tests first-order silence/Source
-selection and limited Note Off/EOF/tail behavior, **not**
-`None↔Sample` retargeting while another silence or Sample fade is
-actively pending, worker supersession under Note Off, all scoped NNA
-currency/status paths, or nested Instrument/Filter release histories.
+selection and limited Note Off/EOF/tail behavior. The immediately
+following C4(l) addresses **deferred retargeting and Note Off during
+active silence fades**, but does not certify all scoped NNA
+currency/status paths or nested Instrument/Filter release histories.
 C2 inspector-to-PCM coverage, C5 callback/overload stress,
 C6 physical listening and C7 final sign-off remain open. Do not
 check the main all-properties TODO or merge/undraft PR #12.
+
+## C4(l) — interrupted silence Source fades, latest-only intent and Note Off currency (2026-11-14)
+
+**RED first, then FIXED; bounded automated acceptance.** The initial
+test-only [`cc70742`](https://github.com/logiclrd/Heresy/commit/cc70742779691f45dd3434481acd944e9f056421)
+added parameterized `FmSynthNnaVirtualLifecycleTests.SilenceTransitionSupersessionDefersOnlyLatestWithoutStaleCurrency(true/false)`.
+At 1 kHz and a live sibling Source, either `None→Sample` or
+`Sample→None` started at frame 10, followed by Source edits at frames
+20 and 30. In [red CI #43659357090](https://github.com/logiclrd/Heresy/actions/runs/43659357090),
+**both** new tests failed at the immediate older-audio count:
+expected **0**, actual **1**. The older renderer only recognized
+`SourceVoice.FadeFrom` (Sample→Sample) as a deferrable active fade,
+rather than the new silence-onset/fade-out states; these were genuine
+policy/admission failures. Expanded test-only
+[`d16597c`](https://github.com/logiclrd/Heresy/commit/d16597c2e12972976316c8ec15e2dc70800cde5c)
+added `NoteOffDuringDeferredSilenceTransitionCancelsOnsetAndPreservesRelease(true/false)`.
+[Red CI #43659398999](https://github.com/logiclrd/Heresy/actions/runs/43659398999)
+failed exactly **four** new parameterized cases at the same premature
+older-audio warning; the existing 3,752 tests passed.
+
+**Production correction**
+[`6b24bed`](https://github.com/logiclrd/Heresy/commit/6b24bed15a3ab7f2680bc599e567eece48f7d112):
+`CanDeferSampleReplacementUntilFadeCompletes` now recognizes
+`FadingInFromSilence` and `FadingOutToSilenceDefinition` alongside
+`FadeFrom`. The whole-graph `CanAdoptRunningState` preflight checks
+whether the *future* Source change would be eligible after the existing
+transition, while the ordinary immediate-commit gate still refuses
+creating a second transition during that fade. Existing
+`PlaybackVoice._pendingLiveSynth` keeps **one latest-wins intent**,
+and prepares any new Sample on the existing off-PCM worker **only
+after** the original 100-ms fade finishes. Pending work does not mark
+an older generation. If Note Off occurs first, the existing
+`PlaybackVoice.ApplyNoteOff` immediate cancellation marks the
+genuinely missed revision sticky until the old sounding voice retires,
+without restarting release, modifying the first fade, or constructing
+the pending Sample. Importantly, the old `Sample` retained only as the
+outgoing half of `Sample→None` cannot satisfy a new `sameSample`
+identity-alias adoption: reselecting even that *same* Sample object
+after `None` requires a freshly prepared onset/readhead, not an
+aborted retirement or a historical readhead reset. No new PCM-time
+construction or allocation was introduced.
+
+**PCM and lifetime evidence:** Both latest-only parameterized cases
+use physical and fresh virtual notes with independent 0.1 Sample
+siblings, plus actual old and new Source levels. They verify each
+frame of the first unmodified 100-frame silence fade, from frame 30
+through its original frame-110 deadline, and a second
+**worker-prepared latest-only** fade from frame 111 to 211.
+There is no obsolete middle-Sample onset and the newer note sounds
+immediately using its current authored Source. First worker
+completions remain **one** for `None→Sample` and **zero** for
+`Sample→None`; only the latest successor adds a subsequent
+preparation. Both pending and adopted phases report **zero older
+voices**. The new Note Off tests independently compare actual PCM
+to an unrevised oracle through the uninterrupted original Source
+transition, 160-frame sustain release, and shared OnePole tail;
+they assert **0→1 at frame-30 Off**, repeated Off preserves its
+first origin, then **1→0 on actual voice retirement**. Newest virtual
+voices continue without inheriting the held note's old state.
+
+A separate
+[`ReselectSameSampleAfterNoneFadeRequiresFreshIndependentOnset`](https://github.com/logiclrd/Heresy/blob/feat/synth-live-parameter-foundation/Heresy.Tests.Render/FmSynthLiveSourceIdTests.cs)
+regression (test commits
+[`6a93f86`](https://github.com/logiclrd/Heresy/commit/6a93f8671b1d1cf97c7f94853a915395b9dcbdbc),
+[`4dcec02`](https://github.com/logiclrd/Heresy/commit/4dcec02d4734e19a459328ac7f7483bfc95cee58))
+uses a *time-varying* Sample to distinguish a newly selected onset
+from the outgoing Sample's old integrated readhead, including
+**zero managed PCM allocations** during the measured new fade.
+The first corrected implementation runs had only test-oracle mistakes:
+[`8aab635`](https://github.com/logiclrd/Heresy/commit/8aab635a775cb5d0d239fc28aec3001bc3f44715)
+includes the **fresh note's own 0.1 sibling** in expected mixed
+PCM; [`e959c12`](https://github.com/logiclrd/Heresy/commit/e959c1291e3fc87703794013ab063cf93028baef)
+checks exact newest-only PCM **after**, not four frames into,
+the existing authored Note Cut anti-click tail. Neither required
+weakening the actual two 100-ms PCM comparisons or a production
+audio change.
+
+[**CI #43659821822**](https://github.com/logiclrd/Heresy/actions/runs/43659821822)
+is **SUCCESS** at implementation/test HEAD `e959c1291e3fc87703794013ab063cf93028baef`:
+**3,757/3,757** tests (Core 910, Render.File 29, Render
+1,207, Scripting 105, Playback 356, UI 1,150), plus
+Release/native host, Windows apphost resources,
+versioned release-bundle smoke and Linux ARM64 shared-codec publishing.
+This is *automated* interrupted Source acceptance, not C6 real-device
+audition or C5 callback deadline certification.
+
+**C4 remains OPEN; finite residual inventory after C4(l).**
+The next distinct candidates are (1) **deferred SourceId plus
+simultaneous frequency/Constant/exponential basis changes**, to
+verify independent outgoing/incoming pitch trajectories when a prior
+fade must finish first; (2) the **approved refusal** of a changed
+audible Node Envelope while already releasing, verifying original
+release PCM/end and sticky older currency until retirement;
+and (3) only a specifically motivated outstanding nested Source/
+Filter/NNA lifecycle case not already represented by C4(b)–(g)
+and C4(i). Do **not** expand this into a Cartesian product.
+C2 retains UI property-to-PCM matrix ownership, C5 actual
+deadline/overload stress, C6 human auditions, C7 final sign-off.
+The main all-properties TODO stays unchecked; PR #12 stays
+draft/unmerged pending user authorization.
 
 ### Adjacent UI issues deliberately outside PR #12 closure
 
