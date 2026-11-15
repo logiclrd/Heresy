@@ -1,6 +1,6 @@
 # PR #12 — C7 final signoff and merge-readiness review
 
-**2026-11-15 status: REVIEW PREPARED / C7 OPEN / PR DRAFT AND UNMERGED.** No final merge authorization has been granted. This review combines *bounded* C1–C6 evidence and identifies which statements may be made without extrapolating beyond the machine, property graph or user reports.
+**2026-11-15 status: TECHNICAL EVIDENCE REVIEW COMPLETED / C7 OWNER SIGNOFF OPEN / PR DRAFT AND UNMERGED.** No final merge authorization has been granted. This review combines *bounded* C1–C6 evidence and identifies which statements may be made without extrapolating beyond the machine, property graph or user reports.
 
 ## Acceptance evidence available
 
@@ -12,7 +12,7 @@
 | **C4** | **ACCEPTED / bounded automated** | [Closing audit C4](synth-live-pr12-closing-audit.md): interruption/worker supersession, Note Off/release, released Source, short EOF/tail, multi-owner sticky older-audio status. |
 | **C5** | **ACCEPTED / bounded Linux** | [C5(g) decision](synth-live-pr12-c5-realtime-qualification.md#c5g--explicit-bounded-linux-realtime-acceptance-decision-2026-11-15), [27-trial actual Linux load envelope](synth-live-pr12-c5f-results-2026-11-15.md): real same-original-note 3→17→3 recovery, 19 zero-underrun and eight continuously overloaded marked windows; unsafe observed high loads and marginal no-underrun cases explicitly documented. Windows hardware currently unavailable/not tested; no hardware-interrupt deadline guarantee. |
 | **C6** | **ACCEPTED / bounded Linux physical listening** | [C6-A–H human-observation ledger](synth-live-pr12-c6-physical-listening.md): Oscillator/Operator, Filter/Multi, old/current generations, Hold Note Off/release, Sample A→B→None→A with oscillator sibling preserving the note, Noise and inline Script Envelope, fixed-bound Instrument tone pitch retune, rapid edits + structural Filter. C6-C originally failed, then tester reported defect corrected and confirmed physical PASS; the specific corrective action was not supplied. Earlier separately reported data-Instrument shared Volume and nested Synth Source tests support G's other narrow branches; they were not newly performed in the second batch. |
-| **PR release verification** | **PRE-FINAL** | Full .NET Release suite, Python analyzer tests, Windows bundle/apphost/icon smoke checks, and Linux ARM64 shared codec package tests have passed on prior exact HEAD `ef40fe471c8fea04f70751959d2701a14ac270e3` (3,826 .NET + 5 Python). **Re-run / confirm exact final docs HEAD before any final acceptance claim.** These checks validate build/package format, **not** physical Windows playback. |
+| **PR release verification** | **PASS on pre-audit HEAD; final audit-commit CI pending** | Exact remote pre-audit HEAD `7fa51f3165210d10d84a9f7381db885eb402f102`, Actions [#43761122096](https://github.com/logiclrd/Heresy/actions/runs/43761122096) completed SUCCESS: 3,826 Release .NET tests, five Python analyzer tests, Windows apphost/icon/versioned-bundle smoke and Linux ARM64 shared-codec packaging. The documentation-only C7 commit made by this audit must have its *own* exact-HEAD CI checked before signoff. Packaging is **not** Windows physical listening. |
 | **Overall all-nonstructural Synth TODO** | **OPEN until final approval** | [Original feature acceptance contract](todo.md) requires the current-property completeness, multi-voice/live/release/latency/underrun/human listening results above. Do **not** mark/remove its entry from `docs/todo.md` or merge merely because one bounded gate passed. |
 
 ## Explicit scope and deferrals — disclose at signoff
@@ -31,9 +31,10 @@
 - [x] Preserve the historical failure then successful retest for **C6-C**, with unknown corrective action not rewritten as a code fix.
 - [x] Separate **frozen Instrument tone identity** from dynamic tone retargeting and future Gxx/GFF work, so the C6-G expectation does not become an accidental PR scope increase.
 - [x] Record **Windows unavailable/not tested**, measured Linux overloads/headroom, and process-runtime provenance limits.
-- [ ] Confirm **exact final PR HEAD** Release/automated/property tests, Linux ARM64 and Windows packaging smoke checks, compare checkout with `main` and inspect any new unreviewed diff/property surfaces.
-- [ ] Confirm no **unmanaged currently exposed nonstructural property** remains outside the 28-surface C2(af) ledger; verify that no new post-C2 nonstructural controls were introduced. C6 and C5 added tests/docs but no new user-controlled Synth field families were reported.
-- [ ] Confirm a specific offline/export equivalence regression or scope limitation for the current code, rather than treating preview audio as a rendered master.
+- [x] Verify **pre-audit HEAD** `7fa51f…` and its exact successful Release, Python, Linux ARM64 and Windows packaging run; compare PR to `main` and inspect the newer main-side diff, as detailed below.
+- [x] Reconcile the active 28-surface C2(af) inventory with current Synth inspector and reachable shared UI, and distinguish main-side *planned but not implemented* Noise Vmin/Vmax / chain-link icons from currently exposed fields.
+- [x] Identify specific actual current-code offline/export parity tests and source boundaries, with their deliberate limits, as detailed below.
+- [ ] Confirm exact **post-C7-documentation-commit** HEAD CI and branch state; do not silently transplant the earlier green result to a new SHA.
 - [ ] **Final feature decision with user approval:** only then mark the original Synth live-parameter TODO complete/remove its open entry, declare C7 accepted and make PR #12 merge-ready. **Do not merge without explicit user authorization.**
 
 ### Provisional outcome
@@ -41,3 +42,44 @@
 **READY FOR FINAL REVIEW, NOT MERGE-AUTHORIZED.** The current C1–C6 evidence supports a defensible, bounded feature-acceptance claim for the implemented nonstructural editor properties and the physically observed Linux path. The remaining work is final exact-head/diff/parity verification and an explicit owner decision; it is **not** a request for more repeat C5 stress runs or the already-completed C6 listening matrix.
 
 PR #12 is **OPEN / DRAFT / UNMERGED**.
+
+## C7 final technical audit — 2026-11-15
+
+**Disposition:** Technical evidence review is complete for the specified, bounded C1–C6 acceptance contract; **final user authorization and post-audit-commit exact-HEAD CI remain open**. Nothing here changes Synth runtime code or retroactively expands the original acceptance contract. PR #12 must stay draft/unmerged, and the all-properties `docs/todo.md` item stays unchecked until the owner decides.
+
+### Live remote state, `main` reconciliation and PR review
+
+- At audit start: PR #12 `feat/synth-live-parameter-foundation` **OPEN / DRAFT / UNMERGED**, GitHub reports mergeable; HEAD `7fa51f3165210d10d84a9f7381db885eb402f102`; no submitted reviews or open inline review threads. Exact pre-audit-head Actions [#43761122096](https://github.com/logiclrd/Heresy/actions/runs/43761122096) is **SUCCESS**, 3,826/3,826 Release .NET and 5/5 Python tests. Both jobs succeeded: Release desktop/native, Windows apphost/icon/versioned bundle smoke and Linux ARM64 shared-codec publication. These are build/automated/package outcomes only.
+- `main` tip during this comparison: `dd55714d677ee8ee4641594e1f8ae2cb394039c3`. Shared merge base: `efae983cf469e93593b0ebc010e47ea8403c392e`; `main` has **nine newer commits**, and the PR has **908 commits** beyond that base. The *new main-side diff* consists of GitHub banner artwork, `ChainLinked`/`ChainUnlinked` SVG/Avalonia image assets, a tiny icon adjustment, `docs/README.md`, `docs/synth-import-plan.md` and added entries in `docs/todo.md` — **no newly wired Synth inspector or audio production source change on `main`**. The PR remains reported mergeable, but this is not a claim that the exact combined post-merge tree has been hardware-tested.
+- The 141-file PR-side change set contains the actual new Synth publisher/renderer/worker code, relevant UI and regression tests and audit documents. The newly relevant main-side `Noise Vmin/Vmax` and Vmin/Vmax chain-link-toggle design are **TODOs**, not active current inspector fields. Their icons alone do not add editable properties. No shared `docs/todo.md` change was made by this PR audit.
+
+### Post-C2 property surface review
+
+The current `FmSynthEditorControl` inspector still exposes Constant; Oscillator waveform, curvature, range, frequency and multipliers; Source selection/frequency/mode plus data-Instrument shared Volume access; Node/Script Envelope; Multi presets/distribution/ratios/cycle/voice options; Filter definition/per-use/ports/tail; Operator mode/inputs; and currently parameterless Noise. Its graphic-node creation, wiring and canvas controls are separately classified structural/presentation-only. Reachable `FilterInstanceEditorControl`, `FilterEditorControl`, Node/Script Envelope and the modeless data-Instrument shared Volume action remain covered in [C2(af)](synth-live-pr12-c2-inspector-matrix.md#c2af--final-28-surface-c2-automated-inspector-to-pcm-signoff-2026-11-15).
+
+**Result: no new exposed nonstructural field family escapes the 28-group ledger.** The 22 selectable Filter kinds and 43 numeric *modulatable descriptor* slots are unchanged by the newer main-side diff. FIR TransitionWidthHz and the admitted same-latency Window/Phase choices are *additional* already covered authored fields; do not assume every Filter choice is a safely migratable numeric scalar. Modulation port changes, output changes, actual Filter topology/latency and graph identity remain structurally distinct. This is a code/ledger inventory review and existing regression evidence, **not** a fresh exhaustive property-combination fuzz pass.
+
+### Specific frozen offline/export parity evidence and boundaries
+
+1. [`FmSynthSourcePlaybackExportAcceptanceTests.FrozenSourceMatchesSplitBufferedAndActualFlac`](../Heresy.Tests.UserInterface/FmSynthSourcePlaybackExportAcceptanceTests.cs) has **eight cases** (Sample, data Instrument, scripted Instrument and recursive Synth × mono/stereo). Its independently frozen source is compared against split-block PCM and the actual buffered realtime producer output within **1e−6**, then against **decoded actual FLAC** within **2/32768** (encoding quantization tolerance). A mutable original graph is replaced with zero output and source PCM is changed *after snapshot capture*, yet the already-prepared voices/export stay bound to the original. The test checks non-silence, release/end, and no late Sample resolution. It exercises **frozen Pattern audition and actual exported audio**, not an active Synth edit interrupting a file render.
+2. [`PlaybackExportPcmParityTests`](../Heresy.Tests.UserInterface/PlaybackExportPcmParityTests.cs) uses production `PlaybackRequestAudioSourceFactory` against `OfflineSongRenderPlanFactory` / `OfflinePlaybackRenderer`, compares **every float sample up to the logical arrangement end** (1e−6), and uses differing PCM chunk partitions, speaker filters, mono/stereo/5.1/7.1 and recursive/script/Instrument cases. Original authoring is mutated after both snapshots were created without changing either. This checks PCM *pre-quantization*, not physical SDL output.
+3. The current [`SongExportService.ExportAsync`](../Heresy.UserInterface/Exporting/SongExportService.cs) synchronously captures `OfflineSongRenderPlanFactory.Create(document)` before queuing its private export worker. [`OfflineSongRenderPlanFactory`](../Heresy.Playback/OfflineSongRenderPlanFactory.cs) freezes the song and calls `PreparedIncrementalPlaybackFactory.Create`; this is the immutable arrangement/export path. By contrast [`PreparedIncrementalPlaybackFactory.CreateAdHoc`](../Heresy.Playback/PreparedIncrementalPlaybackFactory.cs) allocates a `PublishedLiveSynthResolver` overlay for live audition, while ordinary arrangement `Create` retains its frozen source resolver. Thus the 100-ms preview revision/smoothing mechanism is not automatically imposed on an already-frozen export.
+4. **Boundaries, not passed claims:** The offline renderer intentionally has a separate end-input/release-tail policy, and encoded FLAC tolerances are not raw-float equality. These tests do **not** assert that a file export started before a mid-export authoring edit will re-render using that edit; by design it must not. They do not exercise every possible Compound/Multi/Filter edit or compare the interactive revision transition to an offline nonexistent transition; no Windows audio device is involved. A separate experimental test mixing in live publication during export is unnecessary to establish the frozen-export contract when export never owns a live resolver.
+
+### Decision matrix and outstanding decisions
+
+| Requirement | Final review disposition |
+| --- | --- |
+| C1 compatibility/whole-voice refusal | Accepted within named deterministic automated scope |
+| C2 current inspector/shared controls | Accepted **28/28 groups** within actual UI→publication→original-note PCM bounds; no newly exposed group in this audit |
+| C3 nested/compound migration | Accepted in tested state-preserving combinations |
+| C4 interruptions/release/ownership | Accepted in deterministic lifecycle and generation cases |
+| C5 realtime/overload | Accepted only for the measured Linux Ryzen 7840HS/PipeWire graph and bounded worker/ring guarantees: 19 short zero-new-underrun and eight disrupted trials; **1×17**, **3×9+** and other recorded overload configurations are not certified safe; recovery on the *same* notes verified |
+| C6 actual editor/listening | A–H accepted on Linux, including later C6-C PASS with unknown correction; frozen Instrument selected-tone behavior in G is deliberate, not portamento-style live reselection |
+| Offline/export | Supported by the concrete frozen-source actual FLAC and pre-quantization production PCM tests described above; no universal physical/export equivalence claim |
+| Windows real hardware | **Untested/unavailable**, not a failure and not substituted with packaging smoke |
+| Process/runtime provenance | Exact executing managed runtime and Runtime Diagnostics UI state were not independently recorded |
+| Post-audit exact HEAD CI | Must check after this documentation change; earlier green run belongs to `7fa51f…` |
+| Owner authorization | **Outstanding**: explicitly accept C7, decide whether to check/remove original all-nonstructural TODO, mark PR ready for review and/or authorize merge |
+
+**Recommendation:** Given the intentionally bounded contract, **approve C7 technical feature evidence, conditional on green exact-post-audit-head CI**, and ask the owner to decide the TODO and PR state. No newly discovered code regression justifies an untested production patch, another full 27-trial stress sweep or a repeat of accepted C6 listening. Any user requirement for *Windows hardware acceptance* or automatic *held Instrument tone reassignment* is a separate decision/scope expansion; do not silently add it to PR #12.
