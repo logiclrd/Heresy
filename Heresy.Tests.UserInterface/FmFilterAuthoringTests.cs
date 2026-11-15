@@ -175,6 +175,7 @@ public sealed class FmFilterAuthoringTests
 		use.SetStageParameter(1, "CutoffHz",
 			FilterParameterValue.FromNumber(3333));
 		FmSynthDocumentEditor.SetFilterConfiguration(sourceWork, fm, id, use);
+		FmSynthDocumentEditor.SetFilterBatchChanges(sourceWork, fm, id, true);
 		FmSynthDocumentEditor.ConnectNodes(sourceWork, fm, 0, id, 0);
 		FmSynthDocumentEditor.ConnectNodes(sourceWork, fm, 0, id, 1);
 		SongFmSynthImportSource source = new(
@@ -191,6 +192,8 @@ public sealed class FmFilterAuthoringTests
 			Is.SameAs(target.Document.Objects[clone.Configuration.DefinitionId]));
 		Assert.That(clone.Configuration.GetOverrides(1)["CutoffHz"].NumericValue,
 			Is.EqualTo(3333));
+		Assert.That(imported.FilterBatchChangesNodeIds.SetEquals([id]), Is.True,
+			"imported Synth preserves independent editor metadata");
 		Assert.That(clone.GetPorts()[1].SourceNodeId, Is.EqualTo(0));
 		Assert.That(sourceWork.Document.Objects[definition.Id],
 			Is.SameAs(definition));
