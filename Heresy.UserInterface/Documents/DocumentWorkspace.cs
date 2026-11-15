@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -30,26 +29,6 @@ public sealed class SharedAudioObjectCommittedEventArgs(
 public sealed class DocumentWorkspace
 {
 	private uint _savedDocumentRevision;
-	// Editor-only convenience, isolated to this document workspace. Preferences
-	// are intentionally not audio or persisted song properties.
-	private readonly Dictionary<(ObjectId SynthId, int NodeId), bool>
-		_synthFilterBatchChanges = [];
-
-	public bool GetSynthFilterBatchChanges(ObjectId synthId, int nodeId)
-		=> _synthFilterBatchChanges.TryGetValue((synthId, nodeId), out bool value)
-			&& value;
-
-	public void SetSynthFilterBatchChanges(
-		ObjectId synthId, int nodeId, bool enabled)
-	{
-		if (synthId.IsNone || nodeId < 0)
-			throw new ArgumentOutOfRangeException(nameof(nodeId));
-		if (enabled)
-			_synthFilterBatchChanges[(synthId, nodeId)] = true;
-		else
-			_synthFilterBatchChanges.Remove((synthId, nodeId));
-	}
-
 
 	public DocumentWorkspace()
 	{
@@ -88,7 +67,6 @@ public sealed class DocumentWorkspace
 	public void New()
 	{
 		Document = new SongDocument();
-		_synthFilterBatchChanges.Clear();
 		FilePath = null;
 		JsonPathMode = null;
 		_savedDocumentRevision = Document.DocumentRevision;
@@ -108,7 +86,6 @@ public sealed class DocumentWorkspace
 			? SongDocumentStorage.DetectJsonPathMode(fullPath)
 			: null;
 		Document = document;
-		_synthFilterBatchChanges.Clear();
 		FilePath = fullPath;
 		JsonPathMode = mode;
 		_savedDocumentRevision = document.DocumentRevision;
@@ -138,7 +115,6 @@ public sealed class DocumentWorkspace
 			.OfType<SampleDefinition>()
 			.Any(sample => sample.PendingAsset is not null);
 		Document = document;
-		_synthFilterBatchChanges.Clear();
 		FilePath = fullPath;
 		JsonPathMode = mode;
 		_savedDocumentRevision = document.DocumentRevision;
