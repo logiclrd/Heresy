@@ -3,8 +3,8 @@ using System.Linq;
 using System.Reflection;
 
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.Media;
 using Avalonia.Headless.NUnit;
 
 using AwesomeAssertions;
@@ -23,7 +23,7 @@ namespace Heresy.Tests.UserInterface;
 public sealed class NodeEnvelopeEditorControlTests
 {
 	[AvaloniaTest]
-	public void StandaloneAndFmEditorsShareNodeEditingWithAtomicApply()
+	public void SetNodesOnlyCommitsRawNodeListAndLeavesParameterDraftsUntouched()
 	{
 		DocumentWorkspace workspace = new();
 		NodeEnvelopeDefinition envelope =
@@ -37,37 +37,47 @@ public sealed class NodeEnvelopeEditorControlTests
 		TextBox start = Field<TextBox>(editor, "_sustainStart");
 		TextBox end = Field<TextBox>(editor, "_sustainEnd");
 		ComboBox mode = Field<ComboBox>(editor, "_loopMode");
-
 		nodes.Text = "0, -0.5\n0.25, 1.5\n0.5, 0.25\n0.8, 0";
 		start.Text = "1";
-		end.Text = "2";
+		end.Text = "3";
 		mode.SelectedItem = EnvelopeSustainLoopMode.PingPong;
-		Invoke(editor, "Apply");
+		Invoke(editor, "SetNodes");
 
 		workspace.Document.AudioRevision.Should().Be(initial + 1);
 		envelope.Nodes.Should().HaveCount(4);
 		envelope.Nodes[1].Time.Should().Be(TimeSpan.FromMilliseconds(250));
 		envelope.Nodes[1].Value.Should().Be(1.5);
 		envelope.Nodes[0].Value.Should().Be(-0.5);
-		envelope.SustainStartIndex.Should().Be(1);
+		envelope.SustainStartIndex.Should().Be(2,
+			"Set nodes must not commit pending sustain fields");
 		envelope.SustainEndIndex.Should().Be(2);
-		envelope.SustainLoopMode.Should().Be(EnvelopeSustainLoopMode.PingPong);
+		envelope.SustainLoopMode.Should().Be(EnvelopeSustainLoopMode.Forward);
+		start.Text.Should().Be("1",
+			"committing nodes in the same view leaves other drafts alone");
+		end.Text.Should().Be("3");
+		mode.SelectedItem.Should().Be(EnvelopeSustainLoopMode.PingPong);
 		notification.Should().Contain("Updated envelope");
 
-		Invoke(editor, "Apply");
-		workspace.Document.AudioRevision.Should().Be(initial + 1);
+		FocusLoss(start);
+		FocusLoss(end);
+		FocusLoss(mode);
+		envelope.SustainStartIndex.Should().Be(1);
+		envelope.SustainEndIndex.Should().Be(3);
+		envelope.SustainLoopMode.Should().Be(EnvelopeSustainLoopMode.PingPong);
+		workspace.Document.AudioRevision.Should().Be(initial + 4);
+
+		Invoke(editor, "SetNodes");
+		workspace.Document.AudioRevision.Should().Be(initial + 4);
 		nodes.Text = "0, 0\n0, 1";
-		start.Text = "0";
-		end.Text = "1";
-		Invoke(editor, "Apply");
-		workspace.Document.AudioRevision.Should().Be(initial + 1);
+		Invoke(editor, "SetNodes");
+		workspace.Document.AudioRevision.Should().Be(initial + 4);
 		envelope.Nodes[1].Value.Should().Be(1.5);
 		Field<TextBlock>(editor, "_message").Text.Should()
 			.Contain("increase strictly");
 	}
 
 	[AvaloniaTest]
-	public void DisplaySettingsUpdateWithoutAudioRevisionAndRejectInvalidBounds()
+	public void LiveIndependentBoundsApplyOnFocusLossWithoutAudioRevision()
 	{
 		DocumentWorkspace workspace = new();
 		NodeEnvelopeDefinition env =
@@ -78,40 +88,63 @@ public sealed class NodeEnvelopeEditorControlTests
 		ComboBox loop = Field<ComboBox>(editor, "_loopMode");
 		uint audio = workspace.Document.AudioRevision;
 		uint document = workspace.Document.DocumentRevision;
+
 		vmin.Text = "-10";
-		vmax.Text = "20";
-		Invoke(editor, "Apply");
+		FocusLoss(vmin);
 		env.Vmin.Should().Be(-10);
-		env.Vmax.Should().Be(20);
+		env.Vmax.Should().Be(1);
 		workspace.Document.AudioRevision.Should().Be(audio);
 		workspace.Document.DocumentRevision.Should().Be(document + 1);
-		vmax.Text = "-100";
-		Invoke(editor, "Apply");
+
+		vmax.Text = "20";
+		FocusLoss(vmax);
 		env.Vmax.Should().Be(20);
 		workspace.Document.AudioRevision.Should().Be(audio);
+		workspace.Document.DocumentRevision.Should().Be(document + 2);
+
+		vmax.Text = "-100";
+		FocusLoss(vmax);
+		env.Vmax.Should().Be(20);
+		workspace.Document.DocumentRevision.Should().Be(document + 2);
+		Field<TextBlock>(editor, "_message").Text.Should().Contain("less than");
+
 		vmax.Text = "20";
+		FocusLoss(vmax);
+		workspace.Document.DocumentRevision.Should().Be(document + 2);
 		loop.SelectedItem = EnvelopeSustainLoopMode.None;
-		Invoke(editor, "Apply");
+		FocusLoss(loop);
 		env.SustainLoopMode.Should().Be(EnvelopeSustainLoopMode.None);
 		workspace.Document.AudioRevision.Should().Be(audio + 1);
+		workspace.Document.DocumentRevision.Should().Be(document + 3);
 	}
 
 	[AvaloniaTest]
-	public void InvalidNodeTextNeverMutatesCurveOrDocument()
+	public void InvalidNodeTextDoesNotBlockIndependentValidParameterCommit()
 	{
 		DocumentWorkspace workspace = new();
 		NodeEnvelopeDefinition envelope =
 			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Curve");
 		NodeEnvelopeEditorControl editor = new(workspace, envelope, _ => { });
-		uint rev = workspace.Document.AudioRevision;
-		Field<TextBox>(editor, "_nodesInput").Text = "not a time";
-		Invoke(editor, "Apply");
-		workspace.Document.AudioRevision.Should().Be(rev);
-		envelope.Nodes.Should().HaveCount(4);
+		TextBox nodes = Field<TextBox>(editor, "_nodesInput");
+		TextBox vmin = Field<TextBox>(editor, "_vmin");
+		nodes.Text = "not a time";
+		uint audio = workspace.Document.AudioRevision;
+		uint document = workspace.Document.DocumentRevision;
+		vmin.Text = "-8";
+		FocusLoss(vmin);
+		envelope.Vmin.Should().Be(-8);
+		nodes.Text.Should().Be("not a time",
+			"committing a field here does not implicitly accept the raw text");
+		workspace.Document.AudioRevision.Should().Be(audio);
+		workspace.Document.DocumentRevision.Should().Be(document + 1);
+		Invoke(editor, "SetNodes");
+		workspace.Document.DocumentRevision.Should().Be(document + 1);
+		Field<TextBlock>(editor, "_message").Text.Should()
+			.Contain("Invalid node");
 	}
 
 	[AvaloniaTest]
-	public void TwoMountedEditorsReflectSharedChangesIncludingNumericAndMatchState()
+	public void SharedEditorsUpdateFromObjectChangeAndIndependentFieldCommit()
 	{
 		DocumentWorkspace workspace = new();
 		NodeEnvelopeDefinition envelope =
@@ -131,24 +164,24 @@ public sealed class NodeEnvelopeEditorControlTests
 				| BindingFlags.NonPublic)!.GetValue(fm)!;
 		NodeEnvelopeEditorControl sharedInspector =
 			inspector.Children.OfType<NodeEnvelopeEditorControl>().Single();
-		Window host = new Window
+		Window host = new()
 		{
 			Width = 1100, Height = 850,
-			Content = new StackPanel
-			{
-				Children = { standalone, fm },
-			},
+			Content = new StackPanel { Children = { standalone, fm } },
 		};
 		host.Show();
 		try
 		{
 			TextBox standaloneNodes = Field<TextBox>(standalone, "_nodesInput");
 			TextBox fmNodes = Field<TextBox>(sharedInspector, "_nodesInput");
+			int signals = 0;
+			envelope.Changed += (_, _) => signals++;
+
 			EnvelopeNode[] modified = envelope.Nodes.ToArray();
 			modified[2] = modified[2] with { Value = 0.37 };
 			EnvelopeDocumentEditor.UpdateNodeEnvelope(
 				workspace, envelope, modified, 1, 2,
-				EnvelopeSustainLoopMode.PingPong);
+				EnvelopeSustainLoopMode.PingPong, -2, 4);
 			standaloneNodes.Text.Should().Contain("0.37");
 			fmNodes.Text.Should().Contain("0.37");
 			Field<TextBox>(sharedInspector, "_sustainStart")
@@ -157,29 +190,35 @@ public sealed class NodeEnvelopeEditorControlTests
 				.Text.Should().Be("2");
 			Field<ComboBox>(sharedInspector, "_loopMode")
 				.SelectedItem.Should().Be(EnvelopeSustainLoopMode.PingPong);
+			Field<TextBox>(standalone, "_vmin").Text.Should().Be("-2");
+			signals.Should().Be(1,
+				"compound accepted changes notify object observers only once");
 
-			// The two editors really reference the same object. An edit
-			// originating in either one must appear in the other.
+			TextBox fmVmax = Field<TextBox>(sharedInspector, "_vmax");
+			fmVmax.Text = "8";
+			FocusLoss(fmVmax);
+			Field<TextBox>(standalone, "_vmax").Text.Should().Be("8");
+			signals.Should().Be(2);
+
+			// A raw-node acceptance on one editor updates the other.
 			fmNodes.Text = "0, 0\n0.01, 0.8\n0.11, 0.2\n0.41, 0";
-			Invoke(sharedInspector, "Apply");
+			Invoke(sharedInspector, "SetNodes");
 			standaloneNodes.Text.Should().Contain("0.8");
 			envelope.Nodes[1].Value.Should().Be(0.8);
+			signals.Should().Be(3);
 		}
-		finally
-		{
-			host.Close();
-		}
+		finally { host.Close(); }
 	}
 
 	[AvaloniaTest]
-	public void DirtyNumericDraftSurvivesExternalEditAndCannotClobberIt()
+	public void LastAcceptedNodeEditReplacesOtherViewsPendingText()
 	{
 		DocumentWorkspace workspace = new();
 		NodeEnvelopeDefinition envelope =
 			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Conflict");
 		NodeEnvelopeEditorControl first = new(workspace, envelope, _ => { });
 		NodeEnvelopeEditorControl second = new(workspace, envelope, _ => { });
-		Window host = new Window
+		Window host = new()
 		{
 			Width = 900, Height = 600,
 			Content = new StackPanel { Children = { first, second } },
@@ -188,30 +227,83 @@ public sealed class NodeEnvelopeEditorControlTests
 		try
 		{
 			TextBox draft = Field<TextBox>(first, "_nodesInput");
-			draft.Text = "0, 0\n0.01, 1.25\n0.11, 0.7\n0.41, 0";
-			uint revision = workspace.Document.AudioRevision;
 			TextBox current = Field<TextBox>(second, "_nodesInput");
+			draft.Text = "0, 0\n0.01, 1.25\n0.11, 0.7\n0.41, 0";
 			current.Text = "0, 0\n0.01, 0.25\n0.11, 0.7\n0.41, 0";
-			Invoke(second, "Apply");
-			workspace.Document.AudioRevision.Should().Be(revision + 1);
-			draft.Text.Should().Contain("1.25",
-				"an uncommitted numeric edit should not be silently discarded");
+			uint revision = workspace.Document.AudioRevision;
 
-			Invoke(first, "Apply");
+			Invoke(second, "SetNodes");
+			workspace.Document.AudioRevision.Should().Be(revision + 1);
+			draft.Text.Should().Contain("0.25");
+			draft.Text.Should().NotContain("1.25",
+				"the latest accepted edit replaces another view's pending draft");
+			Field<TextBlock>(first, "_message").Text.Should()
+				.Contain("replaced");
+
+			Invoke(first, "SetNodes");
 			envelope.Nodes[1].Value.Should().Be(0.25);
 			workspace.Document.AudioRevision.Should().Be(revision + 1);
-			Field<TextBlock>(first, "_message").Text.Should()
-				.Contain("Reload");
 
-			typeof(NodeEnvelopeEditorControl)
-				.GetMethod("RefreshFromEnvelope")!.Invoke(first, []);
-			draft.Text.Should().Contain("0.25");
-			draft.Text.Should().NotContain("1.25");
+			// Reversing the winning view works too.
+			draft.Text = "0, 0\n0.01, 0.9\n0.11, 0.7\n0.41, 0";
+			current.Text = "0, 0\n0.01, 0.3\n0.11, 0.7\n0.41, 0";
+			Invoke(first, "SetNodes");
+			current.Text.Should().Contain("0.9");
+			current.Text.Should().NotContain("0.3");
+			envelope.Nodes[1].Value.Should().Be(0.9);
+			workspace.Document.AudioRevision.Should().Be(revision + 2);
 		}
-		finally
+		finally { host.Close(); }
+	}
+
+	[AvaloniaTest]
+	public void DetachingEditorCommitsParameterFieldButNotRawNodeDraft()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Leaving");
+		NodeEnvelopeEditorControl editor = new(workspace, envelope, _ => { });
+		Window host = new() { Width = 900, Height = 600, Content = editor };
+		host.Show();
+		try
 		{
-			host.Close();
+			Field<TextBox>(editor, "_nodesInput").Text =
+				"0, 0\n0.01, 1.8\n0.11, 0.7\n0.41, 0";
+			TextBox vmin = Field<TextBox>(editor, "_vmin");
+			vmin.Text = "-3";
+			uint audio = workspace.Document.AudioRevision;
+			uint document = workspace.Document.DocumentRevision;
+			host.Content = new TextBlock { Text = "Different view" };
+			envelope.Vmin.Should().Be(-3);
+			envelope.Nodes[1].Value.Should().Be(1.0);
+			workspace.Document.AudioRevision.Should().Be(audio);
+			workspace.Document.DocumentRevision.Should().Be(document + 1);
 		}
+		finally { host.Close(); }
+	}
+
+	[AvaloniaTest]
+	public void NodeButtonIsDirectlyBelowTextareaAndGridHasRequestedColumns()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Layout");
+		NodeEnvelopeEditorControl editor = new(workspace, envelope, _ => { });
+		StackPanel body = (StackPanel)editor.Content!;
+		TextBox nodes = Field<TextBox>(editor, "_nodesInput");
+		int index = body.Children.IndexOf(nodes);
+		((Button)body.Children[index + 1]).Content.Should().Be("Set nodes");
+		body.Children.OfType<Button>().Select(b => b.Content)
+			.Should().NotContain("Reload shared envelope");
+		Grid grid = body.Children.OfType<Grid>().Single();
+		grid.MaxWidth.Should().Be(800);
+		grid.ColumnDefinitions.Should().HaveCount(4);
+		TextBox start = Field<TextBox>(editor, "_sustainStart");
+		TextBox end = Field<TextBox>(editor, "_sustainEnd");
+		Grid.GetColumn(start).Should().Be(1);
+		Grid.GetColumn(end).Should().Be(3);
+		Grid.GetColumn(Field<TextBox>(editor, "_vmin")).Should().Be(1);
+		Grid.GetColumn(Field<TextBox>(editor, "_vmax")).Should().Be(3);
 	}
 
 	[AvaloniaTest]
@@ -246,4 +338,7 @@ public sealed class NodeEnvelopeEditorControlTests
 		=> typeof(NodeEnvelopeEditorControl).GetMethod(
 			name, BindingFlags.Instance | BindingFlags.NonPublic)!
 			.Invoke(editor, []);
+
+	private static void FocusLoss(Control control)
+		=> control.RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
 }
