@@ -1121,7 +1121,7 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         // simultaneously. Three independent Source-only render histories
         // and one uninterrupted OnePole are the PCM oracle.
         const int firstOnset = 10, firstFadeEnd = 110;
-        const int secondOnset = 111, secondFadeEnd = 211;
+        const int secondOnset = 111;
         const int total = 240;
         ObjectId aId = (ObjectId)72601U;
         ObjectId bId = (ObjectId)72602U;
