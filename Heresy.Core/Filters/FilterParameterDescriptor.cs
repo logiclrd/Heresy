@@ -100,11 +100,21 @@ public sealed class FilterParameterDescriptor
 	}
 
 	/// <summary>
-	/// Enumerated selections are always structural: they are not FM graph
-	/// audio-rate ports, but can be assigned in effect-command parameter text.
+	/// Choices are not FM graph audio-rate ports, independently of whether
+	/// the running processor can migrate their state. Most choices are structural.
 	/// </summary>
 	public static FilterParameterDescriptor Choice(
 		string name, string defaultValue, params string[] choices)
+		=> CreateChoice(name, defaultValue, structural: true, choices);
+
+	/// <summary>An output/algorithm selection proven to preserve the existing
+	/// runtime state shape. Never creates an audio-rate FM port.</summary>
+	public static FilterParameterDescriptor LiveChoice(
+		string name, string defaultValue, params string[] choices)
+		=> CreateChoice(name, defaultValue, structural: false, choices);
+
+	private static FilterParameterDescriptor CreateChoice(
+		string name, string defaultValue, bool structural, string[] choices)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		ArgumentNullException.ThrowIfNull(choices);
@@ -120,7 +130,7 @@ public sealed class FilterParameterDescriptor
 		}
 
 		return new FilterParameterDescriptor(name, FilterParameterValueKind.Choice,
-			FilterParameterValue.FromChoice(defaultValue), null, null, "", true,
+			FilterParameterValue.FromChoice(defaultValue), null, null, "", structural,
 			false, false, Array.AsReadOnly((string[])choices.Clone()));
 	}
 

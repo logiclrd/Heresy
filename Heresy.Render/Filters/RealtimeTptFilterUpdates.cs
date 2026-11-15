@@ -3,15 +3,16 @@ using System;
 namespace Heresy.Render.Filters;
 
 /// <summary>
-/// One prepared, allocation-free compatible numeric control change. The
+/// One prepared, allocation-free compatible scalar control change. The
 /// caller owns the arrays that contain these values; no instance/definition
 /// objects or DSP state are published during the preflight phase.
 /// </summary>
 public readonly record struct RealtimeTptStageUpdate(
-	int StageIndex, double CutoffHz, double Q);
+	int StageIndex, double CutoffHz, double Q, bool? HighPass = null);
 
 /// <summary>Small coefficient payload kept in caller-owned scratch storage.</summary>
-internal readonly record struct RealtimeTptCoefficients(double G, double K);
+internal readonly record struct RealtimeTptCoefficients(
+	double G, double K, bool? HighPass = null);
 
 /// <summary>
 /// Optional two-phase, no-allocation TPT retune contract. The core chain

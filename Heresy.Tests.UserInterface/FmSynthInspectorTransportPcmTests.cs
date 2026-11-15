@@ -919,13 +919,12 @@ public sealed class FmSynthInspectorTransportPcmTests
 
 
     [AvaloniaTest]
-    public async Task LegacyRcCutoffAndModeRefuseOldStateButNewNoteUsesBothChoices()
+    public async Task LegacyRcCutoffRetunesRunningHistoryButModeRetainsOldGeneration()
     {
-        // C2(w): legacy speaker RC deliberately has a different DSP
-        // recurrence and no existing realtime migration interface. Its
-        // editable numeric and choice fields must NEVER be falsely adopted:
-        // the held original remains an audibly older generation, while a
-        // fresh note gets the new frozen low/high-pass controls.
+        // C2(ab): legacy RC cutoff retunes the original _low history without
+        // changing the historical recurrence. Its Mode remains a structural
+        // change: old notes keep the already-adopted cutoff/LowPass state,
+        // and fresh notes receive the revised HighPass selection.
         const int rate = 8000;
         DocumentWorkspace workspace = new();
         FilterDefinition definition = FilterDocumentEditor.CreateFilter(
@@ -971,17 +970,29 @@ public sealed class FmSynthInspectorTransportPcmTests
                     ? (FmSynthNode)new FmFilterNode(filterId, osc, use)
                     : n), filterId), resolver, soundResolver: resolver,
                 enableLiveMultiExpansion: true);
-        olderResolver.Sound = Author(new FilterInstance(definition), olderResolver);
+        FmSynthSound running = Author(new FilterInstance(definition), olderResolver);
+        olderResolver.Sound = running;
         PlaybackSession older = IndependentSession(config, olderResolver);
         StartIndependent(older, synth.Id);
+        Resolver untouchedResolver = new(synth.Id);
+        untouchedResolver.Sound = Author(new FilterInstance(definition), untouchedResolver);
+        PlaybackSession untouched = IndependentSession(config, untouchedResolver);
+        StartIndependent(untouched, synth.Id);
         int frame = 0;
-        void CompareOlder(int count, string label, bool olderExpected)
+        void CompareOlder(int count, string label, bool olderExpected,
+            bool audibleRetune = false)
         {
             float[] actual = backend.Render(count);
             float[] reference = new float[count];
             older.Render(frame, count, reference);
-            Assert.That(actual, Is.EqualTo(reference).Within(6e-5f),
-                label + ": original legacy RC PCM must remain frozen");
+            float[] unedited = new float[count];
+            untouched.Render(frame, count, unedited);
+            Assert.That(actual, Is.EqualTo(reference).Within(7e-4f),
+                label + ": independently migrated original RC history");
+            if (audibleRetune)
+                Assert.That(actual.Zip(unedited, (a, b) => Math.Abs(a - b)).Max(),
+                    Is.GreaterThan(0.005),
+                    "legacy cutoff change must affect audible original-note PCM");
             Assert.That(factory.OlderAudioCount,
                 Is.EqualTo(olderExpected ? 1 : 0), label);
             Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
@@ -1038,8 +1049,16 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Is.EqualTo(new[] { synth.Id, parent.Id }));
             Assert.That(factory.Preparations[0].FilterCutoffHz, Is.EqualTo(380));
         });
-        CompareOlder(200, "legacy cutoff must not adopt unsupported recurrence",
-            true);
+        // Advance an independently compiled reference on its original clock,
+        // adopting the new cutoff without constructing a new source voice.
+        FilterInstance cutoffUse = new(definition);
+        cutoffUse.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(380));
+        FmSynthSound cutoffRevision = Author(cutoffUse, olderResolver);
+        older.AdoptLiveSynthParameters(synth.Id, running, cutoffRevision);
+        olderResolver.Sound = cutoffRevision;
+        running = cutoffRevision;
+        CompareOlder(960, "legacy cutoff compatible migration", false, true);
 
         overrides["Mode"].IsChecked = true;
         ((ComboBox)fields["Mode"]).SelectedItem = "HighPass";
@@ -1067,12 +1086,11 @@ public sealed class FmSynthInspectorTransportPcmTests
                 .Configuration!.GetStageParameters(1)
                 .GetParameter("Mode").ChoiceValue, Is.EqualTo("HighPass"));
         });
-        CompareOlder(200, "legacy highpass choice must not steal old LP state",
-            true);
+        CompareOlder(200, "legacy mode refuses while retaining 380-Hz LP", true);
 
         // Independently authored fresh voice demonstrates that the new
         // *both-property* definition is effective even while the old note
-        // remains deliberately frozen on the incompatible legacy state.
+        // remains frozen on the last compatible 380-Hz LowPass state.
         Resolver freshResolver = new(synth.Id);
         freshResolver.Sound = Author(revisedUse, freshResolver);
         PlaybackSession fresh = IndependentSession(config, freshResolver);
@@ -1088,7 +1106,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         {
             Assert.That(mixed[i], Is.EqualTo(oldOnly[i] + newOnly[i])
                 .Within(7e-4f),
-                "new RC HighPass note joins frozen old LowPass at " + (frame + i));
+                "new RC HighPass joins retained 380-Hz LowPass at " + (frame + i));
             audibleNew = Math.Max(audibleNew, Math.Abs(newOnly[i]));
         }
         Assert.That(audibleNew, Is.GreaterThan(0.05));
@@ -1627,16 +1645,15 @@ public sealed class FmSynthInspectorTransportPcmTests
 
 
     [AvaloniaTest]
-    public async Task OnePoleModeBothDirectionsRetainOldIirAndUseNewChoiceOnFreshNotes()
+    public async Task OnePoleModeBothDirectionsAdoptOriginalIntegratorAndKeepFreshNotesCurrent()
     {
-        // C2(aa): explicitly verify the *structural* OnePole Mode choice
-        // both directions, not just numeric CutoffHz or legacy-speaker RC.
-        // Existing IIR memories must remain older and bitwise-identical
-        // to independently authored continuous voices; fresh onsets use
-        // the opposite filter mode in the exact detached-worker snapshot.
+        // C2(ab): LowPass and HighPass use the same scalar TPT integrator.
+        // Both output-tap directions must migrate the original state in
+        // place; the 100-ms output transition and fresh notes use the new
+        // choice without an older-generation warning.
         const int rate = 8000;
         Assert.That(FilterCatalogue.GetParameters(FilterKind.OnePole)
-            .Single(p => p.Name == "Mode").IsStructural, Is.True);
+            .Single(p => p.Name == "Mode").IsStructural, Is.False);
         (FilterKind Kind, string Parameter, string? Choice,
             double? Value, string InitialMode)[] cases =
         [
@@ -1647,7 +1664,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         {
             DocumentWorkspace workspace = new();
             FilterDefinition definition = FilterDocumentEditor.CreateFilter(
-                workspace, "C2(aa) structural " + item.Kind);
+                workspace, "C2(ab) live " + item.Kind);
             FilterStageDefinition oldStage = definition.GetStage(1);
             FilterStageDefinition newStage =
                 new FilterStageDefinition(1, oldStage.Name, item.Kind)
@@ -1667,11 +1684,13 @@ public sealed class FmSynthInspectorTransportPcmTests
             FilterParameterDescriptor descriptor =
                 FilterCatalogue.GetParameters(item.Kind).Single(d =>
                     d.Name == item.Parameter);
-            Assert.That(descriptor.IsStructural, Is.True,
-                item.Kind + ": must be structural in the Filter catalogue");
+            Assert.That(descriptor.IsStructural, Is.False,
+                item.Kind + ": output-tap selection must be compatible");
+            Assert.That(descriptor.IsModulatable, Is.False,
+                "compatible choices must not expose audio-rate FM ports");
 
             FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
-                workspace, "C2(aa) structural held " + item.Kind);
+                workspace, "C2(ab) live held " + item.Kind);
             int osc = FmSynthDocumentEditor.AddOscillatorNode(
                 workspace, synth, FmOscillatorWaveform.Sine, 1373, 80, 90);
             int filterId = FmSynthDocumentEditor.AddFilterNode(
@@ -1682,7 +1701,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 osc, filterId, 0);
             FmSynthDocumentEditor.SetOutputNode(workspace, synth, filterId);
             FmSynthDefinition parent = MakeDependentParent(
-                workspace, synth, "C2(aa) structural dependent " + item.Kind);
+                workspace, synth, "C2(ab) live dependent " + item.Kind);
             RenderConfiguration config = new(rate, [
                 new OutputChannelConfiguration(Vector3.Zero,
                     positionalImportance: 0),
@@ -1704,7 +1723,8 @@ public sealed class FmSynthInspectorTransportPcmTests
                     enableLiveMultiExpansion: true);
             Resolver olderResolver = new(synth.Id);
             FilterInstance uneditedUse = new(definition);
-            olderResolver.Sound = Author(uneditedUse, olderResolver);
+            FmSynthSound running = Author(uneditedUse, olderResolver);
+            olderResolver.Sound = running;
             PlaybackSession older = IndependentSession(config, olderResolver);
             StartIndependent(older, synth.Id);
             float[] initial = backend.Render(260), expectedInitial = new float[260];
@@ -1774,7 +1794,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Assert.That(workspace.Document.DocumentRevision,
                     Is.EqualTo(document + 1));
                 Assert.That(callbacks, Is.EqualTo(1),
-                    "one semantic structural publication");
+                    "one semantic compatible publication");
                 Assert.That(changed, Is.GreaterThanOrEqualTo(1));
                 Assert.That(committed.GetOverrides(1)[item.Parameter],
                     Is.EqualTo(requested), "real Filter inspector persisted selection");
@@ -1789,17 +1809,20 @@ public sealed class FmSynthInspectorTransportPcmTests
                     Is.EqualTo(180), "unchanged worker frozen cutoff");
                 Assert.That(backend.OpenCount, Is.EqualTo(1));
             });
+            FilterInstance revisedUse = new(definition);
+            revisedUse.SetStageParameter(1, item.Parameter, requested);
+            FmSynthSound adopted = Author(revisedUse, olderResolver);
+            older.AdoptLiveSynthParameters(synth.Id, running, adopted);
+            olderResolver.Sound = adopted;
             float[] stillOld = backend.Render(240), oldExpected = new float[240];
             older.Render(260, 240, oldExpected);
             for (int i = 0; i < stillOld.Length; i++)
                 Assert.That(stillOld[i], Is.EqualTo(oldExpected[i])
                     .Within(8e-4f),
-                    item.Kind + ": structurally changed Filter cannot steal original PCM");
-            Assert.That(factory.OlderAudioCount, Is.EqualTo(1),
-                item.Kind + ": structural selection must retain older generation");
+                    item.Kind + ": compatible mode preserves original integrator and fade");
+            Assert.That(factory.OlderAudioCount, Is.Zero,
+                item.Kind + ": compatible output-tap change is current");
 
-            FilterInstance revisedUse = new(definition);
-            revisedUse.SetStageParameter(1, item.Parameter, requested);
             Resolver freshResolver = new(synth.Id),
                 unchangedFreshResolver = new(synth.Id);
             freshResolver.Sound = Author(revisedUse, freshResolver);
@@ -1823,7 +1846,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Assert.That(float.IsFinite(mixed[i]), Is.True);
                 Assert.That(mixed[i], Is.EqualTo(held[i] + revised[i])
                     .Within(0.001f),
-                    item.Kind + ": old history plus new structural plan at " + i);
+                    item.Kind + ": migrated original history plus new fresh plan at " + i);
                 difference = Math.Max(difference,
                     Math.Abs(revised[i] - untouched[i]));
             }
@@ -1832,7 +1855,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Assert.That(difference, Is.GreaterThan(1e-5),
                     item.InitialMode + "→" + item.Choice
                         + ": new OnePole Mode must affect fresh-note PCM");
-                Assert.That(factory.OlderAudioCount, Is.EqualTo(1));
+                Assert.That(factory.OlderAudioCount, Is.Zero);
                 Assert.That(backend.OpenCount, Is.EqualTo(1));
                 Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
                     Is.EqualTo(originalSnapshot.AudioRevision));
@@ -1841,7 +1864,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 ChannelTarget.Virtual(245), [new NoteCutCommand()]);
             backend.Render(7);
             Assert.That(factory.OlderAudioCount, Is.Zero,
-                item.Kind + ": older status clears only after original owner cut");
+                item.Kind + ": compatible note never acquired older status");
             Apply();
             await Task.WhenAll(pending.ToArray())
                 .WaitAsync(TimeSpan.FromSeconds(12));

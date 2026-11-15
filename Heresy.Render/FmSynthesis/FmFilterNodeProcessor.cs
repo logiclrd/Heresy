@@ -203,7 +203,7 @@ internal sealed class FmFilterNodeProcessor
 				or FilterKind.CombFeedforward or FilterKind.FirBandPass
 				or FilterKind.FirNotch)
 				? 0 : stage.Parameters.GetParameter("CutoffHz").NumericValue;
-			if (stage.Kind == FilterKind.OnePole || isSvf)
+			if (stage.Kind is FilterKind.OnePole or FilterKind.SpeakerLegacyRc || isSvf)
 			{
 				tpt.Add(new FastStage(stageIndex, cutoff, q, baseCutoff,
 					isSvf ? stage.Parameters.GetParameter("Q").NumericValue : 1));
@@ -512,7 +512,7 @@ internal sealed class FmFilterNodeProcessor
 	}
 
 	private static bool CanUpdateKind(FilterKind kind)
-		=> kind == FilterKind.OnePole
+		=> kind is FilterKind.OnePole or FilterKind.SpeakerLegacyRc
 			|| SvfFilterStageFactory.IsSvf(kind)
 			|| BiquadFilterStageFactory.IsBiquad(kind)
 			|| kind is FilterKind.LadderLinear or FilterKind.LadderSaturated
@@ -546,11 +546,16 @@ internal sealed class FmFilterNodeProcessor
 			if (!changed) continue;
 			double Number(string name) => EffectiveNumber(b, live, name);
 			FilterKind kind = b.Kind;
-			if (kind == FilterKind.OnePole || SvfFilterStageFactory.IsSvf(kind))
+			if (kind is FilterKind.OnePole or FilterKind.SpeakerLegacyRc
+				|| SvfFilterStageFactory.IsSvf(kind))
 			{
 				live.FastUpdates[tpt++] = new RealtimeTptStageUpdate(i,
 					Number("CutoffHz"),
-					kind == FilterKind.OnePole ? 1 : Number("Q"));
+					kind is FilterKind.OnePole or FilterKind.SpeakerLegacyRc
+						? 1 : Number("Q"),
+					kind == FilterKind.OnePole
+						? b.Parameters.GetParameter("Mode").ChoiceValue == "HighPass"
+						: null);
 			}
 			else if (BiquadFilterStageFactory.IsBiquad(kind))
 			{
@@ -724,7 +729,7 @@ internal sealed class FmFilterNodeProcessor
 				continue;
 			}
 			double fromHz = old.Parameters.GetParameter("CutoffHz").NumericValue;
-			double fromQ = old.Kind == FilterKind.OnePole ? 1.0
+			double fromQ = old.Kind is FilterKind.OnePole or FilterKind.SpeakerLegacyRc ? 1.0
 				: old.Parameters.GetParameter("Q").NumericValue;
 			if (ramp.Active)
 			{

@@ -326,6 +326,12 @@ public sealed class StreamingFilterChain
 				|| !runtime.TryPrepareRealtime(
 					update.CutoffHz, update.Q, SampleRate, out tptScratch[i]))
 				return false;
+			if (update.HighPass is bool highPass)
+			{
+				if (_stages[update.StageIndex].Stage.Kind != FilterKind.OnePole)
+					return false;
+				tptScratch[i] = tptScratch[i] with { HighPass = highPass };
+			}
 			for (int j = 0; j < i; j++)
 				if (tptUpdates[j].StageIndex == update.StageIndex)
 					return false;
