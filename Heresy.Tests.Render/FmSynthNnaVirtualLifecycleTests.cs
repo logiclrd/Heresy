@@ -976,7 +976,10 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         }
         Assert.That(session.CountOlderAudioVoices(), Is.Zero);
         session.ApplyLiveEvent(ChannelTarget.Physical(0), [new NoteCutCommand()]);
-        float[] newestOnly = new float[4];
+        // Note Cut intentionally carries a short anti-click tail. Wait
+        // through it before asserting exact newest-only PCM: four frames
+        // after Cut can still include a tiny outgoing contribution.
+        float[] newestOnly = new float[96];
         session.Render(212, newestOnly.Length, newestOnly);
         Assert.That(newestOnly[^1], Is.EqualTo(0.5f).Within(1e-5f),
             "the fresh newest-generation note and its sibling stay independent");
