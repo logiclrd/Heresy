@@ -207,8 +207,10 @@ public sealed class NodeEnvelopeGraphControlTests
 				| BindingFlags.NonPublic)!.GetValue(graph)!;
 		surface.Measure(new Size(440, 250));
 		surface.Arrange(new Rect(0, 0, 440, 250));
-		NodeEnvelopeGraphGeometry geometry = new(envelope.Nodes,
-			440, 250, envelope.Vmin, envelope.Vmax);
+		NodeEnvelopeGraphGeometry geometry =
+			(NodeEnvelopeGraphGeometry)surface.GetType()
+				.GetMethod("Layout", BindingFlags.Instance
+					| BindingFlags.NonPublic)!.Invoke(surface, [])!;
 		Type type = surface.GetType();
 		BindingFlags privateFlags = BindingFlags.NonPublic
 			| BindingFlags.Instance;
@@ -344,8 +346,10 @@ public sealed class NodeEnvelopeGraphControlTests
 		host.Show();
 		try
 		{
-			NodeEnvelopeGraphGeometry geometry = new(
-				envelope.Nodes, surface.Bounds.Width, surface.Bounds.Height);
+			NodeEnvelopeGraphGeometry geometry =
+				(NodeEnvelopeGraphGeometry)surface.GetType()
+					.GetMethod("Layout", BindingFlags.Instance
+						| BindingFlags.NonPublic)!.Invoke(surface, [])!;
 			Point GuidePosition(int i)
 			{
 				var (x, dotY) = geometry.Point(i);
