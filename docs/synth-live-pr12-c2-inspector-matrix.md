@@ -152,10 +152,13 @@ checkmarks or C5/C6/C7 and final all-properties TODO.
 
 **Exact scope:** These are headless *real inspector* U/P and *real held renderer* V/A tests, including genuine detached preparation for Multi and sticky older-audio semantics for two structural changes. As with C2(a/b/d), inspector callbacks are test-bound to `PlaybackSession`; they **do not establish production `SongPlaybackTransport` ordered preparation/publication T** for these specific property families. Nor do the tests cover all Filter stage kinds, shared Node Envelope editing, Instrument shared Volume or Source substitutions. Other C1/C3/C4 renderer proofs are separate from the U→T→V proof.
 
+**Exact C2(e) test-HEAD CI:** [#43672698761](https://github.com/logiclrd/Heresy/actions/runs/43672698761) completed SUCCESS with **3,773/3,773 tests** (Core 910, Render.File 29, Render 1,213, Scripting 105, Playback 356, UI 1,160); all four new C2(e) tests passed, native Release/Windows apphost/versioned bundle smoke and Linux ARM64. Only the deliberately red no-op commit was expected to fail [#43672464144](https://github.com/logiclrd/Heresy/actions/runs/43672464144); its failure was eliminated by the production fix. No other production code changes.
+
 **C2 remains OPEN.** Remaining cells require a bounded residual audit rather than blanket matrix acceptance; hardware overload/deadline C5, physical listening C6 and final sign-off C7 are untouched. All-properties Synth TODO remains unchecked.
 
 ## Next bounded steps (proposed, not preapproved scope expansions)
 
-1. **C2 residual closeout:** prove production `SongPlaybackTransport` T for representative direct inspector revisions end-to-end, shared Node Envelope and Instrument Volume editor notifications, and one other Filter stage family/per-use modulation. Resolve exact C1 policy for Source/Instrument switches, structural canvas gestures, and remaining open rows individually. Do **not** extrapolate one OnePole or one structural Operator edit to all properties.\n2. Keep hardware callback/overload C5, physical listening C6, and final merge/sign-off C7 separate.
+1. **C2 residual closeout:** prove production `SongPlaybackTransport` T for representative direct inspector revisions end-to-end, shared Node Envelope and Instrument Volume editor notifications, and one other Filter stage family/per-use modulation. Resolve exact C1 policy for Source/Instrument switches, structural canvas gestures, and remaining open rows individually. Do **not** extrapolate one OnePole or one structural Operator edit to all properties.
+2. Keep hardware callback/overload C5, physical listening C6, and final merge/sign-off C7 separate.
 
 **Gate status:** C1, C3 and C4 are complete; **C2 remains OPEN**, as do C5/C6/C7 and the overarching all-properties Synth TODO. PR #12 remains draft/unmerged.
