@@ -916,6 +916,202 @@ public sealed class FmSynthInspectorTransportPcmTests
         }
     }
 
+
+    [AvaloniaTest]
+    public async Task LegacyRcCutoffAndModeRefuseOldStateButNewNoteUsesBothChoices()
+    {
+        // C2(w): legacy speaker RC deliberately has a different DSP
+        // recurrence and no existing realtime migration interface. Its
+        // editable numeric and choice fields must NEVER be falsely adopted:
+        // the held original remains an audibly older generation, while a
+        // fresh note gets the new frozen low/high-pass controls.
+        const int rate = 8000;
+        DocumentWorkspace workspace = new();
+        FilterDefinition definition = FilterDocumentEditor.CreateFilter(
+            workspace, "C2(w) legacy RC Filter");
+        FilterStageDefinition before = definition.GetStage(1);
+        FilterStageDefinition stage =
+            new FilterStageDefinition(1, before.Name, FilterKind.SpeakerLegacyRc)
+                .WithDefaults([
+                    new KeyValuePair<string, FilterParameterValue>(
+                        "CutoffHz", FilterParameterValue.FromNumber(180)),
+                ]);
+        FilterDocumentEditor.ApplyStage(workspace, definition, 1,
+            before, stage.Name, stage.Kind, stage.DefaultParameters);
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(w) legacy RC immutable older state");
+        int osc = FmSynthDocumentEditor.AddOscillatorNode(
+            workspace, synth, FmOscillatorWaveform.Sine, 220, 80, 95);
+        int filterId = FmSynthDocumentEditor.AddFilterNode(
+            workspace, synth, 310, 95);
+        FmSynthDocumentEditor.SetFilterConfiguration(
+            workspace, synth, filterId, new FilterInstance(definition));
+        FmSynthDocumentEditor.ConnectNodes(
+            workspace, synth, osc, filterId, 0);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, filterId);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(w) RC dependent parent");
+        FmSynthGraph initialGraph = synth.Graph;
+
+        RenderConfiguration config = new(rate, [
+            new OutputChannelConfiguration(Vector3.Zero,
+                positionalImportance: 0),
+        ]);
+        TrackingFactory factory = new(config, synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(217), [new StartNoteCommand(synth.Id)]);
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        Resolver olderResolver = new(synth.Id);
+        FmSynthSound Author(FilterInstance use, Resolver resolver)
+            => new(new FmSynthGraph(initialGraph.Nodes.Select(n =>
+                n.Id == filterId
+                    ? (FmSynthNode)new FmFilterNode(filterId, osc, use)
+                    : n), filterId), resolver, soundResolver: resolver,
+                enableLiveMultiExpansion: true);
+        olderResolver.Sound = Author(new FilterInstance(definition), olderResolver);
+        PlaybackSession older = IndependentSession(config, olderResolver);
+        StartIndependent(older, synth.Id);
+        int frame = 0;
+        void CompareOlder(int count, string label, bool olderExpected)
+        {
+            float[] actual = backend.Render(count);
+            float[] reference = new float[count];
+            older.Render(frame, count, reference);
+            Assert.That(actual, Is.EqualTo(reference).Within(6e-5f),
+                label + ": original legacy RC PCM must remain frozen");
+            Assert.That(factory.OlderAudioCount,
+                Is.EqualTo(olderExpected ? 1 : 0), label);
+            Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                Is.EqualTo(baseSnapshot.AudioRevision));
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            frame += count;
+        }
+        CompareOlder(180, "initial legacy RC", false);
+
+        int changed = 0, callbacks = 0;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        FilterInstanceEditorControl filterEditor = Inspector(editor)
+            .Children.OfType<FilterInstanceEditorControl>().Single();
+        Dictionary<string, CheckBox> overrides =
+            (Dictionary<string, CheckBox>)typeof(FilterInstanceEditorControl)
+                .GetField("_overrideToggles",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(filterEditor)!;
+        Dictionary<string, Control> fields =
+            (Dictionary<string, Control>)typeof(FilterInstanceEditorControl)
+                .GetField("_editors",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(filterEditor)!;
+        void Apply() => typeof(FilterInstanceEditorControl)
+            .GetMethod("ApplyDraft",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(filterEditor, null);
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+
+        overrides["CutoffHz"].IsChecked = true;
+        ((TextBox)fields["CutoffHz"]).Text = "380";
+        Apply();
+        await Task.WhenAll(pending.ToArray()).WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 1));
+            Assert.That(workspace.Document.DocumentRevision,
+                Is.EqualTo(document + 1));
+            Assert.That(callbacks, Is.EqualTo(1));
+            Assert.That(changed, Is.EqualTo(1));
+            Assert.That(factory.Preparations.Select(p => p.Id),
+                Is.EqualTo(new[] { synth.Id, parent.Id }));
+            Assert.That(factory.Preparations[0].FilterCutoffHz, Is.EqualTo(380));
+        });
+        CompareOlder(200, "legacy cutoff must not adopt unsupported recurrence",
+            true);
+
+        overrides["Mode"].IsChecked = true;
+        ((ComboBox)fields["Mode"]).SelectedItem = "HighPass";
+        Apply();
+        await Task.WhenAll(pending.ToArray()).WaitAsync(TimeSpan.FromSeconds(8));
+        FilterInstance revisedUse = new(definition);
+        revisedUse.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(380));
+        revisedUse.SetStageParameter(1, "Mode",
+            FilterParameterValue.FromChoice("HighPass"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 2));
+            Assert.That(workspace.Document.DocumentRevision,
+                Is.EqualTo(document + 2));
+            Assert.That(callbacks, Is.EqualTo(2));
+            Assert.That(changed, Is.EqualTo(2));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(4));
+            Assert.That(factory.Preparations.Skip(2).Select(p => p.Id),
+                Is.EqualTo(new[] { synth.Id, parent.Id }));
+            Assert.That(factory.Preparations.Skip(2)
+                .All(p => p.AudioRevision == audio + 2), Is.True);
+            Assert.That(synth.Graph.Nodes.OfType<FmFilterNode>().Single()
+                .Configuration!.GetStageParameters(1)
+                .GetParameter("Mode").ChoiceValue, Is.EqualTo("HighPass"));
+        });
+        CompareOlder(200, "legacy highpass choice must not steal old LP state",
+            true);
+
+        // Independently authored fresh voice demonstrates that the new
+        // *both-property* definition is effective even while the old note
+        // remains deliberately frozen on the incompatible legacy state.
+        Resolver freshResolver = new(synth.Id);
+        freshResolver.Sound = Author(revisedUse, freshResolver);
+        PlaybackSession fresh = IndependentSession(config, freshResolver);
+        StartIndependent(fresh, synth.Id);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(218), [new StartNoteCommand(synth.Id)]);
+        float[] mixed = backend.Render(240);
+        float[] oldOnly = new float[240], newOnly = new float[240];
+        older.Render(frame, 240, oldOnly);
+        fresh.Render(0, 240, newOnly);
+        double audibleNew = 0;
+        for (int i = 0; i < mixed.Length; i++)
+        {
+            Assert.That(mixed[i], Is.EqualTo(oldOnly[i] + newOnly[i])
+                .Within(7e-4f),
+                "new RC HighPass note joins frozen old LowPass at " + (frame + i));
+            audibleNew = Math.Max(audibleNew, Math.Abs(newOnly[i]));
+        }
+        Assert.That(audibleNew, Is.GreaterThan(0.05));
+        Assert.That(factory.OlderAudioCount, Is.EqualTo(1));
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(217), [new NoteCutCommand()]);
+        backend.Render(7);
+        Assert.Multiple(() =>
+        {
+            Assert.That(factory.OlderAudioCount, Is.Zero,
+                "legacy older status clears only when the old owner retires");
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                Is.EqualTo(baseSnapshot.AudioRevision));
+        });
+        Apply();
+        await Task.WhenAll(pending.ToArray());
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 2));
+            Assert.That(callbacks, Is.EqualTo(2));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(4));
+        });
+    }
+
     [AvaloniaTest]
     public async Task SourceSampleSelectorPublishesFrozenWorkerPreparedReplacementAndHeldPcm()
     {
