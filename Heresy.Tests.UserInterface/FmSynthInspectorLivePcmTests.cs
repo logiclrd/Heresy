@@ -16,7 +16,7 @@ using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
 using Heresy.Render.Playback;
-using Heresy.Render.Realtime;
+using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Views;
