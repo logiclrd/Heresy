@@ -1212,6 +1212,198 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
     }
 
     [AvaloniaTest]
+    public async Task ScriptReleaseLimitNullAndFiniteLiveEditsRespectDefiniteOffAndFrozenRelease()
+    {
+        // C2(ad): the actual embedded Script editor supports a blank
+        // Release limit. Null is NOT an implicit sustain/release lifecycle,
+        // even if the expression refers to releaseSeconds. A held voice
+        // can adopt either direction without restarting its active clock.
+        // Once an actual finite release begins, a new null definition must
+        // not truncate the original release or lie about older-audio status.
+        const string expression =
+            "releaseSeconds < 0 ? 0.6 : 0.6 * Math.Max(0, 1 - releaseSeconds / 0.09)";
+        foreach (bool initiallyFinite in new[] { true, false })
+        {
+            DocumentWorkspace workspace = new();
+            ScriptEnvelopeDefinition script =
+                EnvelopeDocumentEditor.CreateScriptEnvelope(
+                    workspace, "C2(ad) nullable release " + initiallyFinite,
+                    expression,
+                    initiallyFinite ? TimeSpan.FromMilliseconds(90) : null);
+            FmSynthDefinition child = FmSynthDocumentEditor.CreateFmSynth(
+                workspace, "C2(ad) script output " + initiallyFinite);
+            int envelopeId = FmSynthDocumentEditor.AddEnvelopeNode(
+                workspace, child, script.Id, 200, 90);
+            FmSynthDocumentEditor.SetOutputNode(workspace, child, envelopeId);
+            FmSynthDefinition parent = ReferencingParent(workspace, child);
+            TrackingFactory factory = new(MonoConfiguration(), script.Id);
+            ManualBackend backend = new();
+            using SongPlaybackTransport transport = new(backend, factory);
+            int channel = initiallyFinite ? 185 : 186;
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(channel),
+                [new StartNoteCommand(child.Id)]);
+            Assert.That(backend.Render(27),
+                Is.All.EqualTo(0.6f).Within(4e-5f));
+            uint baseSnapshot = transport.CurrentPlaybackSnapshot.AudioRevision;
+            uint audio = workspace.Document.AudioRevision;
+            uint document = workspace.Document.DocumentRevision;
+            int callbacks = 0, changed = 0;
+            List<Task> pending = [];
+            List<SharedAudioObjectCommittedEventArgs> notifications = [];
+            workspace.SharedAudioObjectCommitted += (_, evt) =>
+            {
+                notifications.Add(evt);
+                pending.Add(transport.PublishSharedObjectEditAsync(
+                    evt.Document, evt.ObjectId));
+            };
+            FmSynthEditorControl synthEditor = new(workspace, child,
+                () => { }, _ => changed++,
+                publishSynthEditAsync: () =>
+                {
+                    callbacks++;
+                    Task task = transport.PublishSynthEditAsync(
+                        workspace.Document, child.Id);
+                    pending.Add(task);
+                    return task;
+                });
+            ScriptEnvelopeEditorControl editor = Inspector(synthEditor)
+                .Children.OfType<ScriptEnvelopeEditorControl>().Single();
+            TextBox source = Private<TextBox>(editor, "_source");
+            TextBox release = Private<TextBox>(editor, "_release");
+            Button apply = ((StackPanel)
+                ((ScrollViewer)editor.Content!).Content!)
+                .Children.OfType<Button>()
+                .Single(button => Equals(button.Content, "Apply expression"));
+
+            // First edit uses ONLY the real release field: no fake
+            // source replacement or programmatic document mutation.
+            Assert.That(source.Text, Is.EqualTo(expression));
+            release.Text = initiallyFinite ? "" : "0.09";
+            Click(apply);
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            TimeSpan? revisedLimit = initiallyFinite
+                ? null : TimeSpan.FromMilliseconds(90);
+            Assert.Multiple(() =>
+            {
+                Assert.That(script.ReleaseDuration, Is.EqualTo(revisedLimit));
+                Assert.That(script.Source, Is.EqualTo(expression));
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + 1));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + 1));
+                Assert.That(callbacks, Is.EqualTo(1));
+                Assert.That(changed, Is.GreaterThanOrEqualTo(1));
+                Assert.That(notifications.Count, Is.EqualTo(1));
+                Assert.That(notifications[0].ObjectId, Is.EqualTo(script.Id));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(2));
+                Assert.That(factory.Preparations.Select(p => p.SynthId),
+                    Is.EqualTo(new[] { child.Id, parent.Id }));
+                Assert.That(factory.Preparations[0].ScriptReleaseDuration,
+                    Is.EqualTo(revisedLimit));
+                Assert.That(factory.Preparations[0].ScriptSource,
+                    Is.EqualTo(expression));
+                Assert.That(factory.Preparations.All(p =>
+                    p.AudioRevision == audio + 1), Is.True);
+                Assert.That(factory.OlderAudioCount, Is.Zero);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            Assert.That(backend.Render(101),
+                Is.All.EqualTo(0.6f).Within(4e-5f),
+                "held original-note clock and unchanged output during "
+                    + "the release-only compatible revision");
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+
+            // A semantic no-op cannot cause a second frozen publication.
+            Click(apply);
+            await Task.WhenAll(pending.ToArray());
+            Assert.Multiple(() =>
+            {
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + 1));
+                Assert.That(callbacks, Is.EqualTo(1));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(2));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot));
+            });
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(channel), [new NoteOffCommand()]);
+            if (initiallyFinite)
+            {
+                // No declared limit => no implicit Script sustain. Definite
+                // Note Off ends this direct-output Synth; the authored
+                // releaseSeconds expression cannot invent a lifecycle.
+                float[] afterOff = backend.Render(80);
+                Assert.That(afterOff.Skip(1),
+                    Is.All.EqualTo(0f).Within(1e-6f),
+                    "null Script release cannot claim an ongoing tail");
+                Assert.That(factory.OlderAudioCount, Is.Zero);
+            }
+            else
+            {
+                // Null -> finite before Note Off MUST introduce a real
+                // 90-frame release; a post-Off deletion of the bound then
+                // cannot rewrite that existing release's original timeline.
+                float[] firstRelease = backend.Render(20);
+                for (int i = 0; i < firstRelease.Length; i++)
+                    Assert.That(firstRelease[i],
+                        Is.EqualTo((float)(0.6 * (1 - i / 90.0)))
+                            .Within(4e-5f),
+                        "adopted finite release frame " + i);
+                release.Text = "";
+                Click(apply);
+                await Task.WhenAll(pending.ToArray())
+                    .WaitAsync(TimeSpan.FromSeconds(8));
+                Assert.Multiple(() =>
+                {
+                    Assert.That(script.ReleaseDuration, Is.Null);
+                    Assert.That(workspace.Document.AudioRevision,
+                        Is.EqualTo(audio + 2));
+                    Assert.That(callbacks, Is.EqualTo(2));
+                    Assert.That(notifications.Count, Is.EqualTo(2));
+                    Assert.That(factory.Preparations.Count, Is.EqualTo(4));
+                    Assert.That(factory.Preparations[^2].ScriptReleaseDuration,
+                        Is.Null);
+                    Assert.That(factory.OlderAudioCount, Is.EqualTo(1),
+                        "already-releasing finite Script must refuse null");
+                });
+                float[] frozen = backend.Render(20);
+                for (int i = 0; i < frozen.Length; i++)
+                    Assert.That(frozen[i],
+                        Is.EqualTo((float)(0.6 * (1 - (20 + i) / 90.0)))
+                            .Within(4e-5f),
+                        "old release duration survives incompatible edit " + i);
+                Assert.That(factory.OlderAudioCount, Is.EqualTo(1));
+                // Fresh notes use null immediately even while the old
+                // finite-generation release is still sounding.
+                await transport.SendLiveEventAsync(workspace.Document,
+                    ChannelTarget.Virtual(187),
+                    [new StartNoteCommand(child.Id)]);
+                float[] mixed = backend.Render(4);
+                for (int i = 0; i < mixed.Length; i++)
+                {
+                    double old = 0.6 * (1 - (40 + i) / 90.0);
+                    Assert.That(mixed[i],
+                        Is.EqualTo((float)(old + 0.6)).Within(5e-5f),
+                        "fresh unbounded Script coexists with old finite release");
+                }
+                await transport.SendLiveEventAsync(workspace.Document,
+                    ChannelTarget.Virtual(187), [new NoteOffCommand()]);
+                backend.Render(120);
+                Assert.That(factory.OlderAudioCount, Is.Zero,
+                    "original 90-ms release retires without a stale voice");
+            }
+            Assert.Multiple(() =>
+            {
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot));
+            });
+        }
+    }
+
+    [AvaloniaTest]
     public async Task SharedMultipointNodeShapeAndSinglePointSustainUseHeldClockAndPreserveRelease()
     {
         // C2(u): larger Node family batch: edit FIVE nodes' values,
