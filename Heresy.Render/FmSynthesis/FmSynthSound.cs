@@ -2030,11 +2030,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				&& next._nodes[i].Source is InstrumentSound revisedInstrument
 				&& bound?.ActiveVolumeEnvelope is NodeEnvelopeCurve oldVolume)
 			{
+				ISound? revisedSource = null;
+				NodeEnvelopeCurve? newVolume = null;
 				bool known = originalInstrument.CanShareFrozenBoundToneWith(
 					revisedInstrument, bound.BoundInstrumentToneSlot)
 					&& revisedInstrument.TryGetPreparedBoundToneVolume(
-						bound.BoundInstrumentToneSlot, out ISound? revisedSource,
-						out NodeEnvelopeCurve? newVolume, out _, out _, out _);
+						bound.BoundInstrumentToneSlot, out revisedSource,
+						out newVolume, out _, out _, out _);
 				if (!known || newVolume is null
 					|| (!oldVolume.HasSameFrozenShapeAs(newVolume)
 						&& !canMigrateVolumes))
