@@ -1809,10 +1809,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// replacing an *audible* curve can change its retirement
 					// deadline or erase a still-audible outgoing release.
 					// Preserve the old generation until a stateful release
-					// migration policy can prove both lifetimes.
+					// migration policy can prove both lifetimes. Do not require
+					// either revision to be eligible for a bounded-output fade:
+					// removing a Script release limit is itself a reason for
+					// refusal, not permission to replace the releasing curve.
 					if (live.HasNoteOffTime
-						&& _canFadeBoundedOutput
-						&& next._canFadeBoundedOutput
 						&& _statelessAudioPathNodes[i]
 						&& !HasSameFrozenEnvelope(old, revised))
 						return false;
