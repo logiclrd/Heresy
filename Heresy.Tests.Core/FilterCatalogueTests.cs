@@ -65,7 +65,8 @@ public sealed class FilterCatalogueTests
 					$"{kind}.{descriptor.Name}");
 				Assert.That(descriptor.IsModulatable,
 					Is.EqualTo(descriptor.Kind == FilterParameterValueKind.Number
-						&& !descriptor.IsStructural));
+						&& !descriptor.IsStructural
+						&& descriptor.Name != "TransitionWidthHz"));
 				Assert.That(descriptor.Name, Does.Not.Contain("."));
 			}
 			Assert.That(((IList)descriptors).IsReadOnly, Is.True);
@@ -75,7 +76,7 @@ public sealed class FilterCatalogueTests
 	}
 
 	[Test]
-	public void StructuralPhaseAndWindowAreChoicesAndNeverFmInputs()
+	public void SameRingFirDesignControlsAreNonstructuralButNotFmPorts()
 	{
 		foreach (FilterKind kind in new[]
 			{ FilterKind.FirLowPass, FilterKind.FirHighPass,
@@ -83,8 +84,17 @@ public sealed class FilterCatalogueTests
 		{
 			FilterParameterDescriptor phase = FilterCatalogue.GetParameters(kind)
 				.Single(p => p.Name == "PhaseResponse");
-			Assert.That(phase.IsStructural, Is.True);
+			Assert.That(phase.IsStructural, Is.False);
 			Assert.That(phase.IsModulatable, Is.False);
+			FilterParameterDescriptor window = FilterCatalogue.GetParameters(kind)
+				.Single(p => p.Name == "Window");
+			Assert.That(window.IsStructural, Is.False);
+			Assert.That(window.IsModulatable, Is.False);
+			FilterParameterDescriptor width = FilterCatalogue.GetParameters(kind)
+				.Single(p => p.Name == "TransitionWidthHz");
+			Assert.That(width.IsStructural, Is.False);
+			Assert.That(width.IsModulatable, Is.False,
+				"worker-prepared design width is not an audio-rate parameter");
 			Assert.That(phase.Choices,
 				Is.EqualTo(new[] { "Linear", "Minimum", "Maximum" }));
 			Assert.That(FilterCatalogue.GetParameters(kind).Single(

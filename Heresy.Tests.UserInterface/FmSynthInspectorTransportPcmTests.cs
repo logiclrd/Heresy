@@ -2354,26 +2354,30 @@ public sealed class FmSynthInspectorTransportPcmTests
 
 
     [AvaloniaTest]
-    public async Task AllFourFirKindsWindowPhaseTapAndWidthRefuseStructuralLiveMigration()
+    public async Task AllFourFirKindsSameRingDesignEditsMigrateWhileLatencyAndTapsRefuse()
     {
-        // C2(z): eight per-kind Window/PhaseResponse structural choice
-        // changes plus representative TapCount and TransitionWidthHz
-        // structural numbers. They are not numeric live-retune requests.
-        // The original convolution history stays older; a fresh note
-        // uses the independently prewarmed revised FIR kernel.
+        // C2(ac): Window and Width retain the original convolution ring and
+        // kernel transition; same-zero-latency Minimum/Maximum phase swaps
+        // migrate. TapCount and Linear-vs-nonlinear fixed-latency changes
+        // still refuse old voices, while new notes use the revised kernel.
         const int rate = 8000;
-        (FilterKind Kind, string Parameter, string? Choice, double? Value)[] cases =
+        (FilterKind Kind, string Parameter, string? Choice,
+            double? Value, string? InitialPhase)[] cases =
         [
-            (FilterKind.FirLowPass, "Window", "Hann", null),
-            (FilterKind.FirLowPass, "PhaseResponse", "Minimum", null),
-            (FilterKind.FirHighPass, "Window", "Blackman", null),
-            (FilterKind.FirHighPass, "PhaseResponse", "Maximum", null),
-            (FilterKind.FirBandPass, "Window", "Hann", null),
-            (FilterKind.FirBandPass, "PhaseResponse", "Minimum", null),
-            (FilterKind.FirNotch, "Window", "Blackman", null),
-            (FilterKind.FirNotch, "PhaseResponse", "Maximum", null),
-            (FilterKind.FirLowPass, "TapCount", null, 63),
-            (FilterKind.FirNotch, "TransitionWidthHz", null, 350),
+            (FilterKind.FirLowPass, "Window", "Hann", null, null),
+            (FilterKind.FirLowPass, "PhaseResponse", "Minimum", null, null),
+            (FilterKind.FirHighPass, "Window", "Blackman", null, null),
+            (FilterKind.FirHighPass, "PhaseResponse", "Maximum", null, null),
+            (FilterKind.FirBandPass, "Window", "Hann", null, null),
+            (FilterKind.FirBandPass, "PhaseResponse", "Minimum", null, null),
+            (FilterKind.FirNotch, "Window", "Blackman", null, null),
+            (FilterKind.FirNotch, "PhaseResponse", "Maximum", null, null),
+            (FilterKind.FirLowPass, "TapCount", null, 63, null),
+            (FilterKind.FirNotch, "TransitionWidthHz", null, 350, null),
+            (FilterKind.FirLowPass, "PhaseResponse", "Maximum", null, "Minimum"),
+            (FilterKind.FirHighPass, "PhaseResponse", "Minimum", null, "Maximum"),
+            (FilterKind.FirBandPass, "PhaseResponse", "Maximum", null, "Minimum"),
+            (FilterKind.FirNotch, "PhaseResponse", "Minimum", null, "Maximum"),
         ];
         foreach (var item in cases)
         {
@@ -2394,13 +2398,24 @@ public sealed class FmSynthInspectorTransportPcmTests
                     new KeyValuePair<string, FilterParameterValue>(
                         "CutoffHz", FilterParameterValue.FromNumber(1000)),
                 ]);
+            if (item.InitialPhase is not null)
+                newStage = newStage.WithDefaults([
+                    new KeyValuePair<string, FilterParameterValue>(
+                        "PhaseResponse",
+                        FilterParameterValue.FromChoice(item.InitialPhase)),
+                ]);
             FilterDocumentEditor.ApplyStage(workspace, definition, 1,
                 oldStage, newStage.Name, newStage.Kind, newStage.DefaultParameters);
             FilterParameterDescriptor descriptor =
                 FilterCatalogue.GetParameters(item.Kind).Single(d =>
                     d.Name == item.Parameter);
-            Assert.That(descriptor.IsStructural, Is.True,
-                item.Kind + ": must be structural in the Filter catalogue");
+            bool compatible = item.Parameter != "TapCount"
+                && !(item.Parameter == "PhaseResponse"
+                    && item.InitialPhase is null);
+            Assert.That(descriptor.IsStructural,
+                Is.EqualTo(item.Parameter == "TapCount"),
+                item.Kind + ": only tap-count is structurally incompatible"
+                    + " by descriptor; phase latency uses runtime preflight");
 
             FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
                 workspace, "C2(z) structural held " + item.Kind);
@@ -2443,9 +2458,16 @@ public sealed class FmSynthInspectorTransportPcmTests
             }
             Resolver olderResolver = new(synth.Id);
             FilterInstance uneditedUse = new(definition);
-            olderResolver.Sound = Author(uneditedUse, olderResolver);
+            FmSynthSound running = Author(uneditedUse, olderResolver);
+            olderResolver.Sound = running;
             PlaybackSession older = IndependentSession(config, olderResolver);
             StartIndependent(older, synth.Id);
+            Resolver untouchedResolver = new(synth.Id);
+            untouchedResolver.Sound = Author(
+                new FilterInstance(definition), untouchedResolver);
+            PlaybackSession untouched = IndependentSession(
+                config, untouchedResolver);
+            StartIndependent(untouched, synth.Id);
             float[] initial = backend.Render(260), expectedInitial = new float[260];
             older.Render(0, 260, expectedInitial);
             for (int i = 0; i < initial.Length; i++)
@@ -2513,7 +2535,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Assert.That(workspace.Document.DocumentRevision,
                     Is.EqualTo(document + 1));
                 Assert.That(callbacks, Is.EqualTo(1),
-                    "one semantic structural publication");
+                    "one semantic FIR design publication");
                 Assert.That(changed, Is.GreaterThanOrEqualTo(1));
                 Assert.That(committed.GetOverrides(1)[item.Parameter],
                     Is.EqualTo(requested), "real Filter inspector persisted selection");
@@ -2526,17 +2548,32 @@ public sealed class FmSynthInspectorTransportPcmTests
                     Is.EqualTo(definition.Id));
                 Assert.That(backend.OpenCount, Is.EqualTo(1));
             });
+            FilterInstance revisedUse = new(definition);
+            revisedUse.SetStageParameter(1, item.Parameter, requested);
+            if (compatible)
+            {
+                FmSynthSound revisedSound = Author(revisedUse, olderResolver);
+                older.AdoptLiveSynthParameters(synth.Id, running, revisedSound);
+                olderResolver.Sound = revisedSound;
+                running = revisedSound;
+            }
             float[] stillOld = backend.Render(240), oldExpected = new float[240];
             older.Render(260, 240, oldExpected);
+            float[] unchangedOld = new float[240];
+            untouched.Render(260, 240, unchangedOld);
+            if (compatible)
+                Assert.That(stillOld.Zip(unchangedOld,
+                        (current, old) => Math.Abs(current - old)).Max(),
+                    Is.GreaterThan(1e-5),
+                    item.Kind + ": compatible design edit actually changes old PCM");
             for (int i = 0; i < stillOld.Length; i++)
                 Assert.That(stillOld[i], Is.EqualTo(oldExpected[i])
                     .Within(8e-4f),
-                    item.Kind + ": structurally changed Filter cannot steal original PCM");
-            Assert.That(factory.OlderAudioCount, Is.EqualTo(1),
-                item.Kind + ": structural selection must retain older generation");
+                    item.Kind + ": original convolution ring and kernel policy");
+            Assert.That(factory.OlderAudioCount,
+                Is.EqualTo(compatible ? 0 : 1),
+                item.Kind + ": compatible choice is current, latency/tap refused");
 
-            FilterInstance revisedUse = new(definition);
-            revisedUse.SetStageParameter(1, item.Parameter, requested);
             Resolver freshResolver = new(synth.Id),
                 unchangedFreshResolver = new(synth.Id);
             freshResolver.Sound = Author(revisedUse, freshResolver);
@@ -2567,8 +2604,9 @@ public sealed class FmSynthInspectorTransportPcmTests
             Assert.Multiple(() =>
             {
                 Assert.That(difference, Is.GreaterThan(1e-5),
-                    item.Kind + ": structural choice must affect freshly started PCM");
-                Assert.That(factory.OlderAudioCount, Is.EqualTo(1));
+                    item.Kind + ": revised FIR design affects freshly started PCM");
+                Assert.That(factory.OlderAudioCount,
+                    Is.EqualTo(compatible ? 0 : 1));
                 Assert.That(backend.OpenCount, Is.EqualTo(1));
                 Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
                     Is.EqualTo(originalSnapshot.AudioRevision));
@@ -2577,7 +2615,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 ChannelTarget.Virtual(245), [new NoteCutCommand()]);
             backend.Render(7);
             Assert.That(factory.OlderAudioCount, Is.Zero,
-                item.Kind + ": older status clears only after original owner cut");
+                item.Kind + ": correct generation count after original owner cut");
             Apply();
             await Task.WhenAll(pending.ToArray())
                 .WaitAsync(TimeSpan.FromSeconds(12));

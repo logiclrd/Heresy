@@ -203,10 +203,10 @@ public sealed class LinearPhaseFirFilterTests
 	}
 
 	[Test]
-	public void StructuralTapWindowAndWidthChangesResetCircularHistory()
+	public void TapCountAndFixedLatencyRegimeChangesResetCircularHistory()
 	{
 		foreach (string structural in new[] {
-			"TapCount", "Window", "TransitionWidthHz",
+			"TapCount", "PhaseResponse",
 		})
 		{
 			FilterInstance instance = CreateUse(FilterKind.FirLowPass, taps: 127);
@@ -219,13 +219,9 @@ public sealed class LinearPhaseFirFilterTests
 					instance.SetStageParameter(1, structural,
 						FilterParameterValue.FromNumber(255));
 					break;
-				case "Window":
+				case "PhaseResponse":
 					instance.SetStageParameter(1, structural,
-						FilterParameterValue.FromChoice("Blackman"));
-					break;
-				default:
-					instance.SetStageParameter(1, structural,
-						FilterParameterValue.FromNumber(600));
+						FilterParameterValue.FromChoice("Minimum"));
 					break;
 			}
 			runtime.Configure(new FilterChain(new[] { instance }));
