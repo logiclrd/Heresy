@@ -250,6 +250,36 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			scalar[^1].Should().BeApproximately(0.8f, 2e-4f,
 				"the same current Multi note must still accept upstream edits,"
 				+ " while older structural voices retain the old oscillator");
+			// A growth beyond the initial seven-constituent plus reserved
+			// headroom must be prepared off PCM, then *the newer note only*
+			// adopts it despite two definitively older structural voices.
+			synth.Graph = new FmSynthGraph([
+				new FmConstantNode(0, 0.2),
+				new FmMultiNode(1, inputNodeId: 0, voiceCount: 12,
+					detune: 0, randomizePhase: false, gainCompensation: false),
+			], 1);
+			document.MarkChanged(affectsAudio: true);
+			edits.EnqueueLiveSynthParameters(id,
+				factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), id));
+			float[] pendingPcm = new float[16];
+			output.Render(pendingPcm.Length, pendingPcm);
+			using FirPreparationScheduler scheduler = new();
+			IFirPreparationAudioSource work = (IFirPreparationAudioSource)output;
+			work.QueuePendingFirControls(scheduler);
+			SpinWait.SpinUntil(
+				() => scheduler.CompletedMultiExpansionCount >= 1
+					|| scheduler.Fault is not null,
+				TimeSpan.FromSeconds(5)).Should().BeTrue(
+					"Multi expansion must be prepared outside PCM");
+			scheduler.Fault.Should().BeNull();
+			work.AdoptPreparedFirControls();
+			float[] grown = new float[512];
+			output.Render(grown.Length, grown);
+			grown[^1].Should().BeApproximately(2.6f, 2e-3f,
+				"one newer 12-child Multi (2.4) must coexist with"
+				+ " two unmodified old notes (0.2)");
+
 		}
 		finally
 		{
