@@ -47,6 +47,69 @@ public sealed class NodeEnvelopeGraphGeometryTests
 	}
 
 	[Test]
+	public void ValueLimitGuidesUseActualVminVmaxRatherThanNodeBaseline()
+	{
+		// The bottom X axis is the *edge of the viewport*, not the zero
+		// value line. Vmin/Vmax each have their own interior horizontal guide.
+		NodeEnvelopeGraphGeometry geometry = new(Nodes(), 440, 250, -2, 6);
+		(double minY, double maxY) = geometry.ValueLimitGuideYs;
+		Assert.That(minY, Is.EqualTo(geometry.Y(-2)).Within(1e-10));
+		Assert.That(maxY, Is.EqualTo(geometry.Y(6)).Within(1e-10));
+		Assert.That(maxY, Is.GreaterThan(geometry.Top));
+		Assert.That(minY, Is.LessThan(geometry.Bottom));
+		Assert.That(minY, Is.GreaterThan(maxY));
+		Assert.That(minY, Is.Not.EqualTo(geometry.Bottom),
+			"Vmin must not be identified with the bottom X baseline");
+		Assert.That(maxY, Is.Not.EqualTo(geometry.Top),
+			"Vmax must not be identified with the top frame");
+		Assert.That(geometry.Y(0), Is.Not.EqualTo(minY).And.Not.EqualTo(maxY),
+			"zero is a separate transform coordinate, not either guide");
+	}
+
+	[Test]
+	public void ValueLimitGuidesReflowWithRangeViewportAndLiveNodePreviews()
+	{
+		EnvelopeNode[] lowNodes =
+		[
+			new(TimeSpan.Zero, -0.5),
+			new(TimeSpan.FromSeconds(1), 0.5),
+		];
+		EnvelopeNode[] highNodes =
+		[
+			new(TimeSpan.Zero, 12.0),
+			new(TimeSpan.FromSeconds(1), 18.0),
+		];
+		NodeEnvelopeGraphGeometry small =
+			new(lowNodes, 440, 250, -4, 8);
+		NodeEnvelopeGraphGeometry large =
+			new(lowNodes, 440, 410, -4, 8);
+		(double smallMin, double smallMax) = small.ValueLimitGuideYs;
+		(double bigMin, double bigMax) = large.ValueLimitGuideYs;
+		Assert.That(bigMin, Is.GreaterThan(smallMin));
+		Assert.That(bigMax, Is.GreaterThan(smallMax));
+		Assert.That((bigMin - bigMax) / (large.Bottom - large.Top),
+			Is.EqualTo((smallMin - smallMax) / (small.Bottom - small.Top))
+				.Within(1e-12));
+		Assert.That(small.WithNodes(highNodes).ValueLimitGuideYs,
+			Is.EqualTo(small.ValueLimitGuideYs),
+			"outside-range node previews cannot normalize the guide coordinates");
+
+		NodeEnvelopeGraphGeometry shifted =
+			new(highNodes, 440, 250, 10, 20);
+		Assert.That(shifted.ValueLimitGuideYs.MinY,
+			Is.EqualTo(shifted.Y(10)).Within(1e-10));
+		Assert.That(shifted.ValueLimitGuideYs.MaxY,
+			Is.EqualTo(shifted.Y(20)).Within(1e-10));
+		Assert.That(shifted.ValueLimitGuideYs,
+			Is.EqualTo(new NodeEnvelopeGraphGeometry(lowNodes, 440, 250,
+				10, 20).ValueLimitGuideYs),
+			"configured limits outside the node-data span must still draw");
+		Assert.That(small.WithNodes(highNodes).ValueLimitGuideYs,
+			Is.Not.EqualTo(shifted.ValueLimitGuideYs),
+			"changing Vmin/Vmax must recompute guide positions");
+	}
+
+	[Test]
 	public void DragGeometryRendersUpdatedPointsWithoutChangingItsFixedAxes()
 	{
 		EnvelopeNode[] before = Nodes();
