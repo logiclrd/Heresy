@@ -1722,9 +1722,8 @@ public sealed class PatternEditorControl : UserControl
 			&& (e.KeyModifiers & channelNavigationBlockers) == 0
 			&& e.Key is Key.Left or Key.Right)
 		{
-			if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+			CommitPendingVolumeOnFocusLoss();
+			_volumeInput.Reset();
 			PatternEditorContextCursor.MoveChannel(
 				_context,
 				_cursor,
@@ -1938,9 +1937,8 @@ _volumeInput.Reset();
 			e.KeyModifiers,
 			out int noteColumnDelta))
 		{
-			if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+			CommitPendingVolumeOnFocusLoss();
+			_volumeInput.Reset();
 			bool moved =
 				PatternEditorContextCursor.MoveToAdjacentNote(
 					_context,
@@ -1960,9 +1958,8 @@ _volumeInput.Reset();
 			e.KeyModifiers,
 			out bool firstRow))
 		{
-			if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+			CommitPendingVolumeOnFocusLoss();
+			_volumeInput.Reset();
 			if (_expandedCell is not null)
 				CollapseVisualEffects(collapseCursor: true);
 
@@ -1990,9 +1987,8 @@ _volumeInput.Reset();
 			e.KeyModifiers,
 			out bool topLeft))
 		{
-			if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+			CommitPendingVolumeOnFocusLoss();
+			_volumeInput.Reset();
 			if (_expandedCell is not null)
 				CollapseVisualEffects(collapseCursor: true);
 
@@ -2016,9 +2012,8 @@ _volumeInput.Reset();
 		if ((e.KeyModifiers & homeEndBlockers) == 0
 			&& e.Key is Key.Home or Key.End)
 		{
-			if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+			CommitPendingVolumeOnFocusLoss();
+			_volumeInput.Reset();
 			if (_expandedCell is not null)
 				CollapseVisualEffects(collapseCursor: true);
 
@@ -2043,9 +2038,8 @@ _volumeInput.Reset();
 		{
 			int fromRow = _cursor.Row;
 			int fromChannel = _cursor.Channel;
-			if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+			CommitPendingVolumeOnFocusLoss();
+			_volumeInput.Reset();
 			int movedRows = PatternPageNavigation.Move(
 				_context, _cursor, _scroll.Viewport.Height, RowHeight,
 				down: e.Key == Key.PageDown);
@@ -2066,25 +2060,22 @@ _volumeInput.Reset();
 		switch (e.Key)
 		{
 			case Key.Left:
-				if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+				CommitPendingVolumeOnFocusLoss();
+				_volumeInput.Reset();
 				PatternEditorContextCursor.MoveLeft(_context, _cursor);
 				e.Handled = true;
 				break;
 
 			case Key.Right:
-				if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+				CommitPendingVolumeOnFocusLoss();
+				_volumeInput.Reset();
 				PatternEditorContextCursor.MoveRight(_context, _cursor);
 				e.Handled = true;
 				break;
 
 			case Key.Up:
-				if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+				CommitPendingVolumeOnFocusLoss();
+				_volumeInput.Reset();
 				PatternEditorContextCursor.MoveUp(_context, _cursor);
 				if (previouslyExpanded is not null)
 					CollapseVisualEffects(collapseCursor: false);
@@ -2092,9 +2083,8 @@ _volumeInput.Reset();
 				break;
 
 			case Key.Down:
-				if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+				CommitPendingVolumeOnFocusLoss();
+				_volumeInput.Reset();
 				PatternEditorContextCursor.MoveDown(_context, _cursor);
 				if (previouslyExpanded is not null)
 					CollapseVisualEffects(collapseCursor: false);
@@ -2394,9 +2384,8 @@ _volumeInput.Reset();
 			value,
 			out int patternDelta))
 		{
-			if (_volumePreviewAddress is (int pendingRow, int pendingChannel))
-	CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
-_volumeInput.Reset();
+			CommitPendingVolumeOnFocusLoss();
+			_volumeInput.Reset();
 			RefreshVolumePreview();
 			SwitchPattern(patternDelta);
 			e.Handled = true;
@@ -4268,6 +4257,12 @@ _volumeInput.Reset();
 	/// *exact* provisional two-digit display (previous committed units,
 	/// or zero for an empty cell); no unseen second digit is invented.
 	/// Unlike normal two-key entry this does not advance the cursor.</summary>
+	private void CommitPendingVolumeOnFocusLoss()
+	{
+		if (_volumePreviewAddress is (int row, int channel))
+			CommitPendingVolumeOnFocusLoss(row, channel);
+	}
+
 	private void CommitPendingVolumeOnFocusLoss(int displayRow, int channel)
 	{
 		if (_volumePreviewAddress != (displayRow, channel)
