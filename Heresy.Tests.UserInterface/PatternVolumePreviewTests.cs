@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading.Tasks;
 
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
@@ -31,6 +32,92 @@ public sealed class PatternVolumePreviewTests
             Is.EqualTo(expected));
         Assert.That(() => PatternVolumePreviewRenderer.PendingText(7, committed),
             Throws.TypeOf<ArgumentOutOfRangeException>());
+    }
+
+    [AvaloniaTest]
+    [TestCase("48", "5", 58)]
+    [TestCase("03", "6", 63)]
+    [TestCase("..", "4", 40)]
+    [TestCase("00", "0", 0)]
+    public void LostCellFocusCommitsExactlyTheDisplayedPartialVolume(
+        string initial, string firstDigit, int expected)
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 3, 1);
+        if (initial != "..")
+            PatternDocumentEditor.SetVolume(workspace, pattern, 0, 0,
+                int.Parse(initial) / 64.0);
+        PatternEditorControl editor = Editor(workspace, pattern);
+        SetCursor(editor, 0, 0, PatternCellField.Volume);
+        TextBlock display = Fields<TextBlock>(editor, "_volumeTexts")[(0, 0)];
+        Border cell = Fields<Border>(editor, "_cellBorders")[(0, 0)];
+        uint before = workspace.Document.AudioRevision;
+
+        Type(editor, 0, 0, firstDigit);
+        Assert.That(string.Concat(((Run)display.Inlines![0]).Text,
+            ((Run)display.Inlines[1]).Text),
+            Is.EqualTo(expected.ToString("00")));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before));
+
+        cell.RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
+
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(expected / 64.0));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(
+            before + (initial == expected.ToString("00") ? 0U : 1U)));
+        Assert.That(Cursor(editor).Row, Is.Zero,
+            "focus-loss commit must not advance the tracker cursor");
+        Assert.That(display.Text, Is.EqualTo(expected.ToString("00")));
+        Assert.That(display.Inlines, Is.Empty);
+        cell.RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(
+            before + (initial == expected.ToString("00") ? 0U : 1U)),
+            "repeated focus loss cannot commit again");
+    }
+
+    [AvaloniaTest]
+    public void InvalidPartialVolumeOnFocusLossMustNotInventAnotherUnitsDigit()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 3, 1);
+        PatternDocumentEditor.SetVolume(workspace, pattern, 0, 0, 48.0 / 64.0);
+        PatternEditorControl editor = Editor(workspace, pattern);
+        SetCursor(editor, 0, 0, PatternCellField.Volume);
+        TextBlock display = Fields<TextBlock>(editor, "_volumeTexts")[(0, 0)];
+        uint before = workspace.Document.AudioRevision;
+
+        Type(editor, 0, 0, "6");
+        Assert.That(((Run)display.Inlines![1]).Text, Is.EqualTo("8"));
+        Fields<Border>(editor, "_cellBorders")[(0, 0)]
+            .RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(48.0 / 64.0));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before));
+        Assert.That(display.Text, Is.EqualTo("48"));
+    }
+
+    [AvaloniaTest]
+    public async Task KeyboardNavigationCommitsPendingVolumeBeforeChangingCells()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 3, 1);
+        PatternEditorControl editor = Editor(workspace, pattern);
+        SetCursor(editor, 0, 0, PatternCellField.Volume);
+        uint before = workspace.Document.AudioRevision;
+        Type(editor, 0, 0, "4");
+
+        KeyEventArgs key = new() { Key = Key.Down };
+        Task task = (Task)typeof(PatternEditorControl)
+            .GetMethod("OnCellKeyDownAsync",
+                BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(editor, [0, 0, key])!;
+        await task;
+        Assert.That(Cursor(editor).Row, Is.EqualTo(1));
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(40.0 / 64.0));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
+        Assert.That(Fields<TextBlock>(editor, "_volumeTexts")[(0, 0)].Text,
+            Is.EqualTo("40"));
     }
 
     [AvaloniaTest]
