@@ -1519,6 +1519,92 @@ callback/CPU-load stress, C6 device listening and C7 final signoff
 remain separate and open. PR #12 remains draft/unmerged, with
 C4 and the overarching all-properties TODO unchecked.
 
+## C4(n) — audible Node Envelope edit after Note Off, atomic refusal and old-voice retirement (2026-11-14)
+
+**GREEN bounded release/PCM regression; no production change.**
+The renderer's whole-graph preflight in
+`FmSynthSound.CanAdoptRunningState` already declines a changed
+**audible** frozen `NodeEnvelopeCurve` once the held Synth's
+`SoundState.HasNoteOffTime` is true, where its bounded audible
+output path can be checked. This is not a general ban on otherwise
+compatible scalar updates during a release. The remaining risk was
+whether that refusal really preserved *every* original node and
+Filter state, and whether the session's old-generation warning was
+sticky but retired at the old envelope's correct end.
+
+Added parameterized
+`FmSynthNnaVirtualLifecycleTests.ReleasingAudibleNodeEnvelopeEditRefusesWholeGraphAndRetainsStickyCurrency`
+in [`fafd738`](https://github.com/logiclrd/Heresy/commit/fafd7389618f5bfe207155631be6486195dbbdd8).
+The original graph is **Constant (0.4) × audible Node Envelope
+(40-ms final point; one-node sustain) → OnePole at 240 Hz with a
+4-ms authored tail**. Its physical note begins at frame 0
+(1,000 Hz session), enters actual Note Off/release at **frame 12**,
+and is rendered through frame 16 before the edit. The two cases
+compile an alternative same-`EnvelopeId` curve with a final point
+at **5 ms** or **85 ms**; *simultaneously* the proposed graph changes
+the Constant to **0.9** and Filter cutoff to **60 Hz** while
+retaining the same graph wiring and stage plan.
+
+For both cases, `CanPrepareMultiExpansion` must reject the
+whole proposed revision. The existing physical `PlaybackVoice.Sound`
+continues to be the **original compiled Synth**; it is marked as
+using **older audio immediately**, its original one-shot Note Off
+timestamp survives, and its `GetEndFrameExclusive` is unchanged.
+No partial Constant update, envelope rewrite, filter coefficient
+change, tail reset or new worker onset is permitted.
+
+**Independent session/PCM evidence:** A second unchanged
+`PlaybackSession` is rendered at *exactly the same frame boundaries*
+as the edited session. Every PCM frame is compared at
+**1e-5** tolerance through the refused edit, release,
+uninterrupted OnePole tail, and final retirement. A later authored
+successor to the **refused definition** cannot migrate a voice still
+sounding the older predecessor, so sticky currency persists. The
+test also explicitly publishes a separate **compatible Constant
+edit against the actually sounding original generation** at frame
+**22** (0.4→0.65 with the unchanged original frozen Envelope and
+OnePole configuration). Both edited and reference sessions adopt
+it, prove identical continuing PCM, and retain the original
+release deadline and **same frame-12 Note Off**. Crucially,
+`CountOlderAudioVoices()` **remains 1** even though this latter
+independent migration succeeds: accepting a future edit cannot
+erase an applicable earlier missed revision.
+
+At **frame 24**, both sessions start a fresh current-generation
+virtual note using a separate latest Synth; it must not acquire
+the physical voice's older-audio status. The test compares PCM
+and checks **one old voice** immediately before the original
+release-plus-authored-Filter-tail deadline. Rendering across that
+exclusive boundary retires the old physical note and changes
+the older-audio count **1→0**, while the newly started virtual
+note continues. The test derives this end from the *original*
+prepared Synth and separately checks agreement with the
+unchanged reference state; it does not substitute the revised
+Envelope's shorter or longer end.
+
+[CI #43662393967](https://github.com/logiclrd/Heresy/actions/runs/43662393967)
+is **SUCCESS** at the C4(n) test-only HEAD `fafd7389618f5bfe207155631be6486195dbbdd8`.
+**3,763/3,763 tests** passed: Core 910, Render.File 29,
+Render 1,213 (two new parameterized cases), Scripting 105,
+Playback 356 and UI 1,150. Release desktop host,
+Windows apphost resources, versioned release-bundle smoke and
+Linux ARM64 shared-codec publishing also passed.
+**No production DSP code changed**; this is automated PCM and
+retirement evidence, not C6 physical audition nor C5
+deadline/underrun stress.
+
+**C4(n) accepted; C4 remains OPEN only for a bounded final
+closing audit.** That audit should compare C4(a)–(n) against
+the original interruption/Note Off/EOF/NNA obligations,
+identify only a concrete untested nested Source/Filter/NNA
+risk if any, and either close C4 with evidence or scope one
+last focused regression. Do **not** add an unbounded
+combination matrix. C2 inspector-to-PCM property coverage,
+C5 actual callback/overload stress, C6 device listening
+and C7 final signoff are separate and remain open. Leave
+the overarching all-properties TODO unchecked and PR #12
+draft/unmerged without explicit user approval.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
