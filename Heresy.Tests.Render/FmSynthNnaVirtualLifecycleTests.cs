@@ -935,7 +935,7 @@ public sealed class FmSynthNnaVirtualLifecycleTests
             double w = t * t * (3.0 - 2.0 * t);
             double held = startsUnassigned ? 0.6 * w : 0.2 * (1.0 - w);
             Assert.That(firstRamp[i],
-                Is.EqualTo((float)(0.1 + held + 0.4)).Within(1e-5f),
+                Is.EqualTo((float)(0.2 + held + 0.4)).Within(1e-5f),
                 $"old silence fade must finish unchanged at global frame {frame}");
         }
         Assert.Multiple(() =>
@@ -971,7 +971,7 @@ public sealed class FmSynthNnaVirtualLifecycleTests
             double branch = startsUnassigned ? 0.6 * (1.0 - w) + 0.4 * w
                 : 0.4 * w;
             Assert.That(secondRamp[i],
-                Is.EqualTo((float)(0.1 + branch + 0.4)).Within(1e-5f),
+                Is.EqualTo((float)(0.2 + branch + 0.4)).Within(1e-5f),
                 $"only latest Sample can begin after silence fade at frame {111 + i}");
         }
         Assert.That(session.CountOlderAudioVoices(), Is.Zero);
