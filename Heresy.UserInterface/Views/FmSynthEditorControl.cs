@@ -429,7 +429,10 @@ public sealed class FmSynthEditorControl : UserControl
 		int nodeId)
 	{
 		if (!TryCommitPendingFilterChanges())
+		{
+			_canvas.SetSelectedNode(_selectedNodeId);
 			return;
+		}
 		_selectedNodeId = nodeId;
 		_canvas.SetSelectedNode(
 			nodeId);
