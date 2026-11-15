@@ -146,14 +146,14 @@ public sealed class FmSynthPersistenceTests
 
 		SongDocument copy = SongDocumentJson.Deserialize(json, JsonContextPath);
 		FmSynthDefinition loaded = (FmSynthDefinition)copy.Objects[synthId];
-		loaded.FilterBatchChangesNodeIds.Should().BeEquivalentTo([2]);
+		loaded.FilterBatchChangesNodeIds.Should().BeEquivalentTo(new[] { 2 });
 		loaded.Graph.Nodes.OfType<FmFilterNode>().Should().HaveCount(2);
 		SongDocumentSnapshot snapshot = SongDocumentSnapshot.Create(document);
 		((FmSynthDefinition)snapshot.Document.Objects[synthId])
-			.FilterBatchChangesNodeIds.Should().BeEquivalentTo([2]);
+			.FilterBatchChangesNodeIds.Should().BeEquivalentTo(new[] { 2 });
 		synth.FilterBatchChangesNodeIds.Clear();
 		((FmSynthDefinition)snapshot.Document.Objects[synthId])
-			.FilterBatchChangesNodeIds.Should().BeEquivalentTo([2],
+			.FilterBatchChangesNodeIds.Should().BeEquivalentTo(new[] { 2 },
 				"editor metadata must also be deep-copied in playback snapshots");
 
 		// Previously saved v1 songs never contained the new optional field.
@@ -163,7 +163,7 @@ public sealed class FmSynthPersistenceTests
 				.Objects[synthId];
 		legacy.FilterBatchChangesNodeIds.Should().BeEmpty();
 
-		layout["filterBatchChangesNodeIds"] = new JsonArray(0);
+		layout["filterBatchChangesNodeIds"] = new JsonArray(JsonValue.Create(0));
 		Assert.Throws<InvalidDataException>(() =>
 			SongDocumentJson.Deserialize(root.ToJsonString(), JsonContextPath),
 			"editor metadata may only select actual Filter node IDs");
