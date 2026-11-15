@@ -1035,6 +1035,20 @@ public sealed class FmSynthEditorControl : UserControl
 		editor.Show(owner);
 	}
 
+	/// <summary>Commit independent shared-Envelope parameter inputs
+	/// before the host saves/replaces/closes the view. The node list
+	/// retains its explicit Set nodes action.</summary>
+	public bool TryCommitPendingEnvelopeFields()
+	{
+		foreach (NodeEnvelopeEditorControl editor in
+			_inspector.Children.OfType<NodeEnvelopeEditorControl>())
+		{
+			if (!editor.TryCommitPendingFields())
+				return false;
+		}
+		return true;
+	}
+
 	private void AddEnvelopeInspector(FmEnvelopeNode node)
 	{
 		// The New... option is first and italic; (None) can clear an
