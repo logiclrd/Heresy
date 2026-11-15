@@ -121,21 +121,23 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 
 	private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
 	{
-		_workspace.Document.Changed += OnDocumentChanged;
+		_envelope.Changed += OnEnvelopeChanged;
 		RefreshFromEnvelope();
 	}
 
 	private void OnDetached(object? sender, VisualTreeAttachmentEventArgs e)
 	{
-		_workspace.Document.Changed -= OnDocumentChanged;
+		_envelope.Changed -= OnEnvelopeChanged;
 		_surface.CancelDrag();
 	}
 
-	private void OnDocumentChanged(object? sender, SongDocumentChangedEventArgs e)
+	private void OnEnvelopeChanged(object? sender, EventArgs e)
 	{
-		_ = e;
-		if (!_surface.IsDragging)
-			RefreshFromEnvelope();
+		// Unrelated song mutations no longer redraw this graph. A new,
+		// accepted state in its own Envelope invalidates any old drag.
+		if (_surface.IsDragging)
+			_surface.CancelDrag();
+		RefreshFromEnvelope();
 	}
 
 	private void Commit(NodeEnvelopeGraphEdit edited)
