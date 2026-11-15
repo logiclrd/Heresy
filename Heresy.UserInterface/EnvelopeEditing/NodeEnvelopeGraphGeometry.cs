@@ -31,22 +31,26 @@ public sealed class NodeEnvelopeGraphGeometry
 
 	public NodeEnvelopeGraphGeometry(
 		IReadOnlyList<EnvelopeNode> nodes, double width, double height,
-		double vmin = 0, double vmax = 1, long? domainTicks = null)
+		double vmin = 0, double vmax = 1, long? domainTicks = null,
+		double leftPadding = Padding, double bottomPadding = Padding)
 	{
 		ArgumentNullException.ThrowIfNull(nodes);
 		if (nodes.Count == 0)
 			throw new ArgumentException("A graph needs a node.", nameof(nodes));
 		if (!double.IsFinite(width) || !double.IsFinite(height)
-			|| width <= 2 * Padding || height <= 2 * Padding)
+			|| !double.IsFinite(leftPadding) || !double.IsFinite(bottomPadding)
+			|| leftPadding < Padding || bottomPadding < Padding
+			|| width <= leftPadding + Padding
+			|| height <= Padding + bottomPadding)
 			throw new ArgumentOutOfRangeException(nameof(width));
 		NodeEnvelopeDefinition.ValidateDisplayRange(vmin, vmax);
 		_vmin = vmin;
 		_vmax = vmax;
 		_nodes = nodes.ToArray();
-		_left = Padding;
+		_left = leftPadding;
 		_right = width - Padding;
 		_top = Padding;
-		_bottom = height - Padding;
+		_bottom = height - bottomPadding;
 		_domainTicks = Math.Max(1, Math.Max(
 			_nodes[^1].Time.Ticks, domainTicks ?? 1));
 		_ticksPerPixel = (double)_domainTicks / (_right - _left);
@@ -87,6 +91,18 @@ public sealed class NodeEnvelopeGraphGeometry
 	/// not the numeric zero axis.</summary>
 	public (double MinY, double MaxY) ValueLimitGuideYs =>
 		(Y(_vmin), Y(_vmax));
+
+	/// <summary>Only draw the numerical zero line when it is within the
+	/// graph's visible plotting rectangle. This is not the bottom border.</summary>
+	public double? ZeroAxisY
+	{
+		get
+		{
+			double y = Y(0);
+			return double.IsFinite(y) && y >= _top && y <= _bottom
+				? y : null;
+		}
+	}
 	public int Count => _nodes.Length;
 	public long DomainTicks => _domainTicks;
 	/// <summary>How many logical pixels lie between the final node and
@@ -180,6 +196,25 @@ public sealed class NodeEnvelopeGraphGeometry
 		if (origin == target)
 			return (originalStart, originalEnd);
 		return (Math.Min(origin, target), Math.Max(origin, target));
+	}
+
+	/// <summary>All node dots whose circular drag hit regions contain the
+	/// pointer, in ascending node order. Unlike HitNode this preserves
+	/// overlapping nodes for the stacked coordinate overlays.</summary>
+	public int[] HitNodes(double x, double y)
+	{
+		if (!double.IsFinite(x) || !double.IsFinite(y))
+			return [];
+		double limit = NodeHitRadius * NodeHitRadius;
+		List<int> matches = [];
+		for (int i = 0; i < Count; i++)
+		{
+			(double px, double py) = Point(i);
+			double dx = px - x, dy = py - y;
+			if (dx * dx + dy * dy <= limit)
+				matches.Add(i);
+		}
+		return matches.ToArray();
 	}
 
 	public int HitNode(double x, double y)
