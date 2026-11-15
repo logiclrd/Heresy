@@ -38,7 +38,7 @@ public sealed class FmRealtimeLinearFirPublicationTests
 		original.SetStageParameter(1, "CutoffHz",
 			FilterParameterValue.FromNumber(1000));
 		FirControlRequest request = new(0, 1, FilterKind.FirLowPass,
-			1000, 0, 0, 127, 350, "Minimum", Window: "Blackman");
+			1350, 0, 0, 127, 350, "Minimum", Window: "Blackman");
 		FirControlPreparationPolicy policy = new(sampleRate);
 		Assert.That(policy.TryOffer([request]), Is.True);
 		Assert.That(policy.TryPreparePending(original, out var prepared), Is.True);
@@ -58,9 +58,12 @@ public sealed class FmRealtimeLinearFirPublicationTests
 				.GetParameter("Window").ChoiceValue, Is.EqualTo("Hamming"));
 			Assert.That(original.GetStageParameters(1)
 				.GetParameter("PhaseResponse").ChoiceValue, Is.EqualTo("Linear"));
+			Assert.That(original.GetStageParameters(1)
+				.GetParameter("CutoffHz").NumericValue, Is.EqualTo(1000));
 		});
 		FilterInstance expectedUse = original.Clone();
 		expectedUse.SetStageParameters(1, [
+			new("CutoffHz", FilterParameterValue.FromNumber(1350)),
 			new("TransitionWidthHz", FilterParameterValue.FromNumber(350)),
 			new("Window", FilterParameterValue.FromChoice("Blackman")),
 			new("PhaseResponse", FilterParameterValue.FromChoice("Minimum")),
