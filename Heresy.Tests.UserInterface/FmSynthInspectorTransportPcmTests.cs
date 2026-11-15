@@ -1620,6 +1620,285 @@ public sealed class FmSynthInspectorTransportPcmTests
     }
 
 
+
+    [AvaloniaTest]
+    public async Task OscillatorConstantInspectorWithNonneutralPitchPreservesHeldPhase()
+    {
+        // C2(s): C2(k)'s neutral-pitch Constant toggle was a vacuous
+        // audible assertion. Start this one note at 1.5x pitch, with an
+        // independent 2x input multiplier. Constant removes ONLY 1.5x;
+        // it must not restart phase, remove the 2x modulation, or replace
+        // the held production note.
+        const double notePitch = 1.5;
+        DocumentWorkspace workspace = new();
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(s) nonneutral Oscillator Constant");
+        int input = FmSynthDocumentEditor.AddConstantNode(
+            workspace, synth, 2, 75, 85);
+        int id = FmSynthDocumentEditor.AddOscillatorNode(
+            workspace, synth, FmOscillatorWaveform.Sine,
+            80, 300, 100, minimum: -0.8, maximum: 0.8);
+        FmOscillatorNode changing = new(id, FmOscillatorWaveform.Sine,
+            80, -0.8, 0.8, multiplierNodeId: input);
+        FmSynthDocumentEditor.UpdateNode(workspace, synth, changing);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, id);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(s) Oscillator dependent");
+
+        RenderConfiguration config = Mono();
+        TrackingFactory factory = new(config, synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(149),
+            [new StartNoteCommand(synth.Id, PitchMultiplier: notePitch)]);
+        Resolver expectedResolver = new(synth.Id), untouchedResolver = new(synth.Id);
+        FmSynthSound Build(FmOscillatorNode node, Resolver resolver)
+            => new(new FmSynthGraph(synth.Graph.Nodes.Select(x =>
+                x.Id == id ? (FmSynthNode)node : x), id),
+                resolver, soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound previous = Build(changing, expectedResolver);
+        expectedResolver.Sound = previous;
+        untouchedResolver.Sound = Build(changing, untouchedResolver);
+        PlaybackSession oracle = IndependentSession(config, expectedResolver);
+        PlaybackSession untouched = IndependentSession(config, untouchedResolver);
+        foreach (PlaybackSession session in new[] { oracle, untouched })
+            session.ApplyLiveEvent(ChannelTarget.Physical(0),
+                [new StartNoteCommand(synth.Id, PitchMultiplier: notePitch)]);
+
+        float[] first = backend.Render(23), initialExpected = new float[23];
+        oracle.Render(0, 23, initialExpected);
+        untouched.Render(0, 23, new float[23]);
+        Assert.That(first, Is.EqualTo(initialExpected).Within(3e-5f));
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int callbacks = 0, changed = 0, frame = 23;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        CheckBox constant = Inspector(editor).Children.OfType<CheckBox>()
+            .Single(x => Equals(x.Content, "Constant"));
+
+        async Task Toggle(bool enabled, int ordinal)
+        {
+            constant.IsChecked = enabled;
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            FmOscillatorNode next = new(id, FmOscillatorWaveform.Sine,
+                80, -0.8, 0.8, input, constant: enabled);
+            Assert.Multiple(() =>
+            {
+                Assert.That(SameOscillator(synth.Graph.Nodes
+                    .OfType<FmOscillatorNode>().Single(), next), Is.True);
+                Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + ordinal));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + ordinal));
+                Assert.That(callbacks, Is.EqualTo(ordinal));
+                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(factory.Preparations.Select(p => p.Id),
+                    Is.EqualTo(Enumerable.Range(0, ordinal)
+                        .SelectMany(_ => new[] { synth.Id, parent.Id })));
+                Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                    .All(p => p.AudioRevision == audio + ordinal), Is.True);
+                Assert.That(SameOscillator(
+                    factory.Preparations[(ordinal - 1) * 2].Oscillator,
+                    next), Is.True, "frozen child retains independent 2x FM");
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            FmSynthSound revised = Build(next, expectedResolver);
+            oracle.AdoptLiveSynthParameters(synth.Id, previous, revised);
+            expectedResolver.Sound = revised;
+            previous = revised;
+            float[] pcm = backend.Render(141), expectedPcm = new float[141],
+                unchanged = new float[141];
+            oracle.Render(frame, 141, expectedPcm);
+            untouched.Render(frame, 141, unchanged);
+            for (int i = 0; i < 141; i++)
+                Assert.That(pcm[i], Is.EqualTo(expectedPcm[i])
+                    .Within(3e-5f),
+                    $"C2(s) oscillator original phase after Constant={enabled} at {frame + i}");
+            Assert.That(pcm.Zip(unchanged, (x, y) => Math.Abs(x - y)).Max(),
+                Is.GreaterThan(0.08),
+                "1.5x note pitch vs Constant must change real output PCM");
+            Assert.Multiple(() =>
+            {
+                Assert.That(factory.OlderAudioCount, Is.Zero);
+                Assert.That(oracle.CountOlderAudioVoices(), Is.Zero);
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            frame += 141;
+        }
+
+        await Toggle(true, 1);
+        await Toggle(false, 2);
+        constant.IsChecked = false;
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 2));
+            Assert.That(callbacks, Is.EqualTo(2));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(4));
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+        });
+    }
+
+    [AvaloniaTest]
+    public async Task SampleSourceConstantInspectorWithNonneutralPitchRetainsIntegratedReadhead()
+    {
+        // C2(s): the same audible 1.5x note multiplier must be stripped
+        // from an existing Sample Source only when Constant is enabled.
+        // The 2x connected input and original forward-integrated Sample
+        // position must survive both directions of the real inspector edit.
+        const double notePitch = 1.5;
+        DocumentWorkspace workspace = new();
+        short[] wave =
+        [
+            8192, 16384, -8192, -16384, 24576, 0, -24576, 4096,
+            -4096, 12288, 20480, -20480, 6144, -12288, 28672, -28672,
+        ];
+        ObjectId sampleId = workspace.Document.AllocateObjectId();
+        SampleDefinition sample = SampleDefinition.CreateImported(
+            sampleId, "C2(s) looping Sample", "nonneutral.wav", MonoWave16(wave));
+        sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, wave.Length);
+        workspace.Document.Add(sample);
+
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(s) nonneutral Source Constant");
+        int input = FmSynthDocumentEditor.AddConstantNode(
+            workspace, synth, 2, 75, 85);
+        double neutral = FmMultiNode.NeutralFrequencyHz;
+        int id = FmSynthDocumentEditor.AddSoundSourceNode(
+            workspace, synth, 300, 100, sampleId, neutral);
+        FmSoundSourceNode changing = new(id, sampleId, neutral,
+            multiplierNodeId: input);
+        FmSynthDocumentEditor.UpdateNode(workspace, synth, changing);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, id);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(s) Source dependent");
+
+        RenderConfiguration config = Mono();
+        TrackingFactory factory = new(config, synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(150),
+            [new StartNoteCommand(synth.Id, PitchMultiplier: notePitch)]);
+        Resolver expectedResolver = new(synth.Id), untouchedResolver = new(synth.Id);
+        SampleSound data = new(sample, new MemorySampleData(Rate, 1,
+            wave.Select(x => x / 32768f).ToArray()));
+        expectedResolver.AddSample(sampleId, data);
+        untouchedResolver.AddSample(sampleId, data);
+        FmSynthSound Build(FmSoundSourceNode node, Resolver resolver)
+            => new(new FmSynthGraph(synth.Graph.Nodes.Select(x =>
+                x.Id == id ? (FmSynthNode)node : x), id),
+                resolver, soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound previous = Build(changing, expectedResolver);
+        expectedResolver.Sound = previous;
+        untouchedResolver.Sound = Build(changing, untouchedResolver);
+        PlaybackSession oracle = IndependentSession(config, expectedResolver);
+        PlaybackSession untouched = IndependentSession(config, untouchedResolver);
+        foreach (PlaybackSession session in new[] { oracle, untouched })
+            session.ApplyLiveEvent(ChannelTarget.Physical(0),
+                [new StartNoteCommand(synth.Id, PitchMultiplier: notePitch)]);
+
+        float[] first = backend.Render(17), initialExpected = new float[17];
+        oracle.Render(0, 17, initialExpected);
+        untouched.Render(0, 17, new float[17]);
+        Assert.That(first, Is.EqualTo(initialExpected).Within(4e-5f));
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int callbacks = 0, changed = 0, frame = 17;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        CheckBox constant = Inspector(editor).Children.OfType<CheckBox>()
+            .Single(x => Equals(x.Content, "Constant"));
+
+        async Task Toggle(bool enabled, int ordinal)
+        {
+            constant.IsChecked = enabled;
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            FmSoundSourceNode next = new(id, sampleId, neutral,
+                multiplierNodeId: input, constant: enabled);
+            Assert.Multiple(() =>
+            {
+                Assert.That(SameSource(synth.Graph.Nodes
+                    .OfType<FmSoundSourceNode>().Single(), next), Is.True);
+                Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + ordinal));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + ordinal));
+                Assert.That(callbacks, Is.EqualTo(ordinal));
+                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(factory.Preparations.Select(p => p.Id),
+                    Is.EqualTo(Enumerable.Range(0, ordinal)
+                        .SelectMany(_ => new[] { synth.Id, parent.Id })));
+                Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                    .All(p => p.AudioRevision == audio + ordinal), Is.True);
+                Assert.That(SameSource(
+                    factory.Preparations[(ordinal - 1) * 2].Source,
+                    next), Is.True, "frozen worker retains selected Sample and 2x FM");
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            FmSynthSound revised = Build(next, expectedResolver);
+            oracle.AdoptLiveSynthParameters(synth.Id, previous, revised);
+            expectedResolver.Sound = revised;
+            previous = revised;
+            float[] pcm = backend.Render(141), expectedPcm = new float[141],
+                unchanged = new float[141];
+            oracle.Render(frame, 141, expectedPcm);
+            untouched.Render(frame, 141, unchanged);
+            for (int i = 0; i < 141; i++)
+                Assert.That(pcm[i], Is.EqualTo(expectedPcm[i])
+                    .Within(5e-5f),
+                    $"C2(s) Sample original readhead after Constant={enabled} at {frame + i}");
+            Assert.That(pcm.Zip(unchanged, (x, y) => Math.Abs(x - y)).Max(),
+                Is.GreaterThan(0.08),
+                "1.5x note pitch vs Constant must change real Sample PCM");
+            Assert.Multiple(() =>
+            {
+                Assert.That(factory.OlderAudioCount, Is.Zero);
+                Assert.That(oracle.CountOlderAudioVoices(), Is.Zero);
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            frame += 141;
+        }
+
+        await Toggle(true, 1);
+        await Toggle(false, 2);
+        constant.IsChecked = false;
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 2));
+            Assert.That(callbacks, Is.EqualTo(2));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(4));
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+        });
+    }
+
     [AvaloniaTest]
     public async Task MultiInspectorControlsPublishWorkerPreparedHeldProductionPcm()
     {
