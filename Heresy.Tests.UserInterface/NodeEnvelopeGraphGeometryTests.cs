@@ -61,21 +61,20 @@ public sealed class NodeEnvelopeGraphGeometryTests
 		Assert.That(actualMin + actualMax, Does.Not.Contain("E"));
 	}
 
-	[TestCase(0.29, 0.01, 2, "0.30")]
-	[TestCase(0.32, 0.1, 1, "0.3")]
-	[TestCase(3.1, 0.1, 1, "0.3")]
-	[TestCase(3.2, 1, 0, "3")]
-	[TestCase(0.029, 0.001, 3, "0.030")]
+	[TestCase(0.29, 0.01, 2, 0.3, "0.30")]
+	[TestCase(0.32, 0.1, 1, 0.3, "0.3")]
+	[TestCase(3.1, 0.1, 1, 0.3, "0.3")]
+	[TestCase(3.2, 1, 0, 3.0, "3")]
+	[TestCase(0.029, 0.001, 3, 0.03, "0.030")]
 	public void TimeGridStepUsesLastNodeOverSquareRootTen(
 		double finalSeconds, double expectedStep, int expectedDecimals,
-		string expectedLabel)
+		double labelValue, string expectedLabel)
 	{
 		(double interval, int decimals) =
 			NodeEnvelopeGraphScale.TimeStep(TimeSpan.FromSeconds(finalSeconds));
 		Assert.That(interval, Is.EqualTo(expectedStep).Within(1e-12));
 		Assert.That(decimals, Is.EqualTo(expectedDecimals));
-		Assert.That(NodeEnvelopeGraphScale.TimeLabel(
-			expectedLabel == "3" ? 3 : 0.3, decimals),
+		Assert.That(NodeEnvelopeGraphScale.TimeLabel(labelValue, decimals),
 			Is.EqualTo(expectedLabel));
 	}
 
