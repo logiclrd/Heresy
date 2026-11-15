@@ -26,22 +26,29 @@ public sealed class PatternVolumePreviewTests
     [TestCase("03", 6, "63")]
     [TestCase("00", 0, "00")]
     [TestCase("..", 4, "40")]
+    [TestCase("48", 6, "68")]
+    [TestCase("48", 7, "78")]
+    [TestCase("48", 8, "88")]
+    [TestCase("48", 9, "98")]
     public void PendingTextUsesStoredUnitsOrZeroWithoutChangingValue(
         string committed, int tens, string expected)
     {
         Assert.That(PatternVolumePreviewRenderer.PendingText(tens, committed),
             Is.EqualTo(expected));
-        Assert.That(() => PatternVolumePreviewRenderer.PendingText(7, committed),
+        Assert.That(() => PatternVolumePreviewRenderer.PendingText(10, committed),
             Throws.TypeOf<ArgumentOutOfRangeException>());
     }
 
     [AvaloniaTest]
     public void LostCellFocusCommitsExactlyTheDisplayedPartialVolume()
     {
-        foreach ((string initial, string firstDigit, int expected) in new[]
+        foreach ((string initial, string firstDigit, string preview, int committed) in new[]
         {
-            ("48", "5", 58), ("03", "6", 63),
-            ("..", "4", 40), ("00", "0", 0),
+            ("48", "5", "58", 58), ("03", "6", "63", 63),
+            ("..", "4", "40", 40), ("00", "0", "00", 0),
+            ("48", "6", "68", 64), ("03", "7", "73", 64),
+            ("48", "8", "88", 64), ("..", "9", "90", 64),
+            ("64", "9", "94", 64),
         })
         {
         DocumentWorkspace workspace = new();
@@ -59,27 +66,27 @@ public sealed class PatternVolumePreviewTests
         Type(editor, 0, 0, firstDigit);
         Assert.That(string.Concat(((Run)display.Inlines![0]).Text,
             ((Run)display.Inlines[1]).Text),
-            Is.EqualTo(expected.ToString("00")));
+            Is.EqualTo(preview));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before));
 
         cell.RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
 
-        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(expected / 64.0));
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(committed / 64.0));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(
-            before + (initial == expected.ToString("00") ? 0U : 1U)));
+            before + (initial == committed.ToString("00") ? 0U : 1U)));
         Assert.That(Cursor(editor).Row, Is.Zero,
             "focus-loss commit must not advance the tracker cursor");
-        Assert.That(display.Text, Is.EqualTo(expected.ToString("00")));
+        Assert.That(display.Text, Is.EqualTo(committed.ToString("00")));
         Assert.That(display.Inlines, Is.Empty);
         cell.RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(
-            before + (initial == expected.ToString("00") ? 0U : 1U)),
+            before + (initial == committed.ToString("00") ? 0U : 1U)),
             "repeated focus loss cannot commit again");
         }
     }
 
     [AvaloniaTest]
-    public void InvalidPartialVolumeOnFocusLossMustNotInventAnotherUnitsDigit()
+    public void ClampedPartialVolumePreservesItsPreviewUntilFocusLoss()
     {
         DocumentWorkspace workspace = new();
         DataPatternDefinition pattern =
@@ -91,12 +98,64 @@ public sealed class PatternVolumePreviewTests
         uint before = workspace.Document.AudioRevision;
 
         Type(editor, 0, 0, "6");
-        Assert.That(((Run)display.Inlines![1]).Text, Is.EqualTo("8"));
+        Assert.That(((Run)display.Inlines![0]).Text, Is.EqualTo("6"));
+        Assert.That(((Run)display.Inlines[1]).Text, Is.EqualTo("8"));
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(48.0 / 64.0));
         Fields<Border>(editor, "_cellBorders")[(0, 0)]
             .RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
-        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(48.0 / 64.0));
-        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before));
-        Assert.That(display.Text, Is.EqualTo("48"));
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(1.0));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
+        Assert.That(display.Text, Is.EqualTo("64"));
+        Assert.That(display.Inlines, Is.Empty);
+    }
+
+    [AvaloniaTest]
+    public async Task BackspaceCancelsOnlyTheTentativeFirstDigit()
+    {
+        foreach ((string initial, string typed, string preview) in new[]
+        {
+            ("48", "7", "78"), ("..", "9", "90"),
+            ("64", "6", "64"), ("03", "5", "53"),
+        })
+        {
+            DocumentWorkspace workspace = new();
+            DataPatternDefinition pattern =
+                PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 3, 1);
+            if (initial != "..")
+                PatternDocumentEditor.SetVolume(workspace, pattern, 0, 0,
+                    int.Parse(initial) / 64.0);
+            PatternEditorControl editor = Editor(workspace, pattern);
+            SetCursor(editor, 0, 0, PatternCellField.Volume);
+            uint audioBefore = workspace.Document.AudioRevision;
+            uint docBefore = workspace.Document.DocumentRevision;
+            Type(editor, 0, 0, typed);
+            TextBlock display = Fields<TextBlock>(editor, "_volumeTexts")[(0, 0)];
+            Assert.That(string.Concat(((Run)display.Inlines![0]).Text,
+                ((Run)display.Inlines[1]).Text), Is.EqualTo(preview));
+
+            KeyEventArgs backspace = new() { Key = Key.Back };
+            Task task = (Task)typeof(PatternEditorControl)
+                .GetMethod("OnCellKeyDownAsync",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(editor, [0, 0, backspace])!;
+            await task;
+
+            Assert.That(backspace.Handled, Is.True);
+            Assert.That(Cursor(editor).Row, Is.Zero);
+            Assert.That(Cursor(editor).Channel, Is.Zero);
+            Assert.That(Cursor(editor).Field, Is.EqualTo(PatternCellField.Volume));
+            Assert.That(display.Text, Is.EqualTo(initial));
+            Assert.That(display.Inlines, Is.Empty);
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audioBefore));
+            Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(docBefore));
+            Assert.That(pattern.Grid[0, 0]?.Volume,
+                Is.EqualTo(initial == ".." ? (double?)null
+                    : int.Parse(initial) / 64.0));
+            Fields<Border>(editor, "_cellBorders")[(0, 0)]
+                .RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audioBefore),
+                "cancelled first digit must not resurrect during focus loss");
+        }
     }
 
     [AvaloniaTest]
