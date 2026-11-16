@@ -136,8 +136,8 @@ public sealed class FmSynthConnectionSelectionTests
             work, synth, oscillator, filterId, 0);
         Assert.That(synth.Graph.Nodes.OfType<FmFilterNode>()
             .Single().AudioInputNodeId, Is.Null);
-        Assert.That(synth.Graph.Nodes.OfType<FmOscillatorNode>(),
-            Has.Count.EqualTo(1));
+        Assert.That(synth.Graph.Nodes.OfType<FmOscillatorNode>().ToArray(),
+            Has.Length.EqualTo(1));
     }
 
     [Test]
