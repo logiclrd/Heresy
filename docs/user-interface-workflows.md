@@ -159,6 +159,24 @@ the output node displays the same refusal as the button. Delete with no node
 selected or with keyboard modifiers is ignored. When a parameter text field
 has focus, Delete continues editing that text and cannot remove a graph node.
 
+### Filter connection-label geometry
+
+A Filter's output port is centred vertically on the header's **Out** label.
+Its left-side input ports line up with the actual centred text of their
+**Input** and stage-parameter rows, in the same order as `GetPorts()`.
+This is not a proportional distribution across the height of the node.
+The layout and framework-neutral `FmSynthConnectionPorts` geometry share a
+20 px header, 22 px per labelled input row, 6 px vertical content margins
+and 2 px border thickness. The node grows to fit those rows; the last input
+is never clipped. Port centres are in logical canvas coordinates (DIPs),
+not multiplied by display scaling. Connected wire endpoints, hover dots,
+hit testing and connection drag previews all use those exact same centres.
+When filter stage kinds/count or input-port ordering changes, rebuilding
+the canvas rebuilds both rows and ports from the same source definition.
+Compact non-Filter node types retain their existing centred port positions.
+The regression checks real arranged label locations against their sockets
+and routes for unassigned and multi-stage Filter nodes at multiple positions.
+
 Connection routes terminate at the exact input-port positions, including the
 individual inputs of an operator; backward connections travel around an
 exterior lane to reach the fixed port sides. Arrowheads follow the last
@@ -215,6 +233,16 @@ changing the mode twice; changing focus within the window does not rearm it.
 The window-wide observer does not mark Caps Lock as handled, leaving other
 controls free to process the event. The Test piano keys themselves only work
 while Test is focused.
+
+**Nested Xephyr note (2026-11-16).** A separate nested-X11 keyboard
+problem caused Caps Lock to generate shifted punctuation for the physical
+apostrophe, comma, period and semicolon keys. It was traced to incorrect
+**Xephyr XKB key type assignments**, not a Heresy preview or textbox
+policy. Explicitly **reloading the XKB map inside the Xephyr session**
+restores those assignments. The attempted local correction and diagnostic
+branches (PRs #22 and #23) were closed unmerged; no application-wide key
+translation shim is installed. The number-row keys were not among the
+four affected keys.
 
 Native Wayland does not provide a generally queryable global lock-state API
 outside the compositor's keyboard protocol. If a native query is unavailable,
