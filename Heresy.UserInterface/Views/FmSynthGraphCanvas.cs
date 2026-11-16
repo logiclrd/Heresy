@@ -411,7 +411,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 				Index = old.WaypointIndex,
 				InitialPoint = wire.Waypoints[old.WaypointIndex],
 				CurrentPoint = wire.Waypoints[old.WaypointIndex],
-				PointerStart = pointer,
+				PointerStart = PointerInWindow(e),
 			};
 		}
 		else if (FmSynthWaypointGeometry.HitConnection(
@@ -429,11 +429,22 @@ public sealed class FmSynthGraphCanvas : UserControl
 				Index = line.InsertIndex,
 				InitialPoint = line.NearestPoint,
 				CurrentPoint = line.NearestPoint,
-				PointerStart = pointer,
+				PointerStart = PointerInWindow(e),
 			};
 		}
 		else
 		{
+			// An unoccupied background drag pans the graph only when at
+			// least one axis has an actual scrollable overflow.
+			if (_scrollViewer is null
+				|| (_scrollViewer.Extent.Width <= _scrollViewer.Viewport.Width + 0.5
+					&& _scrollViewer.Extent.Height <= _scrollViewer.Viewport.Height + 0.5))
+				return;
+			_isBackgroundPanning = true;
+			_panPointerStart = PointerInWindow(e);
+			_panScrollStart = _scrollViewer.Offset;
+			e.Pointer.Capture((IInputElement)sender!);
+			e.Handled = true;
 			return;
 		}
 
@@ -446,6 +457,17 @@ public sealed class FmSynthGraphCanvas : UserControl
 		PointerEventArgs e)
 	{
 		_ = sender;
+		if (_isBackgroundPanning)
+		{
+			if (_scrollViewer is not null)
+			{
+				Point current = PointerInWindow(e);
+				_scrollViewer.Offset =
+					_panScrollStart - (current - _panPointerStart);
+			}
+			e.Handled = true;
+			return;
+		}
 		if (_rootPortDrag)
 		{
 			Point current = e.GetPosition(_canvas);
@@ -462,7 +484,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			UpdateHover(e.GetPosition(_canvas));
 			return;
 		}
-		Point pointer = e.GetPosition(_canvas);
+		Point pointer = PointerInWindow(e);
 		double dx = pointer.X - drag.PointerStart.X;
 		double dy = pointer.Y - drag.PointerStart.Y;
 		if (!drag.Moved
@@ -475,6 +497,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		drag.CurrentPoint = new FmSynthRoutePoint(
 			drag.InitialPoint.X + dx,
 			drag.InitialPoint.Y + dy);
+		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 		e.Handled = true;
 	}
@@ -484,6 +507,13 @@ public sealed class FmSynthGraphCanvas : UserControl
 		PointerReleasedEventArgs e)
 	{
 		_ = sender;
+		if (_isBackgroundPanning)
+		{
+			_isBackgroundPanning = false;
+			e.Pointer.Capture(null);
+			e.Handled = true;
+			return;
+		}
 		if (_rootPortDrag)
 		{
 			_rootPortDrag = false;
@@ -518,6 +548,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_ = sender;
 		_ = e;
 		_waypointDrag = null;
+		_isBackgroundPanning = false;
 		if (_rootPortDrag)
 		{
 			_rootPortDrag = false;
@@ -884,8 +915,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		}
 
 		_dragNodeId = nodeId;
-		_dragPointerStart =
-			e.GetPosition(_canvas);
+		_dragPointerStart = PointerInWindow(e);
 		_dragOriginal = position;
 		e.Pointer.Capture(border);
 		e.Handled = true;
@@ -911,18 +941,11 @@ public sealed class FmSynthGraphCanvas : UserControl
 			UpdateHover(current);
 			return;
 		}
-		double x =
-			Math.Max(
-				0.0,
-				_dragOriginal.X
-					+ current.X
-					- _dragPointerStart.X);
-		double y =
-			Math.Max(
-				0.0,
-				_dragOriginal.Y
-					+ current.Y
-					- _dragPointerStart.Y);
+		Point onWindow = PointerInWindow(e);
+		double x = Math.Max(0.0,
+			_dragOriginal.X + onWindow.X - _dragPointerStart.X);
+		double y = Math.Max(0.0,
+			_dragOriginal.Y + onWindow.Y - _dragPointerStart.Y);
 		FmSynthNodePosition preview =
 			new(
 				nodeId,
@@ -935,6 +958,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		Canvas.SetTop(
 			border,
 			y);
+		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 		_portLayer.InvalidateVisual();
 		e.Handled = true;
