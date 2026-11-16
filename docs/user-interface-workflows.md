@@ -161,11 +161,14 @@ has focus, Delete continues editing that text and cannot remove a graph node.
 
 ### Synth graph labels and connection-port geometry
 
-**Every** node shows the green **Out** label on its right side, with the
-output socket at the same height: **36 DIPs below the top**, the vertical
-centre of the **base 72-DIP** node. Expanding a Filter or Operator does not
-move its output handle or label down to the taller node's midpoint.
-Coordinates remain in logical canvas DIPs, without display-scaling offsets.
+**Every** node shows the green **Out** label on its right side. The
+output socket remains **36 DIPs below the top**, the midpoint of the
+**base 72-DIP** node, regardless of subsequent height expansion. The
+**Out text** itself is lowered another **6 DIPs** (about half a 10-DIP-font
+text line), so the word sits below the socket rather than its baseline
+sitting on the connector. The change is purely typographic: the green
+socket and attached output wires do **not** move. Coordinates remain in
+logical canvas DIPs, without display-scaling offsets.
 
 **Filter** inputs occupy individually labelled rows in the order of
 `GetPorts()`: Input and the stage-parameter names. **Operator** nodes
@@ -175,6 +178,18 @@ row repeats its connected node's graph title (`#id Type`, plus
 `[OUTPUT]` if that source is selected as the graph's output). Duplicate
 operands each retain their own row. Long labels can be inspected through
 their tooltip when clipped to the node width.
+
+**Oscillator** and **Source** nodes preserve their existing grey
+waveform/source status below the heading, then add a separate light-blue
+**Pitch** input row; **Multi** preserves its distribution/voice status,
+then adds an identically coloured **In** row. The corresponding blue
+connector moves to the centre of this explicit input row, rather than
+coincidentally lining up with the grey status. These three compact node
+types are now 80 DIPs tall (20-DIP heading, 22-DIP status, 22-DIP named
+input, plus content margins/borders). Their output stays at the base
+height's fixed 36-DIP position. Nodes with no input continue to show
+their ordinary heading and status at the original 72-DIP height. Full
+status text remains available in a tooltip if the line is truncated.
 
 The Filter and Operator layouts share a 20-DIP title/header row, 22-DIP
 input rows, 6-DIP top/bottom content margins and 2-DIP border thickness;
