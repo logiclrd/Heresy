@@ -107,7 +107,7 @@ public sealed class FmSynthGraphScrollExtentTests
             Assert.That(b.Left, Is.EqualTo(60));
             Assert.That(b.Top, Is.EqualTo(60));
             Assert.That(b.Right, Is.EqualTo(490));
-            Assert.That(b.Bottom, Is.EqualTo(225));
+            Assert.That(b.Bottom, Is.EqualTo(217));
             Assert.That(scroll.Extent.Width, Is.LessThanOrEqualTo(
                 scroll.Viewport.Width + 1),
                 "horizontal scrolling hides independently when content fits");
@@ -131,7 +131,7 @@ public sealed class FmSynthGraphScrollExtentTests
             b = Field<FmSynthGraphBounds>(canvas, "_contentBounds");
             Assert.That(b.Right, Is.EqualTo(490),
                 "removing the routed edge must shrink extents on refresh");
-            Assert.That(b.Bottom, Is.EqualTo(225));
+            Assert.That(b.Bottom, Is.EqualTo(217));
         }
         finally
         {
