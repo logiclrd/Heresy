@@ -5,6 +5,7 @@ using System.Linq;
 
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.VisualTree;
@@ -48,6 +49,7 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 	private readonly TextBox _sustainEnd = new() { Width = 90 };
 	private readonly TextBox _vmin = new() { Width = 90 };
 	private readonly TextBox _vmax = new() { Width = 90 };
+	private readonly ValueRangeLinkToggle _rangeLink = new(false);
 	private readonly ComboBox _loopMode = new()
 	{
 		ItemsSource = Enum.GetValues<EnvelopeSustainLoopMode>(),
@@ -86,6 +88,13 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		_loopMode.LostFocus += (_, _) => TryCommitField(_loopMode);
 		_vmin.LostFocus += (_, _) => TryCommitField(_vmin);
 		_vmax.LostFocus += (_, _) => TryCommitField(_vmax);
+		_rangeLink.PropertyChanged += (_, e) =>
+		{
+			if (e.Property == ToggleButton.IsCheckedProperty
+				&& _rangeLink.IsChecked == true
+				&& !_loadingFields && !_publishing)
+				EnableSymmetricRange();
+		};
 		AttachedToVisualTree += OnAttached;
 		DetachedFromVisualTree += OnDetached;
 
@@ -152,8 +161,27 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		AddField(controls, "Sustain start index", _sustainStart, 0, 0);
 		AddField(controls, "Sustain end index", _sustainEnd, 0, 2);
 		AddField(controls, "Loop mode", _loopMode, 1, 0);
-		AddField(controls, "Vmin", _vmin, 2, 0);
-		AddField(controls, "Vmax", _vmax, 2, 2);
+		// The range is one horizontal row with labels above the editors.
+		// Keep the authored four-column Sustain/Loop grid unchanged.
+		StackPanel minColumn = new() { Spacing = 3 };
+		minColumn.Children.Add(new TextBlock { Text = "Vmin" });
+		minColumn.Children.Add(_vmin);
+		StackPanel maxColumn = new() { Spacing = 3 };
+		maxColumn.Children.Add(new TextBlock { Text = "Vmax" });
+		maxColumn.Children.Add(_vmax);
+		StackPanel range = new()
+		{
+			Name = "EnvelopeValueRange",
+			Orientation = Orientation.Horizontal,
+			Spacing = 8,
+		};
+		range.Children.Add(minColumn);
+		range.Children.Add(_rangeLink);
+		range.Children.Add(maxColumn);
+		Grid.SetRow(range, 2);
+		Grid.SetColumn(range, 0);
+		Grid.SetColumnSpan(range, 4);
+		controls.Children.Add(range);
 		form.Children.Add(controls);
 		form.Children.Add(_message);
 		Content = form;
@@ -274,6 +302,11 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			double vmax = ReferenceEquals(field, _vmax)
 				? ParseDisplayBound(_vmax, "Vmax")
 				: _envelope.Vmax;
+			bool linked = _rangeLink.IsChecked == true;
+			if (linked && ReferenceEquals(field, _vmin))
+				vmax = -vmin;
+			else if (linked && ReferenceEquals(field, _vmax))
+				vmin = -vmax;
 
 			uint before = _workspace.Document.DocumentRevision;
 			_publishing = true;
@@ -285,6 +318,10 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			}
 			finally { _publishing = false; }
 			SyncFieldFromEnvelope(field);
+			if (linked && ReferenceEquals(field, _vmin))
+				SyncFieldFromEnvelope(_vmax);
+			else if (linked && ReferenceEquals(field, _vmax))
+				SyncFieldFromEnvelope(_vmin);
 			_message.Text = "Envelope parameter updated.";
 			if (_workspace.Document.DocumentRevision != before)
 				_changed($"Updated envelope {_envelope.Name}");
@@ -294,6 +331,40 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		{
 			_message.Text = ex.Message;
 			return false;
+		}
+	}
+
+	/// <summary>Turning the link on recenters the *accepted* range in one
+	/// document update. Turning it off is deliberately UI-only. Pending
+	/// raw node text and unrelated Sustain/Loop drafts are never accepted.</summary>
+	private void EnableSymmetricRange()
+	{
+		try
+		{
+			var centered = ValueRangeSymmetry.Center(
+				_envelope.Vmin, _envelope.Vmax);
+			uint before = _workspace.Document.DocumentRevision;
+			_publishing = true;
+			try
+			{
+				EnvelopeDocumentEditor.UpdateNodeEnvelope(_workspace, _envelope,
+					_envelope.Nodes, _envelope.SustainStartIndex,
+					_envelope.SustainEndIndex, _envelope.SustainLoopMode,
+					centered.Minimum, centered.Maximum);
+			}
+			finally { _publishing = false; }
+			SyncFieldFromEnvelope(_vmin);
+			SyncFieldFromEnvelope(_vmax);
+			_message.Text = "Envelope value range linked.";
+			if (_workspace.Document.DocumentRevision != before)
+				_changed($"Updated envelope {_envelope.Name}");
+		}
+		catch (Exception ex)
+		{
+			_loadingFields = true;
+			try { _rangeLink.IsChecked = false; }
+			finally { _loadingFields = false; }
+			_message.Text = ex.Message;
 		}
 	}
 
@@ -345,6 +416,8 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 				_envelope.Vmin.ToString("G17", CultureInfo.InvariantCulture);
 			_loadedVmaxText = _vmax.Text =
 				_envelope.Vmax.ToString("G17", CultureInfo.InvariantCulture);
+			_rangeLink.IsChecked = ValueRangeSymmetry.IsSymmetric(
+				_envelope.Vmin, _envelope.Vmax);
 		}
 		finally { _loadingFields = false; }
 	}
