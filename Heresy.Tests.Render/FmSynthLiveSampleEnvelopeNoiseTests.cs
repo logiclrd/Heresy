@@ -123,7 +123,7 @@ public sealed class FmSynthLiveSampleEnvelopeNoiseTests
         (GC.GetAllocatedBytesForCurrentThread() - allocations).Should().Be(0L);
         AssertOutputFade(previous[^1], reference, actual, 128);
         Math.Abs(actual[^1] - reference[128 + actual.Length - 1])
-            .Should().BeLessThan(0.01,
+            .Should().BeLessThan(0.01f,
                 "the active output eventually adopts the revised range");
     }
 
