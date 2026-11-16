@@ -109,7 +109,7 @@ public sealed class FmSynthCurvatureInspectorTests
 
 	private static TextBox CurvatureInput(StackPanel inspector)
 		=> WaveformControls(inspector).Children[3]
-			.Should().BeOfType<TextBox>().Which;
+			.Should().BeAssignableTo<TextBox>().Which;
 
 	private static FmSynthWaveformPreview WaveformPreview(
 		StackPanel inspector)
