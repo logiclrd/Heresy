@@ -303,6 +303,25 @@ are retained and the route finishes with a short horizontal approach to the
 consumer. Editor-only node positions and routing hints never alter the
 semantic audio graph.
 
+Graph connections share **one exclusive selection space** with nodes:
+pressing a rendered connection (including an existing waypoint) selects
+the exact source/target/input-slot edge and deselects any selected node.
+Pressing a node selects it and deselects any connection. The selected wire
+uses a bright, thicker stroke; selection alone never changes document
+revisions. Clicking and dragging a selected wire still inserts or moves
+routing waypoints using the existing gestures. With graph focus, plain
+**Delete** removes the selected **semantic connection**, leaving its
+source and target nodes intact; with a node selected, Delete retains its
+existing node-removal behavior. Delete inside inspector text fields remains
+ordinary text editing. Removing one of an Operator's ordered operands
+does not remove other instances of the same source; subsequent inputs and
+their routing hints shift left to preserve identity. An Operator losing
+its final operand becomes a silent Constant with the same node ID, as
+when deleting a source node. Disconnecting a Filter input removes only
+that selected audio or modulation connection. Any later graph rewire
+must invalidate a stale connection selection before Delete can act on
+a different edge. On successful disconnect the graph selection clears.
+
 Connection waypoints are edited directly on the canvas. Pointer hit-testing
 uses a three-physical-pixel tolerance on either side of the rendered wire,
 with the display scaling accounted for. Dragging a wire creates a waypoint at
