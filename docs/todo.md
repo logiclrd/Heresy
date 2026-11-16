@@ -255,21 +255,37 @@ Do not reintroduce completed-task checklists here.
   control, and continuous microtonal preview pitch bend.** Preserve all
   decisions, routing, device management, acceptance cases and unresolved
   hardware expectations in the [MIDI keyboard design](midi-keyboard-input-design.md).
-  Pattern MIDI Note On inserts the pitch at the tracker cursor regardless
-  of field focus, redirects focus to Note and advances Skip; Note Off does
-  not mutate the pattern. Program Change navigation uses raw base program
-  **100**, sends reset Program Change back to the keyboard, moves current
-  Source by the signed delta with **clamping**, and is gated by a conditional,
-  default-checked **MIDI Control** checkbox. MIDI Synth/Sample audition is
-  independent of computer-keyboard Hold/Latch, always Hold, and updates
-  ongoing MIDI voices per channel for pitch bend. Capture arbitrary bent
-  pitch multipliers in Pattern notes without recording continuous bend
-  automation. Implement synthetic and cross-platform virtual-port tests
-  before buying or obtaining physical hardware; the MIDIPLUS EK490+ input
-  response and program-counter reset semantics remain **unverified**.
-  Prefer completing the [Synth live-parameter audition](todo.md) milestone
-  first, sharing safe control/publication machinery without conflating
-  authored graph parameters with MIDI voice pitch.
+  Provide the Pattern Editor's mutually exclusive **Stop, Pause, Record,
+  Play+Record** modes and adjacent exclusive **P/S** traversal selector
+  (P default). Stop auditions notes without document edits, but still
+  allows Program Change Source navigation; Pause inserts notes with Skip.
+  Record/Play+Record advance a Note-column-locked record head at the
+  **actual effective tempo and speed** (including muted Record-only rows),
+  ignoring Skip so repeated incoming notes overwrite the same row under
+  the existing edit mask. Play+Record plays **all channels** of each row.
+  P wraps within the same Pattern; S advances the Sequence and stops at
+  its end. Ctrl+Space selects Play+Record; Ctrl+Shift+Space selects Record;
+  Escape enters Stop except that Escape from Stop enters Pause.
+  Include a **Velocity** toggle for MIDI and the physical keyboard piano:
+  off uses current-channel volume for preview without writing it; on
+  uses translated MIDI velocity (or keyboard current-channel volume) for
+  both preview and Volume insertion, with edit-mask precedence. Preserve
+  Note/Volume/Source/effect mask semantics, source navigation and playback
+  scheduling. Numeric MIDI velocity mapping and a few boundary policies
+  remain for explicit implementation decisions in the design.
+  Program Change navigation uses raw base program **100**, sends reset
+  Program Change back to the keyboard, moves Source by signed delta with
+  **clamping**, and is gated by an independent, default-checked
+  **MIDI Control** checkbox even in Stop mode. MIDI Synth/Sample audition
+  is independent of computer-keyboard Hold/Latch, always Hold, and
+  updates ongoing MIDI voices per channel for pitch bend. Capture
+  arbitrary bent pitch multipliers in Pattern notes without recording
+  continuous bend automation. Use the completed Synth realtime-parameter
+  audition infrastructure without conflating authored graph parameters
+  with per-voice MIDI pitch. Implement synthetic and cross-platform
+  virtual-port tests before physical hardware acceptance; the MIDIPLUS
+  EK490+ input response and program-counter reset semantics remain
+  **unverified**.
 
 ## Conditional improvements
 
