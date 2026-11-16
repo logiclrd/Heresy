@@ -216,6 +216,33 @@ The window-wide observer does not mark Caps Lock as handled, leaving other
 controls free to process the event. The Test piano keys themselves only work
 while Test is focused.
 
+### Nested-X11 Caps Lock numeric entry
+
+The Synth inspector's numeric fields (including Oscillator/Noise Vmin and
+Vmax and Multi's numeric settings) use the usual Avalonia TextBox insertion,
+selection and undo behavior. A narrowly scoped X11/Xephyr correction addresses
+a reproducible nested-X11 translation defect: with Caps Lock latched,
+`0.2` was delivered as `)>@`, as though Shift were held.
+
+On Linux with an accessible X11 `DISPLAY`, the numeric fields independently
+query XKB `LockedMods` (Caps Lock) and `BaseMods | LatchedMods` (actual/
+one-shot Shift). If Caps is on but Shift is not active, a **single matching
+US keyboard shifted glyph** is restored to the unshifted glyph of its
+**physical** digit or punctuation key *before* TextBox processes TextInput.
+The field neither synthesizes key presses nor edits the textbox string
+directly; caret, selection, undo, paste and IME remain delegated to
+Avalonia. A real held or sticky Shift, AltGr/Ctrl/Alt/Meta, an unmatched
+keyboard-layout character, or an unavailable native query is never
+reinterpreted. Alphabetic Caps Lock and Hold/Latch semantics are unchanged.
+This is deliberately limited to numeric Synth inputs, not a global X11
+keyboard remapping; other keyboard layouts remain unchanged unless their
+physical key and translated glyph exactly match the conservative mapping.
+
+Headless tests simulate the observed `)>@` input and prove `0.2`,
+along with real Shift, unavailable native state and control-modifier
+noninterference. A **real Xephyr desktop** is required to confirm the
+native XKB observation and fix under the original keyboard mapping.
+
 Native Wayland does not provide a generally queryable global lock-state API
 outside the compositor's keyboard protocol. If a native query is unavailable,
 the preview starts in Hold, labels its state `(locally tracked)`, and each
