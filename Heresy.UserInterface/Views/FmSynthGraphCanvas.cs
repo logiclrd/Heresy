@@ -460,22 +460,22 @@ public sealed class FmSynthGraphCanvas : UserControl
 		FmSynthRenderedConnection[] connections = GetRenderedConnections();
 		FmSynthWaypointHit? waypoint = FmSynthWaypointGeometry.HitWaypoint(
 			connections, position, RenderScaling);
-		if (e.ClickCount == 2)
+		// A double-click deletes a waypoint only when it actually hits
+		// one. Repeated empty-background drags may arrive with ClickCount=2;
+		// they must remain eligible to pan the unbounded camera.
+		if (e.ClickCount == 2 && waypoint is FmSynthWaypointHit hit)
 		{
-			if (waypoint is FmSynthWaypointHit hit)
-			{
-				FmSynthRenderedConnection connection =
-					connections.First(item => item.Connection == hit.Connection);
-				FmSynthRoutePoint[] remaining = FmSynthWaypointGeometry.Remove(
-					connection.Waypoints, hit.WaypointIndex);
-				_waypointDrag = null;
-				_waypointsChanged(
-					hit.Connection.SourceNodeId,
-					hit.Connection.TargetNodeId,
-					hit.Connection.TargetInputIndex,
-					remaining);
-				e.Handled = true;
-			}
+			FmSynthRenderedConnection connection =
+				connections.First(item => item.Connection == hit.Connection);
+			FmSynthRoutePoint[] remaining = FmSynthWaypointGeometry.Remove(
+				connection.Waypoints, hit.WaypointIndex);
+			_waypointDrag = null;
+			_waypointsChanged(
+				hit.Connection.SourceNodeId,
+				hit.Connection.TargetNodeId,
+				hit.Connection.TargetInputIndex,
+				remaining);
+			e.Handled = true;
 			return;
 		}
 
