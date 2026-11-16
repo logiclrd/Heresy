@@ -36,21 +36,27 @@ the physical computer-keyboard tracker piano alike. The editor has four
 | **Play + Record** | Same record-head entry semantics, with Skip ignored | Record head advances on the musical clock | Full row playback, across all channels and their effects |
 
 - The control group consists of a **Stop** button, a **Pause** button, and
-  one two-half **Play / Record** compound button. Pressing Play from Stop or
-  Pause depresses **both** Play and Record. Pressing Record from Stop or Pause
-  depresses Record alone. Pressing Play while only Record is depressed adds
-  Play. Clicking either already-depressed half releases **both** halves;
-  the exact resting Stop/Pause selection after that click should be made
-  explicit during the UI implementation (do not create a fifth state).
-  Clicking Stop or Pause explicitly selects that mode.
+  one two-half **Play / Record** compound button. Maintain a **remembered
+  resting mode** of Stop or Pause, updated whenever either resting mode is
+  explicitly selected. Entering Record or Play+Record from Stop or Pause
+  captures that mode; toggling between Record and Play+Record **does not**
+  overwrite it. Pressing Play from Stop or Pause depresses **both** Play and
+  Record. Pressing Record from Stop or Pause depresses Record alone.
+  Pressing Play while only Record is depressed adds Play. Clicking either
+  already-depressed half releases **both** halves and restores the remembered
+  Stop/Pause resting mode. Clicking Stop or Pause explicitly selects that
+  mode and updates the remembered resting mode.
 - **Ctrl+Space** selects Play+Record, and **Ctrl+Shift+Space** selects
-  Record without Play. **Escape advances the explicit sequence**
-  **Record/Play+Record → Pause → Stop → Pause → Stop ...**:
-  the first Escape from realtime recording returns to ordinary note entry
-  with Skip, the second enters audition-only Stop, and the third returns
-  to note-entering Pause. Escape from either Stop or Pause alternates those
-  two states. These shortcuts choose modes rather than generating note events;
-  standard text editing and unrelated modal contexts must not be hijacked.
+  Record without Play; while already recording, either shortcut changes
+  the active recording variant **without replacing the captured resting mode**.
+  **Escape in Record or Play+Record returns directly to the remembered
+  Stop/Pause mode**. **Escape while in Stop or Pause switches to the other
+  resting mode**, making it the newly remembered mode for any subsequent
+  recording session. Thus Stop → Record → Escape → Stop and
+  Pause → Record → Escape → Pause, even over repeated start/stop cycles;
+  Stop → Escape → Pause → Record → Escape returns to Pause. These shortcuts
+  choose modes rather than generating note events; standard text editing and
+  unrelated modal contexts must not be hijacked.
 - Stop is **audition-only for notes**: MIDI and the computer piano preview
   sounding notes with no Pattern-document edit, Note-field focus move or
   Skip/cursor advance. **Program Change Source navigation is still active in
@@ -135,7 +141,7 @@ the physical computer-keyboard tracker piano alike. The editor has four
 
 1. Input parsing, 14-bit bend extremes/center and velocity-zero Note On; per-device/channel ordering; thread-safe dispatch and disconnect.
 2. Pattern Note On regardless of selected field/textbox focus; Stop audition/no note editing, Pause Skip=0/1/>1, Record/Play+Record ignoring Skip, edit-mask behavior (including Volume clear-versus-preserve), record-head Note-column lock and channel switching, and last-note-wins at a row; last row/Sequence P-wrap/S-advance-and-stop, tempo and speed changes advancing a **silent** Record head at the same musical rate as Play+Record; undo/Source and no accidental Note Off entries; arbitrary bent pitch multipliers.
-3. Stop/Pause/Record/Play+Record state-machine transitions including two-half button behavior, Ctrl+Space/Ctrl+Shift+Space, the **three consecutive Escapes from recording (Pause → Stop → Pause)**, Escape alternating Stop/Pause, and P/S exclusivity/default; MIDI velocity on/off, computer-piano fallback and preview-versus-baked volume. Current Source selection clamps for arbitrary signed delta and retains ±1 keyboard shortcut behavior; zero delta and empty catalog; exact raw program 100 convention; Program Change operating in Stop and controlled independently by the checkbox, input/output handshakes, no Program Change echo loop, hotplug behavior.
+3. Stop/Pause/Record/Play+Record state-machine transitions including two-half button behavior, Ctrl+Space/Ctrl+Shift+Space, **remembering the Stop/Pause state on entry to recording and restoring it with Escape**, preserving that memory when switching Record ↔ Play+Record, repeated start/Escape cycles from both resting modes, clicking an already-active recording half, Escape alternating Stop/Pause and updating the remembered state, and P/S exclusivity/default; MIDI velocity on/off, computer-piano fallback and preview-versus-baked volume. Current Source selection clamps for arbitrary signed delta and retains ±1 keyboard shortcut behavior; zero delta and empty catalog; exact raw program 100 convention; Program Change operating in Stop and controlled independently by the checkbox, input/output handshakes, no Program Change echo loop, hotplug behavior.
 4. Synth/Sample preview concurrent notes, Hold release, independent PC/MIDI voice namespace, Latch isolation, per-channel bend of all active notes without retrigger or accumulated error, release tails, F8, editor closure/disconnect, Sample loop restarts and PCM continuity/underruns.
 5. Native virtual-port integration where available without depending on a physical keyboard: ALSA sequencer on Linux, IAC on macOS, appropriate loopback on Windows; package/native ABI startup cases.
 
