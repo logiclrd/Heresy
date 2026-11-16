@@ -17,7 +17,7 @@ internal sealed record ProbeOptions(string Label, string Output)
         string? output = null;
         for (int i = 0; i < args.Length; i++)
         {
-            if (args[i] is "--label" or "--output" && i + 1 >= args.Length)
+            if ((args[i] is "--label" or "--output") && i + 1 >= args.Length)
                 throw new ArgumentException($"Missing value for {args[i]}");
             switch (args[i])
             {
