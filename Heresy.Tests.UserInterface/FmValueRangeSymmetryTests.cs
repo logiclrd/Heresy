@@ -3,7 +3,10 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 
@@ -39,6 +42,53 @@ public sealed class FmValueRangeSymmetryTests
             Is.EqualTo((2.0, 1.5)));
         Assert.Throws<ArgumentException>(() =>
             ValueRangeSymmetry.Center(-double.MaxValue, double.MaxValue));
+    }
+
+    [AvaloniaTest]
+    public void ChainToggleBackgroundMatchesHostAndCornerPixelsRemainClickable()
+    {
+        // A transparent chain SVG has no ink at the button corners.
+        // Those corners must still receive the same pointer input as the
+        // icon itself, while blending into the real hosting window.
+        ValueRangeLinkToggle toggle = new(initiallyLinked: true);
+        SolidColorBrush background = new(Colors.LightSteelBlue);
+        Window host = new()
+        {
+            Width = 240,
+            Height = 150,
+            Background = background,
+            Content = new StackPanel { Children = { toggle } },
+        };
+        host.Show();
+        try
+        {
+            Assert.That(toggle.Background, Is.SameAs(background));
+            Assert.That(((SolidColorBrush)toggle.Background!).Color.A,
+                Is.EqualTo(byte.MaxValue), "hit-test background is opaque");
+            Assert.That(toggle.Bounds.Width, Is.GreaterThan(20));
+            Assert.That(toggle.Bounds.Height, Is.GreaterThan(20));
+
+            void ClickCorner(double x, double y)
+            {
+                Point pt = toggle.TranslatePoint(new Point(x, y), host)!.Value;
+                host.MouseMove(pt);
+                host.MouseDown(pt, MouseButton.Left);
+                host.MouseUp(pt, MouseButton.Left);
+            }
+            ClickCorner(2, 2);
+            Assert.That(toggle.IsChecked, Is.False,
+                "top-left corner outside the 20-pixel chain artwork must toggle");
+            ClickCorner(toggle.Bounds.Width - 2, toggle.Bounds.Height - 2);
+            Assert.That(toggle.IsChecked, Is.True,
+                "bottom-right blank corner must also toggle");
+
+            // Using the actual window background binding means later theme
+            // changes cannot leave a contrasting opaque tile behind.
+            SolidColorBrush changed = new(Colors.DarkSlateGray);
+            host.Background = changed;
+            Assert.That(toggle.Background, Is.SameAs(changed));
+        }
+        finally { host.Close(); }
     }
 
     [AvaloniaTest]
