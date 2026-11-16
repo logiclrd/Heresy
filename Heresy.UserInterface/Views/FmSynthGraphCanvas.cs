@@ -35,6 +35,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private bool _hasContentBounds;
 	private bool _hasCamera;
 	private bool _projectingScrollbars;
+	private bool _rangeLayoutPending;
 	private Vector _lastProjectedOffset;
 	private double _viewportWidth;
 	private double _viewportHeight;
@@ -174,6 +175,15 @@ public sealed class FmSynthGraphCanvas : UserControl
 		ArgumentNullException.ThrowIfNull(viewer);
 		_scrollViewer = viewer;
 		viewer.SizeChanged += (_, _) => UpdateViewportSize();
+		// The ScrollViewer may only clamp its native Offset after the
+		// next layout pass. That must never change the actual camera.
+		viewer.LayoutUpdated += (_, _) =>
+		{
+			if (!_rangeLayoutPending)
+				return;
+			_rangeLayoutPending = false;
+			ProjectCameraOntoScrollbars();
+		};
 		viewer.PropertyChanged += (_, change) =>
 		{
 			if (change.Property == ScrollViewer.ViewportProperty)
@@ -228,6 +238,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			bounds, _viewportWidth, _viewportHeight);
 		_graphRoot.Width = _scrollRange.Width;
 		_graphRoot.Height = _scrollRange.Height;
+		_rangeLayoutPending = _scrollViewer is not null;
 		ProjectCameraOntoScrollbars();
 	}
 
@@ -269,7 +280,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		// ScrollViewer can asynchronously reclamp its old offset during
 		// layout after the range changed. Such a projection update must
 		// not move the camera; ordinary user scrollbar/wheel edits do.
-		if (!_projectingScrollbars
+		if (!_projectingScrollbars && !_rangeLayoutPending
 			&& (Math.Abs(offset.X - _lastProjectedOffset.X) > 0.01
 				|| Math.Abs(offset.Y - _lastProjectedOffset.Y) > 0.01))
 		{
