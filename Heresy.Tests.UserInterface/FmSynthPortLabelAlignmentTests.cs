@@ -25,7 +25,7 @@ public sealed class FmSynthPortLabelAlignmentTests
     [TestCase(1, 420.0, 180.0)]
     [TestCase(3, 520.0, 280.0)]
     [AvaloniaTest]
-    public void NativeFilterLabelRowsAndOutputHeaderShareSocketCenters(
+    public void FilterRowsShareSocketsAndOutputHasFixedBaseHeight(
         int stageCount, double nodeX, double nodeY)
     {
         DocumentWorkspace workspace = new();
@@ -65,9 +65,10 @@ public sealed class FmSynthPortLabelAlignmentTests
                 .GetField("_canvas", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(surface)!;
             Border outer = visualNodes[filterId];
-            StackPanel content = (StackPanel)outer.Child!;
+            Grid body = (Grid)outer.Child!;
+            StackPanel content = (StackPanel)body.Children[0];
             Grid header = (Grid)content.Children[0];
-            TextBlock outputLabel = (TextBlock)header.Children[1];
+            TextBlock outputLabel = (TextBlock)body.Children[1];
             FmSynthLayoutRect rect = new(nodeX, nodeY,
                 FmSynthGraphCanvas.NodeWidth,
                 FmSynthConnectionPorts.GetNodeHeight(node));
@@ -84,7 +85,7 @@ public sealed class FmSynthPortLabelAlignmentTests
             Point actualOutput = outputLabel.TranslatePoint(
                 new Point(0, outputLabel.Bounds.Height / 2), graph)!.Value;
             Assert.That(actualOutput.Y, Is.EqualTo(ports[0].Center.Y).Within(0.6),
-                "the green output socket must align with the Out label");
+                "the green output socket must align with the Out label at base height");
 
             for (int index = 0; index < node.GetPorts().Count; index++)
             {
