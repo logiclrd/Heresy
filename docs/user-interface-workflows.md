@@ -259,15 +259,20 @@ even if an outermost node changes the graph bounds during the gesture.
 The graph opens showing the content's first 20-DIP margin, with the
 additional 20% scrollbar room available outside the original edges.
 
-**New Synth nodes** are placed using the current camera and visible viewport,
-not a hardcoded object-count grid. Before insertion, the editor searches
-nearby cells for a position where the node's full initial body and a
+**New Synth nodes** use a **stable grid in signed graph coordinates**,
+anchored at (80, 80) rather than the camera or an object-count index. For
+the current initial node geometry this grid has 190-DIP horizontal spacing
+and 100-DIP vertical spacing. The viewport selects which *fixed* cells are
+preferred first, but moving the camera (including automatic reveal after
+an insertion) must never shift or re-anchor the lattice. Before insertion,
+the editor searches nearby cells where the node's full initial body and a
 20-DIP buffer avoid every existing node body and every segment of every
 already-rendered connection, including remote routing detours and waypoints.
-The search uses signed graph coordinates, extends outward through populated
-areas and always has a fallback beyond existing graph geometry. Subsequent
-additions must independently find free space; manual node moves remain
-unrestricted. After each insertion, the editor intentionally pans **only if
+The search expands outward through populated areas, with a fallback beyond
+existing graph geometry **that also remains aligned to the fixed lattice**.
+Subsequent additions must independently find free space; deleting a node
+makes its grid cell available again. Manual node moves remain unrestricted
+and do not have to follow the grid. After each insertion, the editor intentionally pans **only if
 necessary** to reveal the entire new node with its 20-DIP buffer, using its
 actual height and the current post-layout viewport. If a viewport axis is
 too small to fit the buffered node, align the padded near edge. This
