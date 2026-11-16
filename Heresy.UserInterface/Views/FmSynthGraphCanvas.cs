@@ -477,11 +477,10 @@ public sealed class FmSynthGraphCanvas : UserControl
 			return;
 
 		Point pointer = e.GetPosition(_canvas);
-		// A corner-mounted append port straddles the lower-left node
-		// boundary. The outside half is hit-tested by the background,
-		// not by Border.PointerPressed, so start that same port drag here.
-		if (e.ClickCount == 1 && FindPortAt(pointer)
-			is FmSynthConnectionPort borderPort)
+		// A socket near a node boundary can be hit *outside* the node
+		// body. The root owns that gesture; body movement is never
+		// initiated here. Repeated port presses work like body port presses.
+		if (FindPortAt(pointer) is FmSynthConnectionPort borderPort)
 		{
 			Focus();
 			_selectedNodeId = borderPort.NodeId;
@@ -733,54 +732,71 @@ public sealed class FmSynthGraphCanvas : UserControl
 		}
 	}
 
+	/// <summary>
+	/// Find the closest actual socket in the 8-physical-pixel node-edge
+	/// region. Restrict body-originated presses to that body's own sockets:
+	/// a close adjacent node must not steal the body drag.
+	/// </summary>
 	private FmSynthConnectionPort? FindPortAt(
-		Point pointer)
+		Point pointer, int? owningNodeId = null)
 	{
+		FmSynthRoutePoint point = new(pointer.X, pointer.Y);
+		double scaling = RenderScaling;
+		double radius = Math.Max(FmSynthConnectionPorts.HitRadius,
+			FmSynthNodeHandleGeometry.ProximityPixels / scaling);
+		double bestSquared = radius * radius;
+		FmSynthConnectionPort? best = null;
 		foreach (FmSynthNode node in _synth.Graph.Nodes)
 		{
-			if (_positions.TryGetValue(
-				node.Id,
-				out FmSynthNodePosition position)
-				&& FmSynthConnectionPorts.HitTest(
-					FmSynthConnectionPorts.GetPorts(
-						node,
-						ToRect(position, node)),
-					new FmSynthRoutePoint(pointer.X, pointer.Y))
-				is FmSynthConnectionPort port)
+			if (owningNodeId.HasValue && node.Id != owningNodeId.Value)
+				continue;
+			if (!_positions.TryGetValue(
+				node.Id, out FmSynthNodePosition position))
+				continue;
+			FmSynthLayoutRect rect = ToRect(position, node);
+			if (!FmSynthNodeHandleGeometry.IsNearBoundary(
+				rect, point, scaling))
+				continue;
+			foreach (FmSynthConnectionPort port in
+				FmSynthConnectionPorts.GetPorts(node, rect))
 			{
-				return port;
+				double dx = point.X - port.Center.X;
+				double dy = point.Y - port.Center.Y;
+				double squared = dx * dx + dy * dy;
+				if (squared > bestSquared || best is not null
+					&& squared == bestSquared)
+					continue;
+				bestSquared = squared;
+				best = port;
 			}
 		}
-		return null;
+		return best;
 	}
 
-	private int? FindNodeBorderAt(
-		Point pointer)
+	private int? FindNodeBorderAt(Point pointer)
 	{
-		const double borderHoverWidth = 12.0;
+		FmSynthRoutePoint point = new(pointer.X, pointer.Y);
+		double scaling = RenderScaling;
+		double nearest = double.PositiveInfinity;
+		int? best = null;
 		foreach ((int nodeId, FmSynthNodePosition position) in _positions)
 		{
-			FmSynthNode node = _synth.Graph.Nodes.First(item => item.Id == nodeId);
+			FmSynthNode node = _synth.Graph.Nodes
+				.First(item => item.Id == nodeId);
 			FmSynthLayoutRect rect = ToRect(position, node);
-			if (pointer.X < rect.Left - borderHoverWidth
-				|| pointer.X > rect.Right + borderHoverWidth
-				|| pointer.Y < rect.Top - borderHoverWidth
-				|| pointer.Y > rect.Bottom + borderHoverWidth)
-			{
+			if (!FmSynthNodeHandleGeometry.IsNearBoundary(
+				rect, point, scaling))
 				continue;
+			double distance =
+				FmSynthNodeHandleGeometry.DistanceToBoundary(rect, point);
+			if (distance < nearest
+				|| (distance == nearest && nodeId < best))
+			{
+				nearest = distance;
+				best = nodeId;
 			}
-			double edgeDistance =
-				Math.Min(
-					Math.Min(
-						Math.Abs(pointer.X - rect.Left),
-						Math.Abs(pointer.X - rect.Right)),
-					Math.Min(
-						Math.Abs(pointer.Y - rect.Top),
-						Math.Abs(pointer.Y - rect.Bottom)));
-			if (edgeDistance <= borderHoverWidth)
-				return nodeId;
 		}
-		return null;
+		return best;
 	}
 
 	private void UpdateHover(
@@ -948,12 +964,11 @@ public sealed class FmSynthGraphCanvas : UserControl
 
 		border.PointerExited += (_, e) =>
 		{
-			_ = e;
+			// Keep the handles displayed when moving from inside the
+			// body to the adjacent outside 8-pixel zone. The root will
+			// continue tracking once the pointer leaves the border.
 			if (_dragPort is null && _dragNodeId is null)
-			{
-				_hoverNodeId = null;
-				_portLayer.InvalidateVisual();
-			}
+				UpdateHover(e.GetPosition(_canvas));
 		};
 		border.PointerPressed += (_, e) =>
 			OnNodePointerPressed(
@@ -1024,9 +1039,8 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_selected(nodeId);
 
 		Point pointer = e.GetPosition(_canvas);
-		if (FindPortAt(pointer)
-			is FmSynthConnectionPort port
-			&& port.NodeId == nodeId)
+		if (FindPortAt(pointer, nodeId)
+			is FmSynthConnectionPort port)
 		{
 			_dragPort = port;
 			_dragPortPointer = pointer;
