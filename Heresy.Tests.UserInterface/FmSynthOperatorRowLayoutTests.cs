@@ -5,6 +5,7 @@ using System.Reflection;
 
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Input;
 using Avalonia.Headless.NUnit;
 using Avalonia.VisualTree;
