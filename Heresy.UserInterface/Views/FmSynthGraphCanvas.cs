@@ -30,12 +30,17 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private readonly Grid _graphScene = new();
 	private ScrollViewer? _scrollViewer;
 	private FmSynthGraphBounds _contentBounds;
+	private FmSynthGraphScrollRange _scrollRange;
+	private FmSynthRoutePoint _camera;
 	private bool _hasContentBounds;
+	private bool _hasCamera;
+	private bool _projectingScrollbars;
+	private Vector _lastProjectedOffset;
 	private double _viewportWidth;
 	private double _viewportHeight;
 	private bool _isBackgroundPanning;
 	private Point _panPointerStart;
-	private Vector _panScrollStart;
+	private FmSynthRoutePoint _panCameraStart;
 	private readonly ConnectionLayer _connectionLayer;
 	private readonly ConnectionLayer _portLayer;
 	private readonly Dictionary<int, Border> _nodeControls = [];
@@ -173,6 +178,8 @@ public sealed class FmSynthGraphCanvas : UserControl
 		{
 			if (change.Property == ScrollViewer.ViewportProperty)
 				UpdateViewportSize();
+			else if (change.Property == ScrollViewer.OffsetProperty)
+				OnScrollOffsetChanged();
 		};
 		UpdateViewportSize();
 	}
@@ -195,31 +202,94 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private void UpdateContentExtent()
 	{
 		FmSynthNode[] nodes = _synth.Graph.Nodes.ToArray();
+		List<IReadOnlyList<FmSynthRoutePoint>> edges =
+			GetRenderedConnections()
+				.Select(connection => (IReadOnlyList<FmSynthRoutePoint>)connection.Route)
+				.ToList();
+		// While a port is being dragged, its wire preview also participates
+		// in the extents. The resulting range is still only a scrollbar
+		// projection and never pushes the true camera back into range.
+		if (_dragPort is FmSynthConnectionPort drag)
+			edges.Add([drag.Center,
+				new FmSynthRoutePoint(_dragPortPointer.X, _dragPortPointer.Y)]);
 		FmSynthGraphBounds bounds = FmSynthGraphExtentGeometry.Calculate(
 			nodes.Where(n => _positions.ContainsKey(n.Id))
-				.Select(n => ToRect(_positions[n.Id], n)),
-			GetRenderedConnections().Select(connection =>
-				(IReadOnlyList<FmSynthRoutePoint>)connection.Route));
-
-		double previousX = _hasContentBounds ? _contentBounds.OriginX : bounds.OriginX;
-		double previousY = _hasContentBounds ? _contentBounds.OriginY : bounds.OriginY;
+				.Select(n => ToRect(_positions[n.Id], n)), edges);
 		_contentBounds = bounds;
 		_hasContentBounds = true;
-		// One presentation-only transform moves nodes, wires and port
-		// handles together. Stored node and route coordinates stay logical.
-		_graphScene.RenderTransform =
-			new TranslateTransform(bounds.OriginX, bounds.OriginY);
-		_graphRoot.Width = Math.Max(_viewportWidth, bounds.Width);
-		_graphRoot.Height = Math.Max(_viewportHeight, bounds.Height);
+		if (!_hasCamera)
+		{
+			// Open with the same 20-DIP node/wire margin as before,
+			// leaving the new 20% overscan to either side available.
+			_camera = new FmSynthRoutePoint(bounds.Left, bounds.Top);
+			_hasCamera = true;
+		}
+		_scrollRange = FmSynthGraphScrollRange.FromBounds(
+			bounds, _viewportWidth, _viewportHeight);
+		_graphRoot.Width = _scrollRange.Width;
+		_graphRoot.Height = _scrollRange.Height;
+		ProjectCameraOntoScrollbars();
+	}
 
-		// Preserve the visible scene when the logical extremum changes.
+	/// <summary>
+	/// The camera is the unrestricted absolute graph coordinate at the
+	/// top-left of the viewport. Only the scrollbar value is clamped.
+	/// </summary>
+	private void SetCamera(FmSynthRoutePoint camera)
+	{
+		_camera = camera;
+		_hasCamera = true;
+		ProjectCameraOntoScrollbars();
+	}
+
+	private void ProjectCameraOntoScrollbars()
+	{
+		FmSynthRoutePoint projection = _scrollRange.Project(_camera);
+		_lastProjectedOffset = new Vector(projection.X, projection.Y);
 		if (_scrollViewer is not null)
 		{
-			double dx = bounds.OriginX - previousX;
-			double dy = bounds.OriginY - previousY;
-			if (Math.Abs(dx) > 0.01 || Math.Abs(dy) > 0.01)
-				_scrollViewer.Offset += new Vector(dx, dy);
+			_projectingScrollbars = true;
+			try
+			{
+				_scrollViewer.Offset = _lastProjectedOffset;
+			}
+			finally
+			{
+				_projectingScrollbars = false;
+			}
 		}
+		UpdateSceneTransform();
+	}
+
+	private void OnScrollOffsetChanged()
+	{
+		if (_scrollViewer is null)
+			return;
+		Vector offset = _scrollViewer.Offset;
+		// ScrollViewer can asynchronously reclamp its old offset during
+		// layout after the range changed. Such a projection update must
+		// not move the camera; ordinary user scrollbar/wheel edits do.
+		if (!_projectingScrollbars
+			&& (Math.Abs(offset.X - _lastProjectedOffset.X) > 0.01
+				|| Math.Abs(offset.Y - _lastProjectedOffset.Y) > 0.01))
+		{
+			_camera = _scrollRange.CameraAt(
+				new FmSynthRoutePoint(offset.X, offset.Y));
+			_hasCamera = true;
+			_lastProjectedOffset = offset;
+		}
+		UpdateSceneTransform();
+	}
+
+	private void UpdateSceneTransform()
+	{
+		Vector offset = _scrollViewer?.Offset ?? default;
+		// ScrollViewer draws the scene at (transform - offset).
+		// Compensate for its bounded offset to display the independent,
+		// potentially far-out-of-range camera exactly where requested.
+		_graphScene.RenderTransform =
+			new TranslateTransform(offset.X - _camera.X,
+				offset.Y - _camera.Y);
 	}
 
 	private Point PointerInWindow(PointerEventArgs e)
@@ -434,15 +504,11 @@ public sealed class FmSynthGraphCanvas : UserControl
 		}
 		else
 		{
-			// An unoccupied background drag pans the graph only when at
-			// least one axis has an actual scrollable overflow.
-			if (_scrollViewer is null
-				|| (_scrollViewer.Extent.Width <= _scrollViewer.Viewport.Width + 0.5
-					&& _scrollViewer.Extent.Height <= _scrollViewer.Viewport.Height + 0.5))
-				return;
+			// The background pans without limit on either axis, even
+			// when neither scrollbar has a movable range.
 			_isBackgroundPanning = true;
 			_panPointerStart = PointerInWindow(e);
-			_panScrollStart = _scrollViewer.Offset;
+			_panCameraStart = _camera;
 			e.Pointer.Capture((IInputElement)sender!);
 			e.Handled = true;
 			return;
@@ -459,12 +525,11 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_ = sender;
 		if (_isBackgroundPanning)
 		{
-			if (_scrollViewer is not null)
-			{
-				Point current = PointerInWindow(e);
-				_scrollViewer.Offset =
-					_panScrollStart - (current - _panPointerStart);
-			}
+			Point current = PointerInWindow(e);
+			Vector delta = current - _panPointerStart;
+			SetCamera(new FmSynthRoutePoint(
+				_panCameraStart.X - delta.X,
+				_panCameraStart.Y - delta.Y));
 			e.Handled = true;
 			return;
 		}
@@ -942,10 +1007,9 @@ public sealed class FmSynthGraphCanvas : UserControl
 			return;
 		}
 		Point onWindow = PointerInWindow(e);
-		double x = Math.Max(0.0,
-			_dragOriginal.X + onWindow.X - _dragPointerStart.X);
-		double y = Math.Max(0.0,
-			_dragOriginal.Y + onWindow.Y - _dragPointerStart.Y);
+		// Coordinates are signed: a node may move past either axis origin.
+		double x = _dragOriginal.X + onWindow.X - _dragPointerStart.X;
+		double y = _dragOriginal.Y + onWindow.Y - _dragPointerStart.Y;
 		FmSynthNodePosition preview =
 			new(
 				nodeId,
