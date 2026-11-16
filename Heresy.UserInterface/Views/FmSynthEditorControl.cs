@@ -1358,7 +1358,7 @@ public sealed class FmSynthEditorControl : UserControl
 		};
 		AddField("Distribution", distribution);
 		TextBox detune = NumberBox(node.Detune);
-		TextBox voiceCount = new CapsLockNumericTextBox()
+		TextBox voiceCount = new()
 		{
 			Text = node.VoiceCount.ToString(CultureInfo.InvariantCulture),
 		};
@@ -1369,7 +1369,7 @@ public sealed class FmSynthEditorControl : UserControl
 		_inspector.Children.Add(voicesLabel);
 		_inspector.Children.Add(voiceCount);
 		TextBlock componentsLabel = new() { Text = "Components" };
-		TextBox components = new CapsLockNumericTextBox()
+		TextBox components = new()
 		{
 			Text = node.Components,
 			AcceptsReturn = false,
@@ -2168,7 +2168,7 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private static TextBox NumberBox(
 		double value)
-		=> new CapsLockNumericTextBox()
+		=> new()
 		{
 			Text =
 				value.ToString(
