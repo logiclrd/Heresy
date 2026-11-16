@@ -203,6 +203,10 @@ public sealed class FmSynthEditorControl : UserControl
 					ScrollBarVisibility.Auto,
 			};
 
+		// Geometry (node bodies + fully routed edges + four 20-DIP
+		// margins) determines the graph's scrollable content size.
+		_canvas.AttachScrollViewer(graphScroll);
+
 		ScrollViewer inspectorScroll =
 			new()
 			{
