@@ -13,7 +13,17 @@ public interface ICapsLockQuery
     bool? IsCapsLockOn();
 }
 
-public sealed class PlatformCapsLockQuery : ICapsLockQuery
+/// <summary>Native X11 XKB state, distinguishing physical Shift from the
+/// persistent Lock modifier. Available only with an accessible X11 display.</summary>
+public readonly record struct X11KeyboardModifiers(
+    bool CapsLocked, bool ShiftActive);
+
+public interface IX11KeyboardModifierQuery
+{
+    X11KeyboardModifiers? Read();
+}
+
+public sealed class PlatformCapsLockQuery : ICapsLockQuery, IX11KeyboardModifierQuery
 {
     public bool? IsCapsLockOn()
     {
@@ -35,12 +45,28 @@ public sealed class PlatformCapsLockQuery : ICapsLockQuery
         catch (BadImageFormatException) { return null; }
     }
 
+    /// <summary>Read native modifiers separately from Avalonia's translated
+    /// KeyModifiers. Some Xephyr keyboard mappings treat the XKB LockMask
+    /// as Shift while producing text, even when physical Shift is up.
+    /// A latched lock must never be mistaken for a physically held Shift.</summary>
+    public X11KeyboardModifiers? Read()
+    {
+        if (!OperatingSystem.IsLinux())
+            return null;
+        try { return ReadX11Modifiers(); }
+        catch (DllNotFoundException) { return null; }
+        catch (EntryPointNotFoundException) { return null; }
+        catch (BadImageFormatException) { return null; }
+    }
+
     private static bool? ReadX11CapsLock()
+        => ReadX11Modifiers()?.CapsLocked;
+
+    private static X11KeyboardModifiers? ReadX11Modifiers()
     {
         // DISPLAY is the active X server, including Xephyr. Native Wayland
-        // has no general-purpose global lock-state query: wl_keyboard passes
-        // locked modifiers only to the compositor's focused client. With no
-        // X server, the UI uses a clearly marked, locally observed fallback.
+        // has no general-purpose global lock-state query. Without X11, do
+        // not attempt to reinterpret OS-supplied TextInput characters.
         if (string.IsNullOrWhiteSpace(
             Environment.GetEnvironmentVariable("DISPLAY")))
             return null;
@@ -52,8 +78,12 @@ public sealed class PlatformCapsLockQuery : ICapsLockQuery
         {
             if (XkbGetState(display, 0x0100, out XkbState state) != 0)
                 return null;
-            // LockMask is the second core X11 modifier bit.
-            return (state.LockedMods & 0x02) != 0;
+            // Core X11: ShiftMask = 0x01, LockMask = 0x02.
+            // BaseMods is physically depressed, LatchedMods represents
+            // one-shot/sticky Shift, and LockedMods is the Caps toggle.
+            return new X11KeyboardModifiers(
+                (state.LockedMods & 0x02) != 0,
+                ((state.BaseMods | state.LatchedMods) & 0x01) != 0);
         }
         finally
         {
