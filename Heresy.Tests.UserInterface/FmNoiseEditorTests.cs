@@ -37,8 +37,15 @@ public sealed class FmNoiseEditorTests
         Assert.That(inspector.Children.OfType<TextBlock>()
             .Any(t => t.Text?.Contains("native output sample rate",
                 StringComparison.OrdinalIgnoreCase) == true), Is.True);
-        Assert.That(inspector.Children.OfType<TextBox>().Count(), Is.EqualTo(2),
+        StackPanel range = inspector.Children.OfType<StackPanel>()
+            .Single(x => x.Name == "ValueRangeFields");
+        Assert.That(range.Children.OfType<StackPanel>()
+            .SelectMany(x => x.Children.OfType<TextBox>()).Count(), Is.EqualTo(2),
             "only authored Vmin/Vmax are editable; noise has no frequency input");
+        ValueRangeLinkToggle link = range.Children.OfType<ValueRangeLinkToggle>()
+            .Single();
+        Assert.That(link.IsChecked, Is.True,
+            "fresh bipolar Noise starts linked");
         Assert.That(inspector.Children.OfType<TextBlock>()
             .Any(x => x.Text == "Frequency Hz"), Is.False);
         FmSynthDocumentEditor.SetOutputNode(workspace, synth, 0);
@@ -62,12 +69,12 @@ public sealed class FmNoiseEditorTests
         StackPanel inspector = (StackPanel)typeof(FmSynthEditorControl)
             .GetField("_inspector", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(editor)!;
+        StackPanel range = inspector.Children.OfType<StackPanel>()
+            .Single(x => x.Name == "ValueRangeFields");
         TextBox Field(string label)
-        {
-            int i = inspector.Children.Select((x, j) => (x, j))
-                .Single(x => x.x is TextBlock text && text.Text == label).j;
-            return (TextBox)inspector.Children[i + 1];
-        }
+            => range.Children.OfType<StackPanel>().Single(x =>
+                x.Children.OfType<TextBlock>().Any(t => t.Text == label))
+                .Children.OfType<TextBox>().Single();
         void Enter(string label, string value)
         {
             TextBox box = Field(label);
@@ -82,6 +89,10 @@ public sealed class FmNoiseEditorTests
 
         Assert.That(Field("Vmin").Text, Is.EqualTo("-1"));
         Assert.That(Field("Vmax").Text, Is.EqualTo("1"));
+        ValueRangeLinkToggle link = range.Children.OfType<ValueRangeLinkToggle>()
+            .Single();
+        Assert.That(link.IsChecked, Is.True);
+        link.IsChecked = false; // The existing independent-edit contract.
         uint audio = workspace.Document.AudioRevision;
         Enter("Vmin", "-0.25");
         Assert.That(Current().Minimum, Is.EqualTo(-0.25));

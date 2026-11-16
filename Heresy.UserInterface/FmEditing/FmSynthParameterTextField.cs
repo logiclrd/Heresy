@@ -34,5 +34,12 @@ public sealed class FmSynthParameterTextField
 		return true;
 	}
 
+	/// <summary>Rebase a paired field after a single atomic linked edit.
+	/// This is not another mutation: the graph has already committed both
+	/// bounds, and Escape/focus loss must now use its new accepted value.</summary>
+	public void AcceptCommittedText(string acceptedText)
+		=> CommittedText = acceptedText
+			?? throw new ArgumentNullException(nameof(acceptedText));
+
 	public string Revert() => CommittedText;
 }

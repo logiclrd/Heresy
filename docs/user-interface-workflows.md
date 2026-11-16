@@ -905,15 +905,31 @@ in one replaces the other's pending text with the newly accepted values.
 There is no Reload button or stale-draft refusal. **Set nodes** lives
 directly below the raw node textbox and commits only the node list.
 
-The Sustain indices, Loop mode, Vmin and Vmax are independent controls
-in a four-column label/control Grid (maximum width 800). Their validated
-values commit on losing focus or when leaving/saving the editor; a
-different view's accepted change refreshes all fields. Invalid entries
+The Sustain indices and Loop mode retain their four-column
+label/control Grid (maximum width 800); Vmin/Vmax now sit horizontally
+beneath labels with a centered chain toggle. The toggle initially reflects
+whether the accepted bounds satisfy Vmin = -Vmax, and is **not persisted**.
+While linked, accepting either bound also writes the negative of it to
+the other bound through one validated document change; enabling the link
+recenters the accepted values using `(Vmax - Vmin) / 2`.
+Turning it off makes no document change. The Envelope's Vmin < Vmax
+invariant is preserved. Validated values commit on losing focus or when
+leaving/saving the editor; another view's accepted edit refreshes all fields. Invalid entries
 do not alter the song; the user can correct them before a guarded
 view/close transition. Vmin/Vmax edits are display-only and do not
 advance the audio revision; sustain, loop and node changes do. The
 editors retain the same graphical control and standalone
 **← Document** navigation.
+
+Synth Oscillator and Noise inspectors also place a chain toggle
+**between** Vmin and Vmax, using the existing linked/unlinked icons.
+Unlike the shared Envelope display range, Oscillator/Noise values can
+be equal or inverted; the default bipolar -1/+1 range starts linked.
+The chain maintains symmetric opposite-sign bounds on each accepted
+text edit and updates the companion field's Escape/focus-loss baseline.
+Independent mode preserves the prior per-field semantics. One linked edit
+makes one Synth graph replacement and follows ordinary live publication
+and bounded audio-transition policy; no new persisted flag is introduced.
 
 The automated playback regressions exercise both Forward and PingPong
 sustain, Note Off release and eventual silence for direct FM graph

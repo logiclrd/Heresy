@@ -104,6 +104,10 @@ public sealed class FmSynthSourceOscillatorLivePcmTests
         TextBox frequency = Field<TextBox>(inspector, "Frequency Hz");
         TextBox minimum = Field<TextBox>(inspector, "Vmin");
         TextBox maximum = Field<TextBox>(inspector, "Vmax");
+        // These legacy independent range edits intentionally unlink first.
+        inspector.Children.OfType<StackPanel>()
+            .Single(x => x.Name == "ValueRangeFields")
+            .Children.OfType<ValueRangeLinkToggle>().Single().IsChecked = false;
         CheckBox constant = inspector.Children.OfType<CheckBox>()
             .Single(c => Equals(c.Content, "Constant"));
         CheckBox exponential = inspector.Children.OfType<CheckBox>()
@@ -415,11 +419,20 @@ public sealed class FmSynthSourceOscillatorLivePcmTests
             .GetField("_inspector", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(editor)!;
 
-    private static T Field<T>(StackPanel inspector, string label) where T : Control
+    private static T Field<T>(StackPanel panel, string label) where T : Control
     {
-        int i = inspector.Children.Select((c, index) => (c, index))
-            .Single(p => p.c is TextBlock text && text.Text == label).index;
-        return (T)inspector.Children[i + 1];
+        if (label is "Vmin" or "Vmax")
+        {
+            StackPanel row = panel.Children.OfType<StackPanel>()
+                .Single(x => x.Name == "ValueRangeFields");
+            return (T)(Control)row.Children.OfType<StackPanel>()
+                .Single(x => x.Children.OfType<TextBlock>()
+                    .Any(t => t.Text == label))
+                .Children.OfType<TextBox>().Single();
+        }
+        int index = panel.Children.Select((child, j) => (child, j))
+            .Single(x => x.child is TextBlock text && text.Text == label).j;
+        return (T)panel.Children[index + 1];
     }
 
     private static PlaybackSession Session(SynthResolver resolver)

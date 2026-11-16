@@ -139,10 +139,19 @@ Reload button is needed in this single-user workflow.
 **Set nodes** sits immediately below the raw node-data textbox and
 modifies *only* the nodes, using the current accepted sustain indices,
 loop mode and display bounds. Raw node text is otherwise staged until
-Set nodes is clicked, even when the editor loses focus or closes. The
-separate Sustain start/end, Loop mode, Vmin and Vmax controls are organized
-in a four-column label/input Grid (maximum width **800 px**) and each
-commits independently on focus loss. Pending valid parameters are also
+Set nodes is clicked, even when the editor loses focus or closes. The Sustain start/end and Loop mode controls retain the
+four-column label/input Grid (maximum width **800 px**). The final row
+holds horizontal Vmin, chain toggle, Vmax controls with labels
+**above** their inputs. Numeric fields still commit on focus loss.
+The link is **view state**, initially checked if and only if
+Vmin = -Vmax. While linked, committing either bound sets the other
+to its opposite sign in the **same atomic model update**; the
+paired textbox and graph are synchronized immediately without an
+extra audio revision. Turning the link off changes no value.
+Turning it back on recenters the accepted range with
+`newVmax = (oldVmax - oldVmin) / 2` and `newVmin = -newVmax`.
+The existing **Vmin < Vmax** invariant continues to apply to Envelope
+display bounds, including linked edits. Pending valid parameters are also
 committed before Save, switching views, New/Open or exiting the editor;
 invalid fields remain uncommitted with a validation message and can
 block a guarded document transition. Parameter edits never reparse or
