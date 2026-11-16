@@ -45,6 +45,11 @@ public static class FmSynthConnectionPorts
 	public const double FilterHeaderHeight = 20.0;
 	public const double FilterInputRowHeight = 22.0;
 	public const double OperatorModeRowHeight = 22.0;
+	public const double StatusRowHeight = 22.0;
+	// At the standard 10-DIP label font size, half a visual line is
+	// approximately 6 DIPs. Only the "Out" TEXT moves down; its port
+	// stays at the centre of the 72-DIP base node.
+	public const double OutputLabelTextDrop = 6.0;
 
 	// Every output remains fixed at the vertical center of the base node,
 	// even when Filter/Operator grows taller.
@@ -56,6 +61,12 @@ public static class FmSynthConnectionPorts
 		return FilterBorderThickness + FilterVerticalMargin + FilterHeaderHeight
 			+ FilterInputRowHeight * (inputIndex + 0.5);
 	}
+
+	// Oscillator, Source and Multi show their original status beneath
+	// the header, followed by one distinctly labelled blue input row.
+	public static double SingleInputCenterOffset =>
+		FilterBorderThickness + FilterVerticalMargin + FilterHeaderHeight
+			+ StatusRowHeight + FilterInputRowHeight / 2.0;
 
 	public static double OperatorInputCenterOffset(int inputIndex)
 	{
@@ -75,6 +86,10 @@ public static class FmSynthConnectionPorts
 			2.0 * (FilterBorderThickness + FilterVerticalMargin)
 			+ FilterHeaderHeight + OperatorModeRowHeight
 			+ FilterInputRowHeight * operation.InputNodeIds.Count),
+		FmOscillatorNode or FmSoundSourceNode or FmMultiNode =>
+			Math.Max(BaseNodeHeight,
+				2.0 * (FilterBorderThickness + FilterVerticalMargin)
+				+ FilterHeaderHeight + StatusRowHeight + FilterInputRowHeight),
 		_ => BaseNodeHeight,
 	};
 
@@ -134,6 +149,8 @@ public static class FmSynthConnectionPorts
 								when inputIndex == operation.InputNodeIds.Count =>
 									bounds.Height, // Gold append handle: bottom-left corner.
 							FmOperatorNode => OperatorInputCenterOffset(inputIndex),
+							FmOscillatorNode or FmSoundSourceNode or FmMultiNode =>
+								SingleInputCenterOffset,
 							_ => bounds.Height * (inputIndex + 1) / (inputCount + 1),
 						}))));
 		}
