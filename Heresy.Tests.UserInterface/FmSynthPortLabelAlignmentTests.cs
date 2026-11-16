@@ -84,8 +84,10 @@ public sealed class FmSynthPortLabelAlignmentTests
 
             Point actualOutput = outputLabel.TranslatePoint(
                 new Point(0, outputLabel.Bounds.Height / 2), graph)!.Value;
-            Assert.That(actualOutput.Y, Is.EqualTo(ports[0].Center.Y).Within(0.6),
-                "the green output socket must align with the Out label at base height");
+            Assert.That(actualOutput.Y, Is.EqualTo(
+                    ports[0].Center.Y + FmSynthConnectionPorts.OutputLabelTextDrop)
+                .Within(0.6),
+                "the Out text should sit a half-line below its fixed-height connector");
 
             for (int index = 0; index < node.GetPorts().Count; index++)
             {
@@ -125,17 +127,20 @@ public sealed class FmSynthPortLabelAlignmentTests
     }
 
     [Test]
-    public void OrdinaryNodesKeepExistingCenteredPortLocations()
+    public void OscillatorOutputRemainsAtBaseHeightWhilePitchInputGetsOwnRow()
     {
-        FmSynthLayoutRect rect = new(100, 200, 170, 72);
+        FmOscillatorNode oscillator =
+            new(5, FmOscillatorWaveform.Sine, 440);
+        double height = FmSynthConnectionPorts.GetNodeHeight(oscillator);
+        FmSynthLayoutRect rect = new(100, 200, 170, height);
         FmSynthConnectionPort[] ports =
-            FmSynthConnectionPorts.GetPorts(
-                new FmOscillatorNode(5, FmOscillatorWaveform.Sine, 440), rect);
-        Assert.That(ports[0].Center.Y, Is.EqualTo(rect.CenterY));
-        Assert.That(ports[1].Center.Y, Is.EqualTo(rect.CenterY));
-        Assert.That(FmSynthConnectionPorts.GetNodeHeight(
-            new FmOscillatorNode(5, FmOscillatorWaveform.Sine, 440)),
-            Is.EqualTo(72),
-            "a Filter port fix must not resize unrelated graph nodes");
+            FmSynthConnectionPorts.GetPorts(oscillator, rect);
+        Assert.That(height, Is.EqualTo(80),
+            "the original status and new blue Pitch row must both fit");
+        Assert.That(ports[0].Center.Y, Is.EqualTo(200 + 36),
+            "the output remains fixed to the original 72-DIP node midpoint");
+        Assert.That(ports[1].Center.Y, Is.EqualTo(
+            200 + FmSynthConnectionPorts.SingleInputCenterOffset),
+            "the Pitch socket must align with its own dedicated label row");
     }
 }
