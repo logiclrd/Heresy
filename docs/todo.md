@@ -170,17 +170,6 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth editor — UI defects
 
-- [ ] **Place newly added Synth nodes in unobstructed graph space.**
-  Choose a placement that does not intersect existing **node bodies**
-  or cover existing **connection edges**, respecting the node/edge
-  geometry and 20 px visible-content margin defined by the scrolling
-  task. When the chosen position would leave the new node or any of
-  its 20 px buffer partially outside the viewport, **automatically
-  scroll** to bring the entire node and buffer into view. Check densely
-  populated graphs, long edges, changed viewport sizes and repeated
-  additions; preserve subsequent manual placement and wiring. See
-  [UI workflow](user-interface-workflows.md).
-
 - [ ] **Expose Synth node drag handles within an 8 px proximity zone.**
   Show the node's handles and permit their intended drag interaction
   when the pointer is within **8 pixels of the node boundary**, even
