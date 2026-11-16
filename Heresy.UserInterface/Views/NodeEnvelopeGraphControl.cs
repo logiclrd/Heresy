@@ -218,6 +218,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	private int _previewSustainEnd;
 	private bool _dragMoved;
 	private Point _press;
+	private Point _dragPointer;
+	private bool _dragControlHeld;
 	private Point? _hoverPointer;
 	private NodeEnvelopeGraphGeometry? _fixedLayout;
 	private long _timeDomainTicks;
@@ -294,6 +296,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		_dragNode = -1;
 		_dragGuide = -1;
 		_dragMoved = false;
+		_dragControlHeld = false;
 		_fixedLayout = null;
 		Cursor = NormalCursor;
 		_previewNodes = _envelope.Nodes.ToArray();
@@ -582,6 +585,9 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			_originalSustainStart = _previewSustainStart;
 			_originalSustainEnd = _previewSustainEnd;
 			_press = pointer;
+			_dragPointer = pointer;
+			_dragControlHeld =
+				(e.KeyModifiers & KeyModifiers.Control) != 0;
 			_dragMoved = false;
 			_fixedLayout = graph;
 			// Keep this image unchanged until capture is released.
@@ -600,6 +606,12 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		Point pointer = e.GetPosition(this);
 		_hoverPointer = pointer;
 		InvalidateVisual();
+		if (IsDragging)
+		{
+			_dragPointer = pointer;
+			_dragControlHeld =
+				(e.KeyModifiers & KeyModifiers.Control) != 0;
+		}
 		if (!IsDragging || _fixedLayout is null)
 		{
 			UpdateHoverCursor(pointer);
@@ -645,7 +657,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		{
 			EnvelopeNode moved = NodeEnvelopeGraphGeometry.Move(
 				_previewNodes, _dragNode, _fixedLayout,
-				pointer.X, pointer.Y);
+				pointer.X, pointer.Y, bypassValueClamp: _dragControlHeld);
 			if (moved != _previewNodes[_dragNode])
 			{
 				_previewNodes[_dragNode] = moved;
@@ -697,6 +709,9 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		// coalesce the last move directly into pointer release.
 		Point pointer = e.GetPosition(this);
 		_hoverPointer = pointer;
+		_dragPointer = pointer;
+		_dragControlHeld =
+			(e.KeyModifiers & KeyModifiers.Control) != 0;
 		UpdateDraggedPosition(pointer);
 		int dragged = _dragNode;
 		bool changed = _dragMoved
@@ -709,6 +724,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		_dragNode = -1;
 		_dragGuide = -1;
 		_dragMoved = false;
+		_dragControlHeld = false;
 		_fixedLayout = null;
 		e.Pointer.Capture(null);
 		UpdateHoverCursor(e.GetPosition(this));
@@ -756,8 +772,21 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		return true;
 	}
 
+	private void UpdateDragControlHeld(bool held)
+	{
+		if (_dragNode < 0 || _fixedLayout is null
+			|| _dragControlHeld == held)
+			return;
+		_dragControlHeld = held;
+		// Key transitions have no accompanying pointer event. Reproject the
+		// last captured position immediately without starting a new edit.
+		UpdateDraggedPosition(_dragPointer);
+	}
+
 	protected override void OnKeyDown(KeyEventArgs e)
 	{
+		if (e.Key is Key.LeftCtrl or Key.RightCtrl)
+			UpdateDragControlHeld(true);
 		if (e.Key == Key.Tab
 			&& (e.KeyModifiers & KeyModifiers.Control) != 0)
 		{
@@ -776,6 +805,13 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			return;
 		}
 		base.OnKeyDown(e);
+	}
+
+	protected override void OnKeyUp(KeyEventArgs e)
+	{
+		if (e.Key is Key.LeftCtrl or Key.RightCtrl)
+			UpdateDragControlHeld(false);
+		base.OnKeyUp(e);
 	}
 
 	protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)

@@ -28,7 +28,19 @@ envelope or increments the audio revision.
 
 Changes are committed once on pointer release, with live visual
 feedback and cancellation on capture loss. Drag rendering uses the
-current preview nodes, not cached node locations. Vertical scale is
+current preview nodes, not cached node locations. During **node-value
+pointer dragging**, the preview defaults to the inclusive authored
+Vmin/Vmax limits; **holding Ctrl** permits values outside those limits.
+Pressing or releasing Ctrl during an already active node drag
+immediately reprojects the current captured pointer position, even
+without pointer movement. Releasing Ctrl snaps an out-of-range preview
+to the nearest bound; pressing Ctrl restores the unrestricted value
+under the same pointer. This affects **pointer node-value drags only**:
+time neighbour-crossing limits, keyboard nudging, raw numeric node
+editing, guide dragging, and existing saved out-of-range values retain
+their original rules. Modifier transitions do not commit audio or
+start separate undo steps; mouse release commits one final node edit,
+while capture loss discards the preview. Vertical scale is
 fixed by persisted Vmin/Vmax, with a 5% margin above and below.
 Two **thin, 1-pixel green horizontal guide lines** mark the configured
 **Vmin** and **Vmax** positions using the *same value-to-pixel transform*
