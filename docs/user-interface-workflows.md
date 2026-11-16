@@ -164,9 +164,9 @@ has focus, Delete continues editing that text and cannot remove a graph node.
 **Every** node shows the green **Out** label on its right side. The
 output socket remains **36 DIPs below the top**, the midpoint of the
 **base 72-DIP** node, regardless of subsequent height expansion. The
-**Out text** itself is lowered another **6 DIPs** (about half a 10-DIP-font
-text line), so the word sits below the socket rather than its baseline
-sitting on the connector. The change is purely typographic: the green
+**Out text** itself is lowered **3 DIPs** from the original
+centre-aligned label position, halfway toward the previous 6-DIP drop.
+The change is purely typographic: the green
 socket and attached output wires do **not** move. Coordinates remain in
 logical canvas DIPs, without display-scaling offsets.
 
