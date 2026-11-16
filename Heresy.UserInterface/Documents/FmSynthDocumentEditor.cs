@@ -527,6 +527,97 @@ public static class FmSynthDocumentEditor
 		UpdateNode(workspace, synth, replacement);
 	}
 
+	/// <summary>
+	/// Disconnect one exact semantic input edge. Repeated Operator sources
+	/// are distinct slots; removing one operand shifts later slots and
+	/// their routing hints without removing any other matching source.
+	/// </summary>
+	public static void DisconnectConnection(
+		DocumentWorkspace workspace,
+		FmSynthDefinition synth,
+		int sourceNodeId,
+		int targetNodeId,
+		int targetInputIndex)
+	{
+		ValidateSynth(workspace, synth);
+		FmSynthNode target = RequireNode(synth, targetNodeId);
+		if (!ConnectionExists(
+			synth.Graph, sourceNodeId, targetNodeId, targetInputIndex))
+			throw new InvalidOperationException(
+				"The selected FM connection is no longer present.");
+
+		FmSynthNode replacement = target switch
+		{
+			FmOscillatorNode oscillator when targetInputIndex == 0 =>
+				new FmOscillatorNode(oscillator.Id, oscillator.Waveform,
+					oscillator.FrequencyHz, oscillator.Minimum, oscillator.Maximum,
+					null, oscillator.ExponentialMultiplier, oscillator.Constant,
+					oscillator.Curvature),
+			FmSoundSourceNode source when targetInputIndex == 0 =>
+				new FmSoundSourceNode(source.Id, source.SourceId,
+					source.FrequencyHz, null, source.ExponentialMultiplier,
+					source.Constant),
+			FmMultiNode multi when targetInputIndex == 0 =>
+				multi.WithInput(null),
+			FmFilterNode filter when targetInputIndex >= 0
+				&& targetInputIndex < filter.GetPorts().Count =>
+				filter.WithParameterConnection(
+					filter.GetPorts()[targetInputIndex], null),
+			FmOperatorNode operation when targetInputIndex >= 0
+				&& targetInputIndex < operation.InputNodeIds.Count =>
+				RemoveOperatorInputAt(operation, targetInputIndex),
+			_ => throw new InvalidOperationException(
+				$"FM node {targetNodeId} has no removable input slot {targetInputIndex}."),
+		};
+
+		FmSynthGraph oldGraph = synth.Graph;
+		FmSynthGraph graph = new(
+			oldGraph.Nodes.Select(node =>
+				node.Id == targetNodeId ? replacement : node),
+			oldGraph.OutputNodeId);
+		FmSoundSourceReferences.Validate(workspace.Document, synth.Id, graph);
+
+		List<FmSynthConnectionRoutingHint> hints = [];
+		foreach (FmSynthConnectionRoutingHint hint in synth.ConnectionRoutingHints)
+		{
+			if (hint.SourceNodeId == sourceNodeId
+				&& hint.TargetNodeId == targetNodeId
+				&& hint.TargetInputIndex == targetInputIndex)
+				continue;
+
+			int newIndex = hint.TargetInputIndex;
+			if (target is FmOperatorNode
+				&& hint.TargetNodeId == targetNodeId
+				&& newIndex > targetInputIndex)
+				newIndex--;
+
+			if (!ConnectionExists(
+				graph, hint.SourceNodeId, hint.TargetNodeId, newIndex))
+				continue;
+			hints.Add(new FmSynthConnectionRoutingHint(
+				hint.SourceNodeId, hint.TargetNodeId,
+				newIndex, hint.RoutePoints));
+		}
+
+		synth.Graph = graph;
+		synth.ConnectionRoutingHints.Clear();
+		synth.ConnectionRoutingHints.AddRange(hints);
+		workspace.Document.MarkChanged(affectsAudio: true);
+	}
+
+	private static FmSynthNode RemoveOperatorInputAt(
+		FmOperatorNode operation, int inputIndex)
+	{
+		int[] remaining = operation.InputNodeIds.Where(
+			(_, index) => index != inputIndex).ToArray();
+		// An empty Operator is not a valid FM node. Preserve its node ID
+		// and any downstream references as a silent Constant, as RemoveNode
+		// already does when deleting an Operator's final source.
+		return remaining.Length == 0
+			? new FmConstantNode(operation.Id, 0.0)
+			: new FmOperatorNode(operation.Id, operation.Operation, remaining);
+	}
+
 	public static void UpdateNode(
 		DocumentWorkspace workspace,
 		FmSynthDefinition synth,
