@@ -3,6 +3,7 @@ using System.Linq;
 using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
+using Avalonia.Input;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
@@ -36,13 +37,66 @@ public sealed class FmNoiseEditorTests
         Assert.That(inspector.Children.OfType<TextBlock>()
             .Any(t => t.Text?.Contains("native output sample rate",
                 StringComparison.OrdinalIgnoreCase) == true), Is.True);
-        Assert.That(inspector.Children.OfType<TextBox>(), Is.Empty,
-            "there must be no Frequency Hz or implicit shaping control");
+        Assert.That(inspector.Children.OfType<TextBox>().Count(), Is.EqualTo(2),
+            "only authored Vmin/Vmax are editable; noise has no frequency input");
+        Assert.That(inspector.Children.OfType<TextBlock>()
+            .Any(x => x.Text == "Frequency Hz"), Is.False);
         FmSynthDocumentEditor.SetOutputNode(workspace, synth, 0);
         uint revision = workspace.Document.AudioRevision;
         FmSynthDocumentEditor.RemoveNode(workspace, synth, noiseId);
         Assert.That(synth.Graph.Nodes.OfType<FmNoiseNode>(), Is.Empty);
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1));
+    }
+
+    [AvaloniaTest]
+    public void NoiseRangeInspectorCommitsIndependentlyAndRejectsInvalidInput()
+    {
+        DocumentWorkspace workspace = new();
+        FmSynthDefinition synth =
+            FmSynthDocumentEditor.CreateFmSynth(workspace, "Ranged noise");
+        int id = FmSynthDocumentEditor.AddNoiseNode(workspace, synth, 100, 90);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, id);
+        int changes = 0;
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => {}, _ => changes++);
+        StackPanel inspector = (StackPanel)typeof(FmSynthEditorControl)
+            .GetField("_inspector", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(editor)!;
+        TextBox Field(string label)
+        {
+            int i = inspector.Children.Select((x, j) => (x, j))
+                .Single(x => x.x is TextBlock text && text.Text == label).j;
+            return (TextBox)inspector.Children[i + 1];
+        }
+        void Enter(string label, string value)
+        {
+            TextBox box = Field(label);
+            box.Text = value;
+            box.RaiseEvent(new KeyEventArgs
+            {
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.Enter,
+            });
+        }
+        FmNoiseNode Current() => synth.Graph.Nodes.OfType<FmNoiseNode>().Single();
+
+        Assert.That(Field("Vmin").Text, Is.EqualTo("-1"));
+        Assert.That(Field("Vmax").Text, Is.EqualTo("1"));
+        uint audio = workspace.Document.AudioRevision;
+        Enter("Vmin", "-0.25");
+        Assert.That(Current().Minimum, Is.EqualTo(-0.25));
+        Assert.That(Current().Maximum, Is.EqualTo(1));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 1));
+        Enter("Vmax", "0.75");
+        Assert.That(Current().Minimum, Is.EqualTo(-0.25));
+        Assert.That(Current().Maximum, Is.EqualTo(0.75));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 2));
+        Enter("Vmin", "-0.25");
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 2));
+        Enter("Vmax", "NaN");
+        Assert.That(Current().Maximum, Is.EqualTo(0.75));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 2));
+        Assert.That(changes, Is.EqualTo(2));
     }
 
     [Test]
@@ -51,7 +105,7 @@ public sealed class FmNoiseEditorTests
         SongDocument original = new();
         ObjectId simpleId = original.AllocateObjectId();
         FmSynthDefinition simple = new(simpleId, "Noise",
-            new FmSynthGraph([new FmNoiseNode(17)], 17));
+            new FmSynthGraph([new FmNoiseNode(17, -0.4, 0.6)], 17));
         original.Add(simple);
         ObjectId parentId = original.AllocateObjectId();
         FmSynthDefinition parent = new(parentId, "Nested Noise",
@@ -65,15 +119,21 @@ public sealed class FmNoiseEditorTests
         DocumentWorkspace target = new();
         FmSynthDefinition simpleCopy = FmSynthDocumentEditor.ImportFromSong(
             target, source, [simpleId]).Single();
-        Assert.That(simpleCopy.Graph.Nodes.OfType<FmNoiseNode>()
-            .Single().Id, Is.EqualTo(17));
+        FmNoiseNode imported = simpleCopy.Graph.Nodes.OfType<FmNoiseNode>()
+            .Single();
+        Assert.That(imported.Id, Is.EqualTo(17));
+        Assert.That(imported.Minimum, Is.EqualTo(-0.4));
+        Assert.That(imported.Maximum, Is.EqualTo(0.6));
         FmSynthDefinition parentCopy = FmSynthDocumentEditor.ImportFromSong(
             target, source, [parentId]).Single();
         ObjectId nestedId = parentCopy.Graph.Nodes
             .OfType<FmSoundSourceNode>().Single().SourceId;
         FmSynthDefinition nested = (FmSynthDefinition)target.Document.Objects[nestedId];
-        Assert.That(nested.Graph.Nodes.OfType<FmNoiseNode>()
-            .Single().Id, Is.EqualTo(17));
+        FmNoiseNode nestedNoise = nested.Graph.Nodes.OfType<FmNoiseNode>()
+            .Single();
+        Assert.That(nestedNoise.Id, Is.EqualTo(17));
+        Assert.That(nestedNoise.Minimum, Is.EqualTo(-0.4));
+        Assert.That(nestedNoise.Maximum, Is.EqualTo(0.6));
         Assert.That(nestedId, Is.Not.EqualTo(simpleId));
     }
 }
