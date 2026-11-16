@@ -26,6 +26,16 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private readonly Action<
 		int, int, int, IReadOnlyList<FmSynthRoutePoint>> _waypointsChanged;
 	private readonly Canvas _canvas = new();
+	private readonly Grid _graphRoot = new();
+	private readonly Grid _graphScene = new();
+	private ScrollViewer? _scrollViewer;
+	private FmSynthGraphBounds _contentBounds;
+	private bool _hasContentBounds;
+	private double _viewportWidth;
+	private double _viewportHeight;
+	private bool _isBackgroundPanning;
+	private Point _panPointerStart;
+	private Vector _panScrollStart;
 	private readonly ConnectionLayer _connectionLayer;
 	private readonly ConnectionLayer _portLayer;
 	private readonly Dictionary<int, Border> _nodeControls = [];
@@ -75,8 +85,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			waypointsChanged
 				?? throw new ArgumentNullException(nameof(waypointsChanged));
 
-		MinWidth = 1200;
-		MinHeight = 720;
+		// The scroll extent follows the geometry, not a fixed canvas minimum.
 		Focusable = true;
 		ClipToBounds = false;
 
@@ -92,29 +101,20 @@ public sealed class FmSynthGraphCanvas : UserControl
 			{
 				IsHitTestVisible = false,
 			};
-		Grid root =
-			new()
-			{
-				Background =
-					new SolidColorBrush(
-						Color.FromRgb(
-							24,
-							24,
-							28)),
-			};
-		root.Children.Add(
-			_connectionLayer);
-		root.Children.Add(
-			_canvas);
-		// Handles and the in-progress drag must remain visible above nodes;
-		// this overlay never intercepts pointer events from the canvas.
-		root.Children.Add(
-			_portLayer);
-		root.PointerPressed += OnWirePointerPressed;
-		root.PointerMoved += OnWirePointerMoved;
-		root.PointerReleased += OnWirePointerReleased;
-		root.PointerCaptureLost += OnWirePointerCaptureLost;
-		Content = root;
+		_graphRoot.Background =
+			new SolidColorBrush(Color.FromRgb(24, 24, 28));
+		_graphRoot.ClipToBounds = false;
+		_graphScene.ClipToBounds = false;
+		_graphScene.Children.Add(_connectionLayer);
+		_graphScene.Children.Add(_canvas);
+		// The overlay renders dots and previews above all node bodies.
+		_graphScene.Children.Add(_portLayer);
+		_graphRoot.Children.Add(_graphScene);
+		_graphRoot.PointerPressed += OnWirePointerPressed;
+		_graphRoot.PointerMoved += OnWirePointerMoved;
+		_graphRoot.PointerReleased += OnWirePointerReleased;
+		_graphRoot.PointerCaptureLost += OnWirePointerCaptureLost;
+		Content = _graphRoot;
 		Refresh();
 	}
 
@@ -124,6 +124,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_dragPort = null;
 		_rootPortDrag = false;
 		_waypointDrag = null;
+		_isBackgroundPanning = false;
 		_canvas.Children.Clear();
 		_nodeControls.Clear();
 		_positions.Clear();
@@ -156,8 +157,75 @@ public sealed class FmSynthGraphCanvas : UserControl
 		}
 
 		ApplySelectionVisuals();
+		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 		_portLayer.InvalidateVisual();
+	}
+
+	/// <summary>Attach the existing editor ScrollViewer to track its
+	/// available viewport and allow background-drag panning.</summary>
+	public void AttachScrollViewer(ScrollViewer viewer)
+	{
+		ArgumentNullException.ThrowIfNull(viewer);
+		_scrollViewer = viewer;
+		viewer.SizeChanged += (_, _) => UpdateViewportSize();
+		viewer.PropertyChanged += (_, change) =>
+		{
+			if (change.Property == ScrollViewer.ViewportProperty)
+				UpdateViewportSize();
+		};
+		UpdateViewportSize();
+	}
+
+	private void UpdateViewportSize()
+	{
+		if (_scrollViewer is null)
+			return;
+		Size viewport = _scrollViewer.Viewport;
+		if (!double.IsFinite(viewport.Width) || !double.IsFinite(viewport.Height))
+			return;
+		if (Math.Abs(_viewportWidth - viewport.Width) < 0.1
+			&& Math.Abs(_viewportHeight - viewport.Height) < 0.1)
+			return;
+		_viewportWidth = viewport.Width;
+		_viewportHeight = viewport.Height;
+		UpdateContentExtent();
+	}
+
+	private void UpdateContentExtent()
+	{
+		FmSynthNode[] nodes = _synth.Graph.Nodes.ToArray();
+		FmSynthGraphBounds bounds = FmSynthGraphExtentGeometry.Calculate(
+			nodes.Where(n => _positions.ContainsKey(n.Id))
+				.Select(n => ToRect(_positions[n.Id], n)),
+			GetRenderedConnections().Select(connection =>
+				(IReadOnlyList<FmSynthRoutePoint>)connection.Route));
+
+		double previousX = _hasContentBounds ? _contentBounds.OriginX : bounds.OriginX;
+		double previousY = _hasContentBounds ? _contentBounds.OriginY : bounds.OriginY;
+		_contentBounds = bounds;
+		_hasContentBounds = true;
+		// One presentation-only transform moves nodes, wires and port
+		// handles together. Stored node and route coordinates stay logical.
+		_graphScene.RenderTransform =
+			new TranslateTransform(bounds.OriginX, bounds.OriginY);
+		_graphRoot.Width = Math.Max(_viewportWidth, bounds.Width);
+		_graphRoot.Height = Math.Max(_viewportHeight, bounds.Height);
+
+		// Preserve the visible scene when the logical extremum changes.
+		if (_scrollViewer is not null)
+		{
+			double dx = bounds.OriginX - previousX;
+			double dy = bounds.OriginY - previousY;
+			if (Math.Abs(dx) > 0.01 || Math.Abs(dy) > 0.01)
+				_scrollViewer.Offset += new Vector(dx, dy);
+		}
+	}
+
+	private Point PointerInWindow(PointerEventArgs e)
+	{
+		TopLevel? window = TopLevel.GetTopLevel(this);
+		return e.GetPosition(window ?? this);
 	}
 
 	public void SetSelectedNode(
