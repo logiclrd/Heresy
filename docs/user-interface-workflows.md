@@ -259,6 +259,21 @@ even if an outermost node changes the graph bounds during the gesture.
 The graph opens showing the content's first 20-DIP margin, with the
 additional 20% scrollbar room available outside the original edges.
 
+**Synth connection-port handles** appear when the pointer is within
+**8 physical pixels of a node body's boundary**, including just outside
+the rectangle and at its corners. Proximity uses the actual shortest
+distance to the rectangle perimeter, with Euclidean distance around
+outside corners, and accounts for window render scaling. If multiple
+nodes are nearby, the closest boundary determines hover, while port
+dragging selects the closest actual socket. An inside-body press may
+start a node move **only when it lands on the node body**; pressing
+near the outside edge may initiate wiring from a port, but may not
+move the node. Ports and wire/waypoint handles retain precedence over
+empty-background panning. The hover highlight persists as the pointer
+crosses the node border and follows the shared scene transform through
+scrolling; moving outside the proximity region hides the handles.
+Output, input, and bottom-left Operator append ports share this rule.
+
 **New Synth nodes** use a **stable grid in signed graph coordinates**,
 anchored at (80, 80) rather than the camera or an object-count index. For
 the current initial node geometry this grid has 190-DIP horizontal spacing

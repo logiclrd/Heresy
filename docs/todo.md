@@ -170,15 +170,6 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth editor — UI defects
 
-- [ ] **Expose Synth node drag handles within an 8 px proximity zone.**
-  Show the node's handles and permit their intended drag interaction
-  when the pointer is within **8 pixels of the node boundary**, even
-  when not directly over the node body. **Dragging the node body
-  itself** must still start only when the pointer actually lands on
-  the node. Distinguish handle hit targets from body-move hit targets;
-  verify near corners, adjacent nodes, connection ports, pointer
-  transitions and graph scrolling. See [UI workflow](user-interface-workflows.md).
-
 ## Synth editor — live parameter audition
 
 - [x] **Apply *all non-structural Synth property changes* to ongoing preview
