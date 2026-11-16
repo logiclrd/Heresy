@@ -115,6 +115,106 @@ public sealed class FmSynthGraphNodePlacementTests
     }
 
     [Test]
+    public void AutoRevealedRepeatedAdditionsRemainOnOneGraphSpaceLattice()
+    {
+        const double width = 170.0;
+        const double height = FmSynthGraphNodePlacement.InitialNodeHeight;
+        const double pitchX = width + FmSynthGraphExtentGeometry.Margin;
+        const double pitchY = height + FmSynthGraphExtentGeometry.Margin;
+        List<FmSynthLayoutRect> bodies = [new(80, 80, 170, 72)];
+        IReadOnlyList<FmSynthRoutePoint>[] noEdges = [];
+        FmSynthRoutePoint camera = new(60, 60);
+        int revealMoves = 0;
+
+        // Fill well beyond the original visible grid. The preceding version
+        // moved the grid origin each time CameraToReveal changed the camera.
+        FmSynthRoutePoint firstAdded = default;
+        for (int i = 0; i < 60; i++)
+        {
+            FmSynthRoutePoint point =
+                FmSynthGraphNodePlacement.FindUnobstructedPosition(
+                    bodies, noEdges, camera, 700, 500, width, height);
+            if (i == 0)
+                firstAdded = point;
+
+            Assert.That((point.X - FmSynthGraphNodePlacement.GridOriginX) / pitchX,
+                Is.EqualTo(Math.Round(
+                    (point.X - FmSynthGraphNodePlacement.GridOriginX) / pitchX))
+                    .Within(1e-9), $"addition {i}: X must stay on fixed grid");
+            Assert.That((point.Y - FmSynthGraphNodePlacement.GridOriginY) / pitchY,
+                Is.EqualTo(Math.Round(
+                    (point.Y - FmSynthGraphNodePlacement.GridOriginY) / pitchY))
+                    .Within(1e-9), $"addition {i}: Y must stay on fixed grid");
+
+            FmSynthLayoutRect rect = new(point.X, point.Y, width, height);
+            Assert.That(FmSynthGraphNodePlacement.IsUnobstructed(
+                rect, bodies, noEdges), Is.True, $"addition {i}");
+            bodies.Add(rect);
+            FmSynthRoutePoint revealed =
+                FmSynthGraphNodePlacement.CameraToReveal(camera, rect, 700, 500);
+            if (revealed != camera)
+                revealMoves++;
+            camera = revealed;
+        }
+
+        Assert.That(revealMoves, Is.GreaterThan(4),
+            "the scenario must actually advance the camera repeatedly");
+
+        // Manual panning may be fractional or move into negative coordinates.
+        // The very next placement still uses the original graph-space grid.
+        camera = new FmSynthRoutePoint(-317.5, -241.25);
+        FmSynthRoutePoint signed =
+            FmSynthGraphNodePlacement.FindUnobstructedPosition(
+                bodies, noEdges, camera, 700, 500, width, height);
+        Assert.That((signed.X - FmSynthGraphNodePlacement.GridOriginX) / pitchX,
+            Is.EqualTo(Math.Round(
+                (signed.X - FmSynthGraphNodePlacement.GridOriginX) / pitchX))
+                .Within(1e-9));
+        Assert.That((signed.Y - FmSynthGraphNodePlacement.GridOriginY) / pitchY,
+            Is.EqualTo(Math.Round(
+                (signed.Y - FmSynthGraphNodePlacement.GridOriginY) / pitchY))
+                .Within(1e-9));
+
+        // Deleting a node frees its actual cell; a return to the original
+        // viewport makes that same cell the first available one again.
+        bodies.Remove(new FmSynthLayoutRect(firstAdded.X, firstAdded.Y,
+            width, height));
+        FmSynthRoutePoint reused =
+            FmSynthGraphNodePlacement.FindUnobstructedPosition(
+                bodies, noEdges, new FmSynthRoutePoint(60, 60),
+                700, 500, width, height);
+        Assert.That(reused, Is.EqualTo(firstAdded));
+    }
+
+    [Test]
+    public void DenseFallbackAlsoStaysOnGraphSpaceGrid()
+    {
+        const double width = 170;
+        const double height = FmSynthGraphNodePlacement.InitialNodeHeight;
+        List<FmSynthLayoutRect> bodies = [];
+        for (int row = 0; row < 20; row++)
+            for (int col = 0; col < 20; col++)
+                bodies.Add(new FmSynthLayoutRect(
+                    80 + col * 190, 80 + row * 100, width, height));
+        IReadOnlyList<FmSynthRoutePoint>[] edges =
+        [
+            new FmSynthRoutePoint[] { new(-100, 10), new(12000, 10) },
+        ];
+        FmSynthRoutePoint point =
+            FmSynthGraphNodePlacement.FindUnobstructedPosition(
+                bodies, edges, new FmSynthRoutePoint(68.25, 60.75),
+                500, 350, width, height);
+        Assert.That(point.X, Is.GreaterThan(12000));
+        Assert.That((point.X - 80) / 190,
+            Is.EqualTo(Math.Round((point.X - 80) / 190)).Within(1e-9));
+        Assert.That((point.Y - 80) / 100,
+            Is.EqualTo(Math.Round((point.Y - 80) / 100)).Within(1e-9));
+        Assert.That(FmSynthGraphNodePlacement.IsUnobstructed(
+            new FmSynthLayoutRect(point.X, point.Y, width, height),
+            bodies, edges), Is.True);
+    }
+
+    [Test]
     public void BufferedRevealPreservesVisibleCameraAndMovesOnlyRequiredAxes()
     {
         FmSynthRoutePoint camera = new(0, 0);
