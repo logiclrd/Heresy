@@ -159,23 +159,43 @@ the output node displays the same refusal as the button. Delete with no node
 selected or with keyboard modifiers is ignored. When a parameter text field
 has focus, Delete continues editing that text and cannot remove a graph node.
 
-### Filter connection-label geometry
+### Synth graph labels and connection-port geometry
 
-A Filter's output port is centred vertically on the header's **Out** label.
-Its left-side input ports line up with the actual centred text of their
-**Input** and stage-parameter rows, in the same order as `GetPorts()`.
-This is not a proportional distribution across the height of the node.
-The layout and framework-neutral `FmSynthConnectionPorts` geometry share a
-20 px header, 22 px per labelled input row, 6 px vertical content margins
-and 2 px border thickness. The node grows to fit those rows; the last input
-is never clipped. Port centres are in logical canvas coordinates (DIPs),
-not multiplied by display scaling. Connected wire endpoints, hover dots,
-hit testing and connection drag previews all use those exact same centres.
-When filter stage kinds/count or input-port ordering changes, rebuilding
-the canvas rebuilds both rows and ports from the same source definition.
-Compact non-Filter node types retain their existing centred port positions.
-The regression checks real arranged label locations against their sockets
-and routes for unassigned and multi-stage Filter nodes at multiple positions.
+**Every** node shows the green **Out** label on its right side, with the
+output socket at the same height: **36 DIPs below the top**, the vertical
+centre of the **base 72-DIP** node. Expanding a Filter or Operator does not
+move its output handle or label down to the taller node's midpoint.
+Coordinates remain in logical canvas DIPs, without display-scaling offsets.
+
+**Filter** inputs occupy individually labelled rows in the order of
+`GetPorts()`: Input and the stage-parameter names. **Operator** nodes
+likewise expand vertically and have an explicit **Mode: ...** row followed
+by one row for each connected input, in operand order. Each Operator input
+row repeats its connected node's graph title (`#id Type`, plus
+`[OUTPUT]` if that source is selected as the graph's output). Duplicate
+operands each retain their own row. Long labels can be inspected through
+their tooltip when clipped to the node width.
+
+The Filter and Operator layouts share a 20-DIP title/header row, 22-DIP
+input rows, 6-DIP top/bottom content margins and 2-DIP border thickness;
+an Operator inserts an extra 22-DIP mode row before the inputs. The
+framework-neutral `FmSynthConnectionPorts` calculates port centers from
+these **same** dimensions so rendered labels, wire endpoints, hover dots
+and hit-testing remain aligned even for many connections.
+
+The Operator's special **gold/yellow append-input handle** is always
+centred on the **bottom-left corner** of its border, rather than getting a
+blank dedicated row. Dropping a connection there appends a semantic input
+and adds one new, properly labelled blue input row; the gold handle moves
+down to the new bottom-left corner. Because the handle straddles the
+border, drags can be started from either its inside or outside half.
+The append port itself never carries a persistent connection.
+
+This is editor-only geometry; neither the audio graph nor its persisted
+node connections change. Actual arranged Avalonia label positions are
+regression-tested against sockets and routes for varying Filter/Operator
+input counts and positions.
+
 
 Connection routes terminate at the exact input-port positions, including the
 individual inputs of an operator; backward connections travel around an
