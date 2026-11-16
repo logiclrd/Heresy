@@ -2,6 +2,7 @@ using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Data;
 using Avalonia.Layout;
 using Heresy.UserInterface.Images;
 
@@ -18,6 +19,17 @@ public sealed class ValueRangeLinkToggle : ToggleButton
 		Name = "ValueRangeLink";
 		Width = 38;
 		MinHeight = 32;
+		// The chain SVG contains transparent pixels. Paint the entire button
+		// with the hosting window's opaque background so the full rectangular
+		// surface is hit-testable without a visible mismatched button tile.
+		// Use a binding so light/dark theme or window background changes follow.
+		this[!BackgroundProperty] = new Binding(nameof(Window.Background))
+		{
+			RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor)
+			{
+				AncestorType = typeof(Window),
+			},
+		};
 		VerticalAlignment = VerticalAlignment.Bottom;
 		HorizontalAlignment = HorizontalAlignment.Center;
 		IsChecked = initiallyLinked;
