@@ -13,4 +13,5 @@
   <Project Path="Heresy.UserInterface/Heresy.UserInterface.csproj" />
   <Project Path="Heresy.Tests.UserInterface/Heresy.Tests.UserInterface.csproj" />
   <Project Path="Heresy/Heresy.csproj" />
+  <Project Path="tools/Heresy.KeyProbe/Heresy.KeyProbe.csproj" />
 </Solution>
