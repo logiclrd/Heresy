@@ -179,7 +179,7 @@ public sealed class FmSynthNodeHandleProximityTests
         try
         {
             window.UpdateLayout();
-            scroll.Offset = new Vector(220, scroll.Offset.Y);
+            scroll.Offset = new Vector(350, scroll.Offset.Y);
             window.UpdateLayout();
             Canvas graph = Field<Canvas>(canvas, "_canvas");
             Point outsideOutput = graph.TranslatePoint(
