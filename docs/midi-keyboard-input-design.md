@@ -4,9 +4,9 @@
 
 ## Scope and sequencing
 
-The three main surfaces are (1) Pattern Editor note entry, (2) relative current Source selection driven by Program Change, and (3) always-Hold Synth/Sample live preview, with arbitrary microtonal pitches and continuous pitch bend. MIDI input is an additional external controller, not a General MIDI mapping for song Sources and not a replacement for physical-computer-keyboard editing. No MIDI hardware is yet available, so favor a pure event/state layer, fake ports, deterministic tests, and virtual-port acceptance before physical verification.
+The three main surfaces are (1) Pattern Editor note entry, shared keyboard/MIDI transport and musical-time recording, (2) relative current Source selection driven by Program Change, and (3) always-Hold Synth/Sample live preview, with arbitrary microtonal pitches and continuous pitch bend. MIDI input is an additional external controller, not a General MIDI mapping for song Sources and not a replacement for physical-computer-keyboard editing. No MIDI hardware is yet available, so favor a pure event/state layer, fake ports, deterministic tests, and virtual-port acceptance before physical verification.
 
-**Dependency/order:** Implement the outstanding [realtime Synth parameter audition](todo.md) feature first, covering *all* non-structural editable Synth properties. It should establish reliable safe-audio-boundary publication/control machinery. MIDI live pitch bend can reuse that transport and the existing live pitch trajectory facilities, but must remain independent of authored graph parameters and be targeted at the correct MIDI voices. Next implement generalized continuous preview-voice pitch control, then wire MIDI device I/O and editor routing.
+**Dependency/order:** Realtime Synth parameter audition was completed under PR #12 and provides the safe-audio-boundary publication/control infrastructure that MIDI can build on. MIDI live pitch bend should reuse suitable transport and existing live pitch trajectory facilities, but remain independent of authored graph parameters and target the correct MIDI voices. Implement generalized continuous preview-voice pitch control, then MIDI device I/O and editor routing, including the Pattern Editor's shared MIDI/keyboard input state machine.
 
 ## Application-level MIDI transport
 
@@ -151,6 +151,6 @@ the physical computer-keyboard tracker piano alike. The editor has four
 
 - MIDIPLUS official EK490+ product: https://www.midiplus.com.tw/en/product-detail/EK490plus/
 - MIDIPLUS EK490+ owner manual: https://www.midiplus.com.tw/cn/MIDIPLUS-Download-detail/0/Manual_Of_EK490plus_EN/
-- [Synth realtime parameter-edit TODO](todo.md)
+- [Completed Synth realtime audition and remaining TODOs](todo.md)
 - [Pattern/Synth/Sample UI workflow](user-interface-workflows.md)
 - [Audio output](audio-output.md)
