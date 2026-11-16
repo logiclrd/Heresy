@@ -184,8 +184,8 @@ public sealed class FmSynthOperatorRowLayoutTests
                 Point actual = output.TranslatePoint(
                     new Point(0, output.Bounds.Height / 2), graph)!.Value;
                 FmSynthNode model = synth.Graph.Nodes.Single(n => n.Id == nodeId);
-                FmSynthNodePosition position = synth.NodePositions
-                    .Single(n => n.NodeId == nodeId);
+                FmSynthNodePosition position =
+                    Field<Dictionary<int, FmSynthNodePosition>>(surface, "_positions")[nodeId];
                 FmSynthLayoutRect rect = new(position.X, position.Y, 170,
                     FmSynthConnectionPorts.GetNodeHeight(model));
                 Assert.That(actual.Y, Is.EqualTo(rect.Top + 36).Within(0.6));
