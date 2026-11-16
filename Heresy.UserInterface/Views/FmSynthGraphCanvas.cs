@@ -623,7 +623,8 @@ public sealed class FmSynthGraphCanvas : UserControl
 			// Keep a right-side lane available for the common Out label.
 			Margin = new Thickness(8, 6, 40, 6),
 		};
-		if (node is FmFilterNode or FmOperatorNode)
+		if (node is FmFilterNode or FmOperatorNode
+			or FmOscillatorNode or FmSoundSourceNode or FmMultiNode)
 		{
 			// Graph rows and connection centres use the same DIP constants.
 			content.Spacing = 0;
@@ -664,6 +665,24 @@ public sealed class FmSynthGraphCanvas : UserControl
 						label, "OperatorInputPortLabelRow", Brushes.LightSkyBlue));
 				}
 			}
+			else
+			{
+				// Preserve the original waveform, sample or voice status
+				// as an independent row; never mislabel it as the socket.
+				detail.TextWrapping = TextWrapping.NoWrap;
+				detail.TextTrimming = TextTrimming.CharacterEllipsis;
+				detail.VerticalAlignment = VerticalAlignment.Center;
+				ToolTip.SetTip(detail, detail.Text);
+				content.Children.Add(new Border
+				{
+					Name = "SingleInputStatusRow",
+					Height = FmSynthConnectionPorts.StatusRowHeight,
+					Child = detail,
+				});
+				content.Children.Add(PortLabelRow(
+					node is FmMultiNode ? "In" : "Pitch",
+					"SingleInputPortLabelRow", Brushes.LightSkyBlue));
+			}
 		}
 		else
 		{
@@ -685,7 +704,8 @@ public sealed class FmSynthGraphCanvas : UserControl
 			Margin = new Thickness(0,
 				FmSynthConnectionPorts.OutputCenterOffset
 					- FmSynthConnectionPorts.FilterBorderThickness
-					- FmSynthConnectionPorts.FilterHeaderHeight / 2.0,
+					- FmSynthConnectionPorts.FilterHeaderHeight / 2.0
+					+ FmSynthConnectionPorts.OutputLabelTextDrop,
 				2, 0),
 			IsHitTestVisible = false,
 		};
