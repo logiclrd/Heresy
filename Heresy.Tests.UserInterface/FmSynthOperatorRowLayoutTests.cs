@@ -93,8 +93,8 @@ public sealed class FmSynthOperatorRowLayoutTests
                 Assert.That(inputRow.Name, Is.EqualTo("OperatorInputPortLabelRow"));
                 Assert.That(inputRow.Bounds.Height,
                     Is.EqualTo(FmSynthConnectionPorts.FilterInputRowHeight).Within(0.1));
-                Assert.That(inputText.Text, Is.EqualTo("#0 Constant"),
-                    "connected node's full graph title, not a generic Input label");
+                Assert.That(inputText.Text, Is.EqualTo("#0 Constant  [OUTPUT]"),
+                    "connected node's full title includes its graph-output marker");
 
                 FmSynthConnectionPort inputPort = ports[i + 1];
                 Point labelCentre = inputText.TranslatePoint(
