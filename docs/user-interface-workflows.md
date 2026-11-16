@@ -212,6 +212,37 @@ regression-tested against sockets and routes for varying Filter/Operator
 input counts and positions.
 
 
+### Synth graph scrollable content and pan gestures
+
+The FM Synth graph lives in a ScrollViewer with automatically managed,
+independent horizontal and vertical scrollbars. Its scrollable extents
+are recomputed from the actual bounding rectangles of **all nodes**
+and the full rendered polyline of **every connection**, not just wire
+endpoints or saved routing hints. This includes orthogonal doglegs,
+external lanes and manual waypoints. A **20-DIP margin on each of the
+four sides** is added after collecting the minimum/maximum graph
+coordinates. The old fixed 1200 × 720 DIP minimum canvas is removed.
+When content fits on an axis, that axis does not scroll and its scrollbar
+is hidden. The canvas fills the available viewport where content fits,
+including on window resize.
+
+The model stores unchanged graph-relative coordinates. An editor-only
+shared translation moves nodes, rendered wires and handles together so
+even negative logical coordinates or detours outside the first/last
+node remain reachable with the full four-sided margin. The graph's
+origin and virtual content size recompute after adding, moving, removing
+and rewiring nodes/edges and editing a connection waypoint; scrolling
+never mutates song data. Pointer hit-testing and wire endpoints remain
+in logical graph coordinates, while the translation and scroll offsets
+are purely visual.
+
+When any axis can scroll, dragging genuinely empty graph background pans
+the viewport along the available axes. A node body still moves its node,
+and port handles, connection segments and routing waypoints retain their
+existing higher-priority drag/edit interactions. Gestures use stable
+screen coordinates during drag even if the virtual origin changes while
+the user moves an extremal node or waypoint.
+
 Connection routes terminate at the exact input-port positions, including the
 individual inputs of an operator; backward connections travel around an
 exterior lane to reach the fixed port sides. Arrowheads follow the last
