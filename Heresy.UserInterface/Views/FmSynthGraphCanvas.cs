@@ -388,7 +388,12 @@ public sealed class FmSynthGraphCanvas : UserControl
 			return;
 		}
 		if (_waypointDrag is not WaypointDrag drag)
+		{
+			// Also reveal corner-mounted append ports while hovering just
+			// OUTSIDE the node's border (where PointerMoved targets root).
+			UpdateHover(e.GetPosition(_canvas));
 			return;
+		}
 		Point pointer = e.GetPosition(_canvas);
 		double dx = pointer.X - drag.PointerStart.X;
 		double dy = pointer.Y - drag.PointerStart.Y;
