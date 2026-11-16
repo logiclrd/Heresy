@@ -88,6 +88,12 @@ public sealed class FmSynthInspectorTransportPcmTests
                         throw;
                     }
                 });
+            // This older transport oracle isolates single-bound edits.
+            // Explicitly unlink the new default symmetric Noise range.
+            Inspector(editor).Children.OfType<StackPanel>()
+                .Single(x => x.Name == "ValueRangeFields")
+                .Children.OfType<ValueRangeLinkToggle>().Single()
+                .IsChecked = false;
             uint audio = workspace.Document.AudioRevision;
             Enter(Field<TextBox>(Inspector(editor), field), value);
             await published.Task.WaitAsync(TimeSpan.FromSeconds(8));
