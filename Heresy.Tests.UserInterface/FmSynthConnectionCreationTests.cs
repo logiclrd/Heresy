@@ -31,7 +31,7 @@ public sealed class FmSynthConnectionCreationTests
 		oscillatorPorts[0].Center.Should().Be(new FmSynthRoutePoint(270.0, 236.0));
 		oscillatorPorts[1].Kind.Should().Be(FmSynthConnectionPortKind.Input);
 		oscillatorPorts[1].InputIndex.Should().Be(0);
-		oscillatorPorts[1].Center.Should().Be(new FmSynthRoutePoint(100.0, 236.0));
+		oscillatorPorts[1].Center.Should().Be(new FmSynthRoutePoint(100.0, 200.0 + FmSynthConnectionPorts.SingleInputCenterOffset));
 
 		FmSynthConnectionPort[] operatorPorts =
 			FmSynthConnectionPorts.GetPorts(
