@@ -170,17 +170,6 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth editor — UI defects
 
-- [ ] **Make Synth graph content extents scrollable with 20 px margins.**
-  Treat **every node and every connection edge** as contributing to
-  the graph's content extent, expanded by **20 pixels orthogonally in
-  each of the four directions**. Allow the viewport to scroll through
-  the full expanded bounds; hide scrollbars independently when that
-  axis's extents fit. When scrolling is possible, dragging the
-  **background** pans the graph without accidentally starting a node
-  move, connection edit or other pointer action. Recompute bounds after
-  moving, adding, deleting or rewiring graph elements and on resizing
-  the viewport. See [UI workflow](user-interface-workflows.md).
-
 - [ ] **Place newly added Synth nodes in unobstructed graph space.**
   Choose a placement that does not intersect existing **node bodies**
   or cover existing **connection edges**, respecting the node/edge

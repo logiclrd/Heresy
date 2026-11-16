@@ -212,6 +212,53 @@ regression-tested against sockets and routes for varying Filter/Operator
 input counts and positions.
 
 
+### Synth graph scrolling, virtual margins and unbounded panning
+
+Every Synth graph node body and **every segment of each rendered connection**
+(including automatic detours and edited waypoints) contributes to a signed
+graph-coordinate bounding rectangle. Add **20 DIPs** on each side as the
+required visible-content margin. The scrollbars provide **another 20% of the
+current graph viewport width on the left and right**, and **another 20% of
+its height above and below**, measured beyond those fixed content margins.
+The percentages are of the *viewport*, not the graph's overall bounding
+box; they recompute when the viewport is resized. Each scrollbar's
+minimum and maximum come from actual extents (which may be negative),
+not an assumed graph origin at (0, 0). Each axis independently hides its
+scrollbar when that total extended span fits the viewport.
+
+The actual graph **camera/pan position** is unbounded and independent of
+both scrollbar values. Dragging truly empty graph background can pan any
+distance on either axis, even past both ends of the scrollbar track or
+when an axis has no visible scrollbar. The scrollbar thumb projects the
+camera into its current finite range and clamps at the corresponding
+end, while the graph itself continues moving. If the user subsequently
+*edits* a scrollbar (mouse, keyboard, wheel or another native scroll
+action), that scrollbar position becomes authoritative: the camera
+snaps immediately to the new in-range position; no off-range value is
+encoded in the thumb.
+
+Moving a node may give it **negative X or Y**, which is a supported,
+persisted document coordinate. Node dragging does not clamp to zero.
+Moving or adding/removing any node or connection waypoint, or
+rewiring a connection, recalculates **all four** range endpoints from
+the changed graph geometry. The in-progress wire preview also expands
+the extents while it is dragged. Such recalculations must **never**
+change the actual camera position, even if the new scrollbar range
+excludes that position. Native scrollbar offsets are only updated to
+the clamped projection. Recalculation after viewport resizing follows
+the same rule, and delayed ScrollViewer layout/reclamping events do not
+rewrite the camera.
+
+A common presentation-only scene transform keeps node bodies, connection
+routes, hit targets and port handles aligned independently of the
+ScrollViewer's bounded offset. Stored node coordinates and routing hints
+are unaffected by panning, resizing and extent changes. Node-body
+dragging, port wiring, and wire/waypoint editing take precedence over
+background panning, and drag displacement uses stable screen coordinates
+even if an outermost node changes the graph bounds during the gesture.
+The graph opens showing the content's first 20-DIP margin, with the
+additional 20% scrollbar room available outside the original edges.
+
 Connection routes terminate at the exact input-port positions, including the
 individual inputs of an operator; backward connections travel around an
 exterior lane to reach the fixed port sides. Arrowheads follow the last

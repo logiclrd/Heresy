@@ -26,6 +26,21 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private readonly Action<
 		int, int, int, IReadOnlyList<FmSynthRoutePoint>> _waypointsChanged;
 	private readonly Canvas _canvas = new();
+	private readonly Grid _graphRoot = new();
+	private readonly Grid _graphScene = new();
+	private ScrollViewer? _scrollViewer;
+	private FmSynthGraphBounds _contentBounds;
+	private FmSynthGraphScrollRange _scrollRange;
+	private FmSynthRoutePoint _camera;
+	private bool _hasCamera;
+	private bool _projectingScrollbars;
+	private bool _rangeLayoutPending;
+	private Vector _lastProjectedOffset;
+	private double _viewportWidth;
+	private double _viewportHeight;
+	private bool _isBackgroundPanning;
+	private Point _panPointerStart;
+	private FmSynthRoutePoint _panCameraStart;
 	private readonly ConnectionLayer _connectionLayer;
 	private readonly ConnectionLayer _portLayer;
 	private readonly Dictionary<int, Border> _nodeControls = [];
@@ -75,8 +90,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			waypointsChanged
 				?? throw new ArgumentNullException(nameof(waypointsChanged));
 
-		MinWidth = 1200;
-		MinHeight = 720;
+		// The scroll extent follows the geometry, not a fixed canvas minimum.
 		Focusable = true;
 		ClipToBounds = false;
 
@@ -92,29 +106,20 @@ public sealed class FmSynthGraphCanvas : UserControl
 			{
 				IsHitTestVisible = false,
 			};
-		Grid root =
-			new()
-			{
-				Background =
-					new SolidColorBrush(
-						Color.FromRgb(
-							24,
-							24,
-							28)),
-			};
-		root.Children.Add(
-			_connectionLayer);
-		root.Children.Add(
-			_canvas);
-		// Handles and the in-progress drag must remain visible above nodes;
-		// this overlay never intercepts pointer events from the canvas.
-		root.Children.Add(
-			_portLayer);
-		root.PointerPressed += OnWirePointerPressed;
-		root.PointerMoved += OnWirePointerMoved;
-		root.PointerReleased += OnWirePointerReleased;
-		root.PointerCaptureLost += OnWirePointerCaptureLost;
-		Content = root;
+		_graphRoot.Background =
+			new SolidColorBrush(Color.FromRgb(24, 24, 28));
+		_graphRoot.ClipToBounds = false;
+		_graphScene.ClipToBounds = false;
+		_graphScene.Children.Add(_connectionLayer);
+		_graphScene.Children.Add(_canvas);
+		// The overlay renders dots and previews above all node bodies.
+		_graphScene.Children.Add(_portLayer);
+		_graphRoot.Children.Add(_graphScene);
+		_graphRoot.PointerPressed += OnWirePointerPressed;
+		_graphRoot.PointerMoved += OnWirePointerMoved;
+		_graphRoot.PointerReleased += OnWirePointerReleased;
+		_graphRoot.PointerCaptureLost += OnWirePointerCaptureLost;
+		Content = _graphRoot;
 		Refresh();
 	}
 
@@ -124,6 +129,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_dragPort = null;
 		_rootPortDrag = false;
 		_waypointDrag = null;
+		_isBackgroundPanning = false;
 		_canvas.Children.Clear();
 		_nodeControls.Clear();
 		_positions.Clear();
@@ -156,8 +162,149 @@ public sealed class FmSynthGraphCanvas : UserControl
 		}
 
 		ApplySelectionVisuals();
+		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 		_portLayer.InvalidateVisual();
+	}
+
+	/// <summary>Attach the existing editor ScrollViewer to track its
+	/// available viewport and allow background-drag panning.</summary>
+	public void AttachScrollViewer(ScrollViewer viewer)
+	{
+		ArgumentNullException.ThrowIfNull(viewer);
+		_scrollViewer = viewer;
+		viewer.SizeChanged += (_, _) => UpdateViewportSize();
+		// The ScrollViewer may only clamp its native Offset after the
+		// next layout pass. That must never change the actual camera.
+		viewer.LayoutUpdated += (_, _) =>
+		{
+			if (!_rangeLayoutPending)
+				return;
+			_rangeLayoutPending = false;
+			ProjectCameraOntoScrollbars();
+		};
+		viewer.PropertyChanged += (_, change) =>
+		{
+			if (change.Property == ScrollViewer.ViewportProperty)
+				UpdateViewportSize();
+			else if (change.Property == ScrollViewer.OffsetProperty)
+				OnScrollOffsetChanged();
+		};
+		UpdateViewportSize();
+	}
+
+	private void UpdateViewportSize()
+	{
+		if (_scrollViewer is null)
+			return;
+		Size viewport = _scrollViewer.Viewport;
+		if (!double.IsFinite(viewport.Width) || !double.IsFinite(viewport.Height))
+			return;
+		if (Math.Abs(_viewportWidth - viewport.Width) < 0.1
+			&& Math.Abs(_viewportHeight - viewport.Height) < 0.1)
+			return;
+		_viewportWidth = viewport.Width;
+		_viewportHeight = viewport.Height;
+		UpdateContentExtent();
+	}
+
+	private void UpdateContentExtent()
+	{
+		FmSynthNode[] nodes = _synth.Graph.Nodes.ToArray();
+		List<IReadOnlyList<FmSynthRoutePoint>> edges =
+			GetRenderedConnections()
+				.Select(connection => (IReadOnlyList<FmSynthRoutePoint>)connection.Route)
+				.ToList();
+		// While a port is being dragged, its wire preview also participates
+		// in the extents. The resulting range is still only a scrollbar
+		// projection and never pushes the true camera back into range.
+		if (_dragPort is FmSynthConnectionPort drag)
+			edges.Add([drag.Center,
+				new FmSynthRoutePoint(_dragPortPointer.X, _dragPortPointer.Y)]);
+		FmSynthGraphBounds bounds = FmSynthGraphExtentGeometry.Calculate(
+			nodes.Where(n => _positions.ContainsKey(n.Id))
+				.Select(n => ToRect(_positions[n.Id], n)), edges);
+		_contentBounds = bounds;
+		if (!_hasCamera)
+		{
+			// Open with the same 20-DIP node/wire margin as before,
+			// leaving the new 20% overscan to either side available.
+			_camera = new FmSynthRoutePoint(bounds.Left, bounds.Top);
+			_hasCamera = true;
+		}
+		_scrollRange = FmSynthGraphScrollRange.FromBounds(
+			bounds, _viewportWidth, _viewportHeight);
+		_graphRoot.Width = _scrollRange.Width;
+		_graphRoot.Height = _scrollRange.Height;
+		_rangeLayoutPending = _scrollViewer is not null;
+		ProjectCameraOntoScrollbars();
+	}
+
+	/// <summary>
+	/// The camera is the unrestricted absolute graph coordinate at the
+	/// top-left of the viewport. Only the scrollbar value is clamped.
+	/// </summary>
+	private void SetCamera(FmSynthRoutePoint camera)
+	{
+		_camera = camera;
+		_hasCamera = true;
+		ProjectCameraOntoScrollbars();
+	}
+
+	private void ProjectCameraOntoScrollbars()
+	{
+		FmSynthRoutePoint projection = _scrollRange.Project(_camera);
+		_lastProjectedOffset = new Vector(projection.X, projection.Y);
+		if (_scrollViewer is not null)
+		{
+			_projectingScrollbars = true;
+			try
+			{
+				_scrollViewer.Offset = _lastProjectedOffset;
+			}
+			finally
+			{
+				_projectingScrollbars = false;
+			}
+		}
+		UpdateSceneTransform();
+	}
+
+	private void OnScrollOffsetChanged()
+	{
+		if (_scrollViewer is null)
+			return;
+		Vector offset = _scrollViewer.Offset;
+		// ScrollViewer can asynchronously reclamp its old offset during
+		// layout after the range changed. Such a projection update must
+		// not move the camera; ordinary user scrollbar/wheel edits do.
+		if (!_projectingScrollbars && !_rangeLayoutPending
+			&& (Math.Abs(offset.X - _lastProjectedOffset.X) > 0.01
+				|| Math.Abs(offset.Y - _lastProjectedOffset.Y) > 0.01))
+		{
+			_camera = _scrollRange.CameraAt(
+				new FmSynthRoutePoint(offset.X, offset.Y));
+			_hasCamera = true;
+			_lastProjectedOffset = offset;
+		}
+		UpdateSceneTransform();
+	}
+
+	private void UpdateSceneTransform()
+	{
+		Vector offset = _scrollViewer?.Offset ?? default;
+		// ScrollViewer draws the scene at (transform - offset).
+		// Compensate for its bounded offset to display the independent,
+		// potentially far-out-of-range camera exactly where requested.
+		_graphScene.RenderTransform =
+			new TranslateTransform(offset.X - _camera.X,
+				offset.Y - _camera.Y);
+	}
+
+	private Point PointerInWindow(PointerEventArgs e)
+	{
+		TopLevel? window = TopLevel.GetTopLevel(this);
+		return window is null ? e.GetPosition(this) : e.GetPosition(window);
 	}
 
 	public void SetSelectedNode(
@@ -313,22 +460,22 @@ public sealed class FmSynthGraphCanvas : UserControl
 		FmSynthRenderedConnection[] connections = GetRenderedConnections();
 		FmSynthWaypointHit? waypoint = FmSynthWaypointGeometry.HitWaypoint(
 			connections, position, RenderScaling);
-		if (e.ClickCount == 2)
+		// A double-click deletes a waypoint only when it actually hits
+		// one. Repeated empty-background drags may arrive with ClickCount=2;
+		// they must remain eligible to pan the unbounded camera.
+		if (e.ClickCount == 2 && waypoint is FmSynthWaypointHit hit)
 		{
-			if (waypoint is FmSynthWaypointHit hit)
-			{
-				FmSynthRenderedConnection connection =
-					connections.First(item => item.Connection == hit.Connection);
-				FmSynthRoutePoint[] remaining = FmSynthWaypointGeometry.Remove(
-					connection.Waypoints, hit.WaypointIndex);
-				_waypointDrag = null;
-				_waypointsChanged(
-					hit.Connection.SourceNodeId,
-					hit.Connection.TargetNodeId,
-					hit.Connection.TargetInputIndex,
-					remaining);
-				e.Handled = true;
-			}
+			FmSynthRenderedConnection connection =
+				connections.First(item => item.Connection == hit.Connection);
+			FmSynthRoutePoint[] remaining = FmSynthWaypointGeometry.Remove(
+				connection.Waypoints, hit.WaypointIndex);
+			_waypointDrag = null;
+			_waypointsChanged(
+				hit.Connection.SourceNodeId,
+				hit.Connection.TargetNodeId,
+				hit.Connection.TargetInputIndex,
+				remaining);
+			e.Handled = true;
 			return;
 		}
 
@@ -343,7 +490,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 				Index = old.WaypointIndex,
 				InitialPoint = wire.Waypoints[old.WaypointIndex],
 				CurrentPoint = wire.Waypoints[old.WaypointIndex],
-				PointerStart = pointer,
+				PointerStart = PointerInWindow(e),
 			};
 		}
 		else if (FmSynthWaypointGeometry.HitConnection(
@@ -361,11 +508,18 @@ public sealed class FmSynthGraphCanvas : UserControl
 				Index = line.InsertIndex,
 				InitialPoint = line.NearestPoint,
 				CurrentPoint = line.NearestPoint,
-				PointerStart = pointer,
+				PointerStart = PointerInWindow(e),
 			};
 		}
 		else
 		{
+			// The background pans without limit on either axis, even
+			// when neither scrollbar has a movable range.
+			_isBackgroundPanning = true;
+			_panPointerStart = PointerInWindow(e);
+			_panCameraStart = _camera;
+			e.Pointer.Capture((IInputElement)sender!);
+			e.Handled = true;
 			return;
 		}
 
@@ -378,10 +532,21 @@ public sealed class FmSynthGraphCanvas : UserControl
 		PointerEventArgs e)
 	{
 		_ = sender;
+		if (_isBackgroundPanning)
+		{
+			Point current = PointerInWindow(e);
+			Vector delta = current - _panPointerStart;
+			SetCamera(new FmSynthRoutePoint(
+				_panCameraStart.X - delta.X,
+				_panCameraStart.Y - delta.Y));
+			e.Handled = true;
+			return;
+		}
 		if (_rootPortDrag)
 		{
 			Point current = e.GetPosition(_canvas);
 			_dragPortPointer = current;
+			UpdateContentExtent();
 			UpdateHover(current);
 			_portLayer.InvalidateVisual();
 			e.Handled = true;
@@ -394,7 +559,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			UpdateHover(e.GetPosition(_canvas));
 			return;
 		}
-		Point pointer = e.GetPosition(_canvas);
+		Point pointer = PointerInWindow(e);
 		double dx = pointer.X - drag.PointerStart.X;
 		double dy = pointer.Y - drag.PointerStart.Y;
 		if (!drag.Moved
@@ -407,6 +572,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		drag.CurrentPoint = new FmSynthRoutePoint(
 			drag.InitialPoint.X + dx,
 			drag.InitialPoint.Y + dy);
+		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 		e.Handled = true;
 	}
@@ -416,6 +582,13 @@ public sealed class FmSynthGraphCanvas : UserControl
 		PointerReleasedEventArgs e)
 	{
 		_ = sender;
+		if (_isBackgroundPanning)
+		{
+			_isBackgroundPanning = false;
+			e.Pointer.Capture(null);
+			e.Handled = true;
+			return;
+		}
 		if (_rootPortDrag)
 		{
 			_rootPortDrag = false;
@@ -449,7 +622,13 @@ public sealed class FmSynthGraphCanvas : UserControl
 	{
 		_ = sender;
 		_ = e;
+		// Only wire/waypoint previews can have changed the extent. A plain
+		// background pan changed the camera alone: rebuilding its range here
+		// would leave a pending-layout guard that can swallow the user's next
+		// scrollbar edit before another layout pass.
+		bool previewChangedExtent = _waypointDrag is not null || _rootPortDrag;
 		_waypointDrag = null;
+		_isBackgroundPanning = false;
 		if (_rootPortDrag)
 		{
 			_rootPortDrag = false;
@@ -457,6 +636,8 @@ public sealed class FmSynthGraphCanvas : UserControl
 			_hoverNodeId = null;
 			_portLayer.InvalidateVisual();
 		}
+		if (previewChangedExtent)
+			UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 	}
 
@@ -816,8 +997,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		}
 
 		_dragNodeId = nodeId;
-		_dragPointerStart =
-			e.GetPosition(_canvas);
+		_dragPointerStart = PointerInWindow(e);
 		_dragOriginal = position;
 		e.Pointer.Capture(border);
 		e.Handled = true;
@@ -833,6 +1013,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		if (_dragPort is not null)
 		{
 			_dragPortPointer = current;
+			UpdateContentExtent();
 			UpdateHover(current);
 			_portLayer.InvalidateVisual();
 			e.Handled = true;
@@ -843,18 +1024,10 @@ public sealed class FmSynthGraphCanvas : UserControl
 			UpdateHover(current);
 			return;
 		}
-		double x =
-			Math.Max(
-				0.0,
-				_dragOriginal.X
-					+ current.X
-					- _dragPointerStart.X);
-		double y =
-			Math.Max(
-				0.0,
-				_dragOriginal.Y
-					+ current.Y
-					- _dragPointerStart.Y);
+		Point onWindow = PointerInWindow(e);
+		// Coordinates are signed: a node may move past either axis origin.
+		double x = _dragOriginal.X + onWindow.X - _dragPointerStart.X;
+		double y = _dragOriginal.Y + onWindow.Y - _dragPointerStart.Y;
 		FmSynthNodePosition preview =
 			new(
 				nodeId,
@@ -867,6 +1040,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		Canvas.SetTop(
 			border,
 			y);
+		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 		_portLayer.InvalidateVisual();
 		e.Handled = true;
@@ -907,6 +1081,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		FmSynthConnectionPort? end = FindPortAt(e.GetPosition(_canvas));
 		_dragPort = null;
 		_hoverNodeId = null;
+		UpdateContentExtent();
 		e.Pointer.Capture(null);
 		_portLayer.InvalidateVisual();
 		if (end is FmSynthConnectionPort target
@@ -932,6 +1107,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		{
 			_dragPort = null;
 			_hoverNodeId = null;
+			UpdateContentExtent();
 			_portLayer.InvalidateVisual();
 			return;
 		}
@@ -946,6 +1122,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		Canvas.SetTop(
 			border,
 			_dragOriginal.Y);
+		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 		_portLayer.InvalidateVisual();
 	}
