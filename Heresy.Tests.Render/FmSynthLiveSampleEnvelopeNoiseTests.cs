@@ -101,6 +101,33 @@ public sealed class FmSynthLiveSampleEnvelopeNoiseTests
     }
 
     [Test]
+    public void AudibleNoiseRangeEditInSampleOperatorMixFadesSameHeldVoice()
+    {
+        SampleSound sample = Sample();
+        FmSynthSound original = SampleNoiseMix(sample, 0.9);
+        FmSynthSound revised = SampleNoiseMix(sample, 0.9,
+            noiseMinimum: -0.1, noiseMaximum: 0.4);
+        RenderContext context = Mono();
+        SoundState live = original.CreateState();
+        SoundState fresh = revised.CreateState();
+        live.SetNoiseSeed(53);
+        fresh.SetNoiseSeed(53);
+        float[] previous = new float[128], actual = new float[5000],
+            reference = new float[5128];
+        original.Render(context, live, 0, previous.Length, previous);
+        revised.Render(context, fresh, 0, reference.Length, reference);
+        original.TryPrepareRunningState(revised, live).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, live);
+        long allocations = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, live, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocations).Should().Be(0L);
+        AssertOutputFade(previous[^1], reference, actual, 128);
+        Math.Abs(actual[^1] - reference[128 + actual.Length - 1])
+            .Should().BeLessThan(0.01f,
+                "the active output eventually adopts the revised range");
+    }
+
+    [Test]
     public void SampleAndNoiseMixOrdinaryPlaybackKeepsImmediateGain()
     {
         SampleSound sample = Sample();
@@ -156,14 +183,15 @@ public sealed class FmSynthLiveSampleEnvelopeNoiseTests
     }
 
     private static FmSynthSound SampleNoiseMix(SampleSound sample,
-        double gain, bool audition = true)
+        double gain, bool audition = true,
+        double noiseMinimum = -1, double noiseMaximum = 1)
     {
         SourceResolver resolver = new(sample, Curve(1));
         return new(new FmSynthGraph([
             new FmSoundSourceNode(1, SampleId, FmMultiNode.NeutralFrequencyHz),
             new FmConstantNode(2, gain),
             new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2]),
-            new FmNoiseNode(4),
+            new FmNoiseNode(4, noiseMinimum, noiseMaximum),
             new FmOperatorNode(5, FmOperatorKind.Add, [3, 4]),
         ], 5), resolver, soundResolver: resolver,
             enableLiveMultiExpansion: audition);

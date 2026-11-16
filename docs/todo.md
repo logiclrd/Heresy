@@ -170,16 +170,6 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth editor — node value ranges and symmetry link
 
-- [ ] **Add Vmin and Vmax properties to Synth Noise nodes.**
-  Expose editable **Vmin** and **Vmax** values for Noise nodes in the
-  Synth editor, and apply them to the Noise node's generated output range.
-  Preserve today's Noise output for existing projects and newly created
-  nodes using suitable defaults (the existing bipolar range), while
-  allowing explicit range edits to persist, reload, render and take
-  effect under the Synth live-parameter policy where compatible.
-  Verify endpoint/range mapping and interaction with downstream
-  Operators and preview audio.
-
 - [ ] **Add a Vmin/Vmax symmetry-link toggle between their inputs.**
   Wherever a Synth node exposes both **Vmin** and **Vmax** (including
   Oscillator, Envelope and the new Noise properties), put a toggle

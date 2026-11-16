@@ -2564,10 +2564,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					when revised.Definition is FmOperatorNode updatedOperator
 						&& operation.Operation == updatedOperator.Operation:
 					break;
-				// Noise uses the continuing voice's seed, node ID and frame:
-				// it has no mutable RNG history to migrate. The compiled
-				// node ID comparison above covers its entire configuration.
-				case FmNoiseNode when revised.Definition is FmNoiseNode:
+				// Noise has no mutable RNG history. A new value range is
+				// still an authored change, not an identical frozen child.
+				case FmNoiseNode noise
+					when revised.Definition is FmNoiseNode updatedNoise
+						&& noise.Minimum == updatedNoise.Minimum
+						&& noise.Maximum == updatedNoise.Maximum:
 					break;
 				// The Sample is a frozen audible leaf, not a new invocation.
 				// Rebound PCM and changing pitch controls are ineligible.
@@ -2661,7 +2663,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					when revised.Definition is FmOperatorNode updatedOp
 						&& op.Operation == updatedOp.Operation:
 					break;
-				case FmNoiseNode when revised.Definition is FmNoiseNode:
+				case FmNoiseNode noise
+					when revised.Definition is FmNoiseNode updatedNoise
+						&& noise.Minimum == updatedNoise.Minimum
+						&& noise.Maximum == updatedNoise.Maximum:
 					break;
 				case FmSoundSourceNode source
 					when revised.Definition is FmSoundSourceNode updatedSource
@@ -2894,6 +2899,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						|| oldOsc.Curvature != newOsc.Curvature
 						|| oldOsc.Minimum != newOsc.Minimum
 						|| oldOsc.Maximum != newOsc.Maximum);
+				bool noiseRangeChanged = _nodes[i].Definition is FmNoiseNode oldNoise
+					&& next._nodes[i].Definition is FmNoiseNode newNoise
+					&& (oldNoise.Minimum != newNoise.Minimum
+						|| oldNoise.Maximum != newNoise.Maximum);
 				bool scalarChanged = _nodes[i].Definition is FmConstantNode oldConstant
 					&& next._nodes[i].Definition is FmConstantNode newConstant
 					&& oldConstant.Value != newConstant.Value;
@@ -2915,7 +2924,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				// previous immediate child scalar policy is unchanged.
 				bool statelessMultiChild = _canFadeStatelessMultiChildOutput
 					&& next._canFadeStatelessMultiChildOutput;
-				if (shapeChanged || envelopeChanged
+				if (shapeChanged || noiseRangeChanged || envelopeChanged
 					|| (!statelessMultiChild && (scalarChanged || operatorChanged)))
 				{
 					live.StartStatelessOutputFade(_outputIndex);
@@ -4681,7 +4690,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			word ^= word >> 27;
 			word *= 0x94D049BB133111EBUL;
 			word ^= word >> 31;
-			return (word >> 11) * (2.0 / (1UL << 53)) - 1.0;
+			double normalized = (word >> 11) * (2.0 / (1UL << 53)) - 1.0;
+			// Mirror oscillator amplitude scaling without changing the
+			// deterministic seed/frame stream or its default bipolar PCM.
+			double midpoint = (node.Minimum + node.Maximum) / 2.0;
+			double halfRange = (node.Maximum - node.Minimum) / 2.0;
+			return midpoint + normalized * halfRange;
 		}
 	}
 

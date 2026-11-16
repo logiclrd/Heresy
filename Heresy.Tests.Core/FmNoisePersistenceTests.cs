@@ -17,7 +17,7 @@ public sealed class FmNoisePersistenceTests
         ObjectId id = song.AllocateObjectId();
         FmSynthDefinition synth = new(id, "Hiss",
             new FmSynthGraph([
-                new FmNoiseNode(4),
+                new FmNoiseNode(4, -0.25, 0.75),
                 new FmConstantNode(7, 0.25),
                 new FmOperatorNode(9, FmOperatorKind.Multiply, [4, 7]),
             ], 9));
@@ -30,6 +30,8 @@ public sealed class FmNoisePersistenceTests
         Assert.Multiple(() =>
         {
             Assert.That(noise["id"]!.GetValue<int>(), Is.EqualTo(4));
+            Assert.That(noise["minimum"]!.GetValue<double>(), Is.EqualTo(-0.25));
+            Assert.That(noise["maximum"]!.GetValue<double>(), Is.EqualTo(0.75));
             Assert.That(noise.ContainsKey("frequencyHz"), Is.False);
             Assert.That(noise.ContainsKey("seed"), Is.False,
                 "seed belongs to each playback invocation, not the song definition");
@@ -40,12 +42,32 @@ public sealed class FmNoisePersistenceTests
             ((FmSynthDefinition)roundtrip.Objects[id]).Graph;
         Assert.That(graph.Nodes.Single(node => node.Id == 4),
             Is.TypeOf<FmNoiseNode>());
+        FmNoiseNode loaded = graph.Nodes.OfType<FmNoiseNode>().Single();
+        Assert.That(loaded.Minimum, Is.EqualTo(-0.25));
+        Assert.That(loaded.Maximum, Is.EqualTo(0.75));
         Assert.That(graph.Nodes.Single(node => node.Id == 4).InputNodeIds,
             Is.Empty);
         Assert.That(graph.OutputNodeId, Is.EqualTo(9));
+
+        // Old v1 songs lack these optional properties and must reproduce
+        // the original exact bipolar output without migrating the schema.
+        JsonObject legacy = JsonNode.Parse(json)!.AsObject();
+        JsonObject legacyNoise = legacy["objects"]![id.Value.ToString()]!
+            ["graph"]!["nodes"]!.AsArray().Single(node =>
+                node!["type"]!.GetValue<string>() == "noise")!.AsObject();
+        legacyNoise.Remove("minimum");
+        legacyNoise.Remove("maximum");
+        SongDocument backward = SongDocumentJson.Deserialize(legacy.ToJsonString(),
+            "/tmp/heresy-legacy-white-noise.hm.json");
+        FmNoiseNode old = ((FmSynthDefinition)backward.Objects[id])
+            .Graph.Nodes.OfType<FmNoiseNode>().Single();
+        Assert.That(old.Minimum, Is.EqualTo(-1));
+        Assert.That(old.Maximum, Is.EqualTo(1));
         SongDocumentSnapshot frozen = SongDocumentSnapshot.Create(song);
         synth.Graph = new FmSynthGraph([new FmConstantNode(0, 0)], 0);
-        Assert.That(((FmSynthDefinition)frozen.Document.Objects[id])
-            .Graph.Nodes.OfType<FmNoiseNode>().Count(), Is.EqualTo(1));
+        FmNoiseNode snapshot = ((FmSynthDefinition)frozen.Document.Objects[id])
+            .Graph.Nodes.OfType<FmNoiseNode>().Single();
+        Assert.That(snapshot.Minimum, Is.EqualTo(-0.25));
+        Assert.That(snapshot.Maximum, Is.EqualTo(0.75));
     }
 }

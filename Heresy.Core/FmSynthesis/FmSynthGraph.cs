@@ -57,9 +57,24 @@ public sealed class FmConstantNode : FmSynthNode
 }
 
 /// <summary>Native output-rate, unfiltered white noise. Has no frequency or
-/// pitch inputs; one deterministic sample is emitted per output frame.</summary>
-public sealed class FmNoiseNode(int id) : FmSynthNode(id)
+/// pitch inputs; one deterministic sample is emitted per output frame.
+/// The authored amplitude interval is an affine mapping of the original
+/// bipolar stream; default bounds preserve the legacy samples exactly.</summary>
+public sealed class FmNoiseNode : FmSynthNode
 {
+	public FmNoiseNode(int id, double minimum = -1.0, double maximum = 1.0)
+		: base(id)
+	{
+		if (!double.IsFinite(minimum))
+			throw new ArgumentOutOfRangeException(nameof(minimum));
+		if (!double.IsFinite(maximum))
+			throw new ArgumentOutOfRangeException(nameof(maximum));
+		Minimum = minimum;
+		Maximum = maximum;
+	}
+
+	public double Minimum { get; }
+	public double Maximum { get; }
 	public override IReadOnlyList<int> InputNodeIds { get; } = Array.Empty<int>();
 }
 

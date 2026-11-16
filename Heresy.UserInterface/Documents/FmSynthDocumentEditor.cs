@@ -919,7 +919,8 @@ public static class FmSynthDocumentEditor
 		IReadOnlyDictionary<ObjectId, ObjectId>? sourceIdMap)
 		=> node switch
 		{
-			FmNoiseNode noise => new FmNoiseNode(noise.Id),
+			FmNoiseNode noise => new FmNoiseNode(
+				noise.Id, noise.Minimum, noise.Maximum),
 			FmConstantNode constant =>
 				new FmConstantNode(
 					constant.Id,
