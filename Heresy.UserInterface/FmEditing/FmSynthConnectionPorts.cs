@@ -135,7 +135,7 @@ public static class FmSynthConnectionPorts
 									bounds.Height, // Gold append handle: bottom-left corner.
 							FmOperatorNode => OperatorInputCenterOffset(inputIndex),
 							_ => bounds.Height * (inputIndex + 1) / (inputCount + 1),
-						})))));
+						}))));
 		}
 		return [.. ports];
 	}
