@@ -83,8 +83,10 @@ public sealed class FmSynthOperatorRowLayoutTests
 
             Point outCentre = outputLabel.TranslatePoint(
                 new Point(0, outputLabel.Bounds.Height / 2), graph)!.Value;
-            Assert.That(outCentre.Y, Is.EqualTo(top + 36).Within(0.6),
-                "output is fixed at the midpoint of the 72 DIP BASE height");
+            Assert.That(outCentre.Y, Is.EqualTo(
+                    top + 36 + FmSynthConnectionPorts.OutputLabelTextDrop)
+                .Within(0.6),
+                "Out text drops half a line below the base-height output socket");
             Assert.That(ports[0].Center.Y, Is.EqualTo(top + 36));
 
             for (int i = 0; i < inputCount; i++)
@@ -174,8 +176,8 @@ public sealed class FmSynthOperatorRowLayoutTests
             Assert.That(rows.Children.Count, Is.EqualTo(6),
                 "repeated input is still a separate, named connection row");
 
-            // Every node kind gets the same green output text at +36 DIP;
-            // taller Operator instances must not shift their output.
+            // Every node has its output socket at +36 DIP; the green text
+            // is deliberately dropped a half-line below that socket.
             foreach ((int nodeId, Border node) in controls)
             {
                 Grid nodeBody = (Grid)node.Child!;
@@ -190,7 +192,9 @@ public sealed class FmSynthOperatorRowLayoutTests
                     Field<Dictionary<int, FmSynthNodePosition>>(surface, "_positions")[nodeId];
                 FmSynthLayoutRect rect = new(position.X, position.Y, 170,
                     FmSynthConnectionPorts.GetNodeHeight(model));
-                Assert.That(actual.Y, Is.EqualTo(rect.Top + 36).Within(0.6));
+                Assert.That(actual.Y, Is.EqualTo(
+                    rect.Top + 36 + FmSynthConnectionPorts.OutputLabelTextDrop)
+                    .Within(0.6));
                 Assert.That(FmSynthConnectionPorts.GetPorts(model, rect)[0].Center.Y,
                     Is.EqualTo(rect.Top + 36));
             }
