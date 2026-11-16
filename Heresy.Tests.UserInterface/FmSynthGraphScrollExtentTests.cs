@@ -104,6 +104,7 @@ public sealed class FmSynthGraphScrollExtentTests
 
             FmSynthDocumentEditor.MoveNode(work, synth, far, 300, 125);
             canvas.Refresh();
+            window.UpdateLayout();
             b = Field<FmSynthGraphBounds>(canvas, "_contentBounds");
             Assert.That(b.Left, Is.EqualTo(60));
             Assert.That(b.Top, Is.EqualTo(60));
@@ -121,6 +122,7 @@ public sealed class FmSynthGraphScrollExtentTests
                 [new FmSynthRoutePoint(1300, 125),
                  new FmSynthRoutePoint(1300, 600)]);
             canvas.Refresh();
+            window.UpdateLayout();
             b = Field<FmSynthGraphBounds>(canvas, "_contentBounds");
             Assert.That(b.Right, Is.GreaterThanOrEqualTo(1320),
                 "a routed wire beyond all node bodies still expands the extent");
@@ -129,6 +131,7 @@ public sealed class FmSynthGraphScrollExtentTests
 
             FmSynthDocumentEditor.RemoveNode(work, synth, osc);
             canvas.Refresh();
+            window.UpdateLayout();
             b = Field<FmSynthGraphBounds>(canvas, "_contentBounds");
             Assert.That(b.Right, Is.EqualTo(490),
                 "removing the routed edge must shrink extents on refresh");
@@ -187,6 +190,7 @@ public sealed class FmSynthGraphScrollExtentTests
 
             FmSynthDocumentEditor.MoveNode(work, synth, remote, 1400, 125);
             canvas.Refresh();
+            window.UpdateLayout();
             Assert.That(scroll.Extent.Width, Is.GreaterThan(scroll.Viewport.Width));
             Assert.That(scroll.Extent.Height,
                 Is.LessThanOrEqualTo(scroll.Viewport.Height + 1),
