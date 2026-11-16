@@ -102,17 +102,17 @@ public sealed class FmSynthGraphScrollExtentTests
             Assert.That(scroll.Extent.Height, Is.GreaterThan(scroll.Viewport.Height),
                 "vertical scrollbar must be available for remote node");
 
-            FmSynthDocumentEditor.MoveNode(work, synth, far, 300, 125);
+            FmSynthDocumentEditor.MoveNode(work, synth, far, 230, 125);
             canvas.Refresh();
             window.UpdateLayout();
             b = Field<FmSynthGraphBounds>(canvas, "_contentBounds");
             Assert.That(b.Left, Is.EqualTo(60));
             Assert.That(b.Top, Is.EqualTo(60));
-            Assert.That(b.Right, Is.EqualTo(490));
+            Assert.That(b.Right, Is.EqualTo(420));
             Assert.That(b.Bottom, Is.EqualTo(217));
             Assert.That(scroll.Extent.Width, Is.LessThanOrEqualTo(
                 scroll.Viewport.Width + 1),
-                "horizontal scrolling hides independently when content fits");
+                "horizontal scrolling hides when node bounds plus 20%-per-side overscan fit");
 
             int osc = FmSynthDocumentEditor.AddOscillatorNode(
                 work, synth, FmOscillatorWaveform.Sine, 440, 350, 150);
@@ -133,7 +133,7 @@ public sealed class FmSynthGraphScrollExtentTests
             canvas.Refresh();
             window.UpdateLayout();
             b = Field<FmSynthGraphBounds>(canvas, "_contentBounds");
-            Assert.That(b.Right, Is.EqualTo(490),
+            Assert.That(b.Right, Is.EqualTo(420),
                 "removing the routed edge must shrink extents on refresh");
             Assert.That(b.Bottom, Is.EqualTo(217));
         }
