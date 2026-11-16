@@ -616,12 +616,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 		switch (node)
 		{
-			case FmNoiseNode:
-				_inspector.Children.Add(new TextBlock
-				{
-					Text = "White noise at the native output sample rate (no Frequency Hz). Use graph Filter nodes to shape the spectrum.",
-					TextWrapping = TextWrapping.Wrap,
-				});
+			case FmNoiseNode noise:
+				AddNoiseInspector(noise);
 				break;
 
 			case FmConstantNode constant:
@@ -703,6 +699,23 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			_message.Text = ex.Message;
 		}
+	}
+
+	private void AddNoiseInspector(FmNoiseNode node)
+	{
+		_inspector.Children.Add(new TextBlock
+		{
+			Text = "White noise at the native output sample rate (no Frequency Hz). Use graph Filter nodes to shape the spectrum.",
+			TextWrapping = TextWrapping.Wrap,
+		});
+		TextBox minimum = NumberBox(node.Minimum);
+		TextBox maximum = NumberBox(node.Maximum);
+		AddField("Vmin", minimum);
+		AddField("Vmax", maximum);
+		BindParameterText(minimum, text => UpdateNoise(node.Id,
+			minimum: ParseDouble(text, "Vmin")));
+		BindParameterText(maximum, text => UpdateNoise(node.Id,
+			maximum: ParseDouble(text, "Vmax")));
 	}
 
 	private void AddConstantInspector(FmConstantNode node)
@@ -1915,6 +1928,19 @@ public sealed class FmSynthEditorControl : UserControl
 			&& selectedId != previousSourceId
 			&& ((FmSoundSourceNode)CurrentNode(nodeId)).SourceId == selectedId)
 			RebuildInspector();
+	}
+
+	private void UpdateNoise(int nodeId,
+		double? minimum = null, double? maximum = null)
+	{
+		UpdateParameter(nodeId, current =>
+		{
+			FmNoiseNode live = (FmNoiseNode)current;
+			double min = minimum ?? live.Minimum;
+			double max = maximum ?? live.Maximum;
+			return min == live.Minimum && max == live.Maximum
+				? null : new FmNoiseNode(nodeId, min, max);
+		});
 	}
 
 	private void UpdateOscillator(
