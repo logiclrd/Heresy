@@ -5,10 +5,9 @@ using System.Reflection;
 
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input;
-using Avalonia.Media;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
+using Avalonia.Media;
 
 using Heresy.Core.FmSynthesis;
 using Heresy.UserInterface.Documents;
