@@ -216,32 +216,36 @@ The window-wide observer does not mark Caps Lock as handled, leaving other
 controls free to process the event. The Test piano keys themselves only work
 while Test is focused.
 
-### Nested-X11 Caps Lock numeric entry
+### Nested-X11 Caps Lock punctuation entry
 
-The Synth inspector's numeric fields (including Oscillator/Noise Vmin and
-Vmax and Multi's numeric settings) use the usual Avalonia TextBox insertion,
-selection and undo behavior. A narrowly scoped X11/Xephyr correction addresses
-a reproducible nested-X11 translation defect: with Caps Lock latched,
-`0.2` was delivered as `)>@`, as though Shift were held.
+The user's original nested Xephyr setup changes **four** keys when Caps Lock
+is enabled: `'` → `"`, `,` → `<`, `.` → `>`, and `;` → `:`. The
+number row does not exhibit the same fault. This problem occurs in **all
+textboxes**, not merely the FM Synth inspector, while the normal non-Xephyr
+desktop does not exhibit it. External reproduction in the Avalonia Controls
+showcase is still pending, so no claim is made that the underlying cause is
+necessarily Avalonia rather than Xephyr/XKB configuration.
 
-On Linux with an accessible X11 `DISPLAY`, the numeric fields independently
-query XKB `LockedMods` (Caps Lock) and `BaseMods | LatchedMods` (actual/
-one-shot Shift). If Caps is on but Shift is not active, a **single matching
-US keyboard shifted glyph** is restored to the unshifted glyph of its
-**physical** digit or punctuation key *before* TextBox processes TextInput.
-The field neither synthesizes key presses nor edits the textbox string
-directly; caret, selection, undo, paste and IME remain delegated to
-Avalonia. A real held or sticky Shift, AltGr/Ctrl/Alt/Meta, an unmatched
-keyboard-layout character, or an unavailable native query is never
-reinterpreted. Alphabetic Caps Lock and Hold/Latch semantics are unchanged.
-This is deliberately limited to numeric Synth inputs, not a global X11
-keyboard remapping; other keyboard layouts remain unchanged unless their
-physical key and translated glyph exactly match the conservative mapping.
+Instead of substituting a `TextBox` subclass (which breaks Fluent ControlTheme
+lookup and made some fields invisible), the application installs two
+**TopLevel tunneling** handlers once at startup: one to remember each recent
+physical KeyDown independently per top-level window, and one to normalize
+TextInput **before** any stock textbox/editor consumes it. On Linux/X11
+the native `XkbGetState` query distinguishes locked Caps (`LockedMods`)
+from actual/latched Shift (`BaseMods | LatchedMods`). Only the exact
+physical key / observed shifted glyph pair among the four above can be
+corrected, and only with Caps locked and Shift absent. Ctrl, Alt/AltGr, and
+Meta combinations, physical Shift, unknown XKB state, unfamiliar layout
+mappings, letter case, digit input and multi-character IME text are untouched.
 
-Headless tests simulate the observed `)>@` input and prove `0.2`,
-along with real Shift, unavailable native state and control-modifier
-noninterference. A **real Xephyr desktop** is required to confirm the
-native XKB observation and fix under the original keyboard mapping.
+The event text is changed before Avalonia's normal TextBox processing;
+it doesn't replace controls or directly edit their text, selection, caret,
+validation or undo history. Because every existing TextBox remains a stock
+TextBox, its theme and layout are unchanged. Test piano Hold/Latch behavior
+is also untouched. Automated tests cover the four corrected pairs, real
+Shift and Caps-off, two separate normal TextBoxes, digits, modifiers, absent
+XKB data, and multi-character input. Physical **Xephyr/X11** acceptance
+remains essential, as is the independent upstream Showcase experiment.
 
 Native Wayland does not provide a generally queryable global lock-state API
 outside the compositor's keyboard protocol. If a native query is unavailable,
