@@ -32,7 +32,6 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private FmSynthGraphBounds _contentBounds;
 	private FmSynthGraphScrollRange _scrollRange;
 	private FmSynthRoutePoint _camera;
-	private bool _hasContentBounds;
 	private bool _hasCamera;
 	private bool _projectingScrollbars;
 	private bool _rangeLayoutPending;
@@ -226,7 +225,6 @@ public sealed class FmSynthGraphCanvas : UserControl
 			nodes.Where(n => _positions.ContainsKey(n.Id))
 				.Select(n => ToRect(_positions[n.Id], n)), edges);
 		_contentBounds = bounds;
-		_hasContentBounds = true;
 		if (!_hasCamera)
 		{
 			// Open with the same 20-DIP node/wire margin as before,
