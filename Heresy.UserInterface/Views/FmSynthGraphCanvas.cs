@@ -579,29 +579,59 @@ public sealed class FmSynthGraphCanvas : UserControl
 				Spacing = 4,
 				Margin = new Thickness(8, 6),
 			};
-		content.Children.Add(title);
 		if (node is FmFilterNode filter)
 		{
-			// The text follows the same stage order and port ordinals as
-			// connection hit-testing, while height grows with port count.
-			content.Spacing = 2;
+			// The output is vertically centred on the header's "Out"
+			// label. Each input label is centred in its fixed-height row;
+			// FmSynthConnectionPorts uses these SAME dimensions for sockets,
+			// wire endpoints and pointer hit testing.
+			content.Spacing = 0;
+			title.TextTrimming = TextTrimming.CharacterEllipsis;
+			title.VerticalAlignment = VerticalAlignment.Center;
+			Grid header = new()
+			{
+				Height = FmSynthConnectionPorts.FilterHeaderHeight,
+				ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+			};
+			header.Children.Add(title);
+			TextBlock outputLabel = new()
+			{
+				Name = "FilterOutputPortLabel",
+				Text = "Out",
+				FontSize = 10,
+				Foreground = Brushes.LightGreen,
+				VerticalAlignment = VerticalAlignment.Center,
+			};
+			Grid.SetColumn(outputLabel, 1);
+			header.Children.Add(outputLabel);
+			content.Children.Add(header);
 			foreach (FmFilterInputPort port in filter.GetPorts())
 			{
 				string label = port.IsAudio ? "Input"
 					: $"{filter.Configuration!.Definition.GetStage(port.StageId).Name}."
 						+ port.ParameterName;
-				content.Children.Add(new TextBlock
+				Border labelRow = new()
 				{
-					Text = label,
-					FontSize = 10,
-					Height = 16,
-					Foreground = Brushes.LightSkyBlue,
-					TextTrimming = TextTrimming.CharacterEllipsis,
-				});
+					Height = FmSynthConnectionPorts.FilterInputRowHeight,
+					Child = new TextBlock
+					{
+						Text = label,
+						FontSize = 10,
+						Foreground = Brushes.LightSkyBlue,
+						TextTrimming = TextTrimming.CharacterEllipsis,
+						VerticalAlignment = VerticalAlignment.Center,
+					},
+				};
+				content.Children.Add(labelRow);
 			}
 		}
 		else
+		{
+			// Other node kinds have no per-port label rows; their existing
+			// centered handles and compact title/detail layout are unchanged.
+			content.Children.Add(title);
 			content.Children.Add(detail);
+		}
 
 		Border border =
 			new()
