@@ -21,6 +21,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 
 	private readonly FmSynthDefinition _synth;
 	private readonly Action<int> _selected;
+	private readonly Action<FmSynthConnectionCandidate>? _connectionSelected;
 	private readonly Action<int, double, double> _moved;
 	private readonly Action<int, int, int> _connected;
 	private readonly Action<
@@ -47,6 +48,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private readonly Dictionary<int, FmSynthNodePosition> _positions = [];
 
 	private int? _selectedNodeId;
+	private FmSynthConnectionCandidate? _selectedConnection;
 	private int? _dragNodeId;
 	private Point _dragPointerStart;
 	private FmSynthNodePosition _dragOriginal;
@@ -72,7 +74,8 @@ public sealed class FmSynthGraphCanvas : UserControl
 		Action<int> selected,
 		Action<int, double, double> moved,
 		Action<int, int, int> connected,
-		Action<int, int, int, IReadOnlyList<FmSynthRoutePoint>> waypointsChanged)
+		Action<int, int, int, IReadOnlyList<FmSynthRoutePoint>> waypointsChanged,
+		Action<FmSynthConnectionCandidate>? connectionSelected = null)
 	{
 		_synth =
 			synth
@@ -89,6 +92,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_waypointsChanged =
 			waypointsChanged
 				?? throw new ArgumentNullException(nameof(waypointsChanged));
+		_connectionSelected = connectionSelected;
 
 		// The scroll extent follows the geometry, not a fixed canvas minimum.
 		Focusable = true;
@@ -161,6 +165,9 @@ public sealed class FmSynthGraphCanvas : UserControl
 			index++;
 		}
 
+		if (_selectedConnection is FmSynthConnectionCandidate selection
+			&& !GetRenderedConnections().Any(item => item.Connection == selection))
+			_selectedConnection = null;
 		ApplySelectionVisuals();
 		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
@@ -307,14 +314,32 @@ public sealed class FmSynthGraphCanvas : UserControl
 		return window is null ? e.GetPosition(this) : e.GetPosition(window);
 	}
 
-	public void SetSelectedNode(
-		int? nodeId)
+	public void SetSelectedNode(int? nodeId)
 	{
-		if (_selectedNodeId == nodeId)
+		if (_selectedNodeId == nodeId && _selectedConnection is null)
 			return;
-
 		_selectedNodeId = nodeId;
+		_selectedConnection = null;
 		ApplySelectionVisuals();
+		_connectionLayer.InvalidateVisual();
+	}
+
+	/// <summary>The node/connection selection space is exclusive.</summary>
+	public void SetSelectedConnection(FmSynthConnectionCandidate? connection)
+	{
+		if (_selectedConnection == connection && _selectedNodeId is null)
+			return;
+		_selectedConnection = connection;
+		_selectedNodeId = null;
+		ApplySelectionVisuals();
+		_connectionLayer.InvalidateVisual();
+	}
+
+	private void SelectConnection(FmSynthConnectionCandidate connection)
+	{
+		Focus();
+		SetSelectedConnection(connection);
+		_connectionSelected?.Invoke(connection);
 	}
 
 	/// <summary>Suggest a free editor position for a newly inserted node.
@@ -429,20 +454,20 @@ public sealed class FmSynthGraphCanvas : UserControl
 
 	private void DrawConnections(DrawingContext context)
 	{
-		Pen connectionPen =
-			new(
-				new SolidColorBrush(
-					Color.FromRgb(125, 175, 235)),
-				2.0);
+		Pen connectionPen = new(
+			new SolidColorBrush(Color.FromRgb(125, 175, 235)), 2.0);
+		Pen selectedPen = new(Brushes.White, 3.0);
 		foreach (FmSynthRenderedConnection connection in GetRenderedConnections())
 		{
+			Pen pen = _selectedConnection == connection.Connection
+				? selectedPen : connectionPen;
 			IReadOnlyList<FmSynthRoutePoint> route = connection.Route;
 			for (int pointIndex = 1;
 				pointIndex < route.Count;
 				pointIndex++)
 			{
 				context.DrawLine(
-					connectionPen,
+					pen,
 					new Point(
 						route[pointIndex - 1].X,
 						route[pointIndex - 1].Y),
@@ -450,7 +475,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 						route[pointIndex].X,
 						route[pointIndex].Y));
 			}
-			DrawArrowhead(context, connectionPen, route);
+			DrawArrowhead(context, pen, route);
 
 			// Existing waypoints are always visible so that the user can
 			// move or double-click them without an inspector panel.
@@ -505,6 +530,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		// they must remain eligible to pan the unbounded camera.
 		if (e.ClickCount == 2 && waypoint is FmSynthWaypointHit hit)
 		{
+			SelectConnection(hit.Connection);
 			FmSynthRenderedConnection connection =
 				connections.First(item => item.Connection == hit.Connection);
 			FmSynthRoutePoint[] remaining = FmSynthWaypointGeometry.Remove(
@@ -521,6 +547,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 
 		if (waypoint is FmSynthWaypointHit old)
 		{
+			SelectConnection(old.Connection);
 			FmSynthRenderedConnection wire =
 				connections.First(item => item.Connection == old.Connection);
 			_waypointDrag = new WaypointDrag
@@ -537,6 +564,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			connections, position, RenderScaling)
 			is FmSynthConnectionLineHit line)
 		{
+			SelectConnection(line.Connection);
 			FmSynthRenderedConnection wire =
 				connections.First(item => item.Connection == line.Connection);
 			FmSynthRoutePoint[] inserted = FmSynthWaypointGeometry.Insert(
