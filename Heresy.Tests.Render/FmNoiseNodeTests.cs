@@ -76,6 +76,46 @@ public sealed class FmNoiseNodeTests
     }
 
     [Test]
+    public void ConfigurableNoiseRangeIsAffineAndPreservesDeterministicSamples()
+    {
+        FmNoiseNode defaults = new(12);
+        Assert.That(defaults.Minimum, Is.EqualTo(-1));
+        Assert.That(defaults.Maximum, Is.EqualTo(1));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new FmNoiseNode(12, double.NaN, 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new FmNoiseNode(12, -1, double.PositiveInfinity));
+
+        FmSynthSound original = Noise(defaults);
+        FmSynthSound ranged = Noise(new FmNoiseNode(12, -0.25, 0.75));
+        FmSynthSound constant = Noise(new FmNoiseNode(12, 0.125, 0.125));
+        FmSynthSound inverted = Noise(new FmNoiseNode(12, 0.75, -0.25));
+        SoundState[] states = [
+            original.CreateState(), ranged.CreateState(),
+            constant.CreateState(), inverted.CreateState(),
+        ];
+        foreach (SoundState state in states)
+            state.SetNoiseSeed(0x0123456789ABCDEFUL);
+
+        float[][] pcm = Enumerable.Range(0, 4)
+            .Select(_ => new float[1024]).ToArray();
+        FmSynthSound[] sounds = [original, ranged, constant, inverted];
+        for (int i = 0; i < sounds.Length; i++)
+            sounds[i].Render(Mono, states[i], 0, 1024, pcm[i]);
+        for (int i = 0; i < 1024; i++)
+        {
+            Assert.That(pcm[1][i],
+                Is.EqualTo(0.25 + pcm[0][i] * 0.5).Within(2e-6),
+                "new bounds remap the same deterministic white-noise sample");
+            Assert.That(pcm[2][i], Is.EqualTo(0.125f).Within(1e-7));
+            Assert.That(pcm[3][i],
+                Is.EqualTo(0.25 - pcm[0][i] * 0.5).Within(2e-6));
+        }
+        Assert.That(pcm[0].Min(), Is.LessThan(-0.9));
+        Assert.That(pcm[0].Max(), Is.GreaterThan(0.9));
+    }
+
+    [Test]
     public void ChunkingPitchChangesBackwardSeekAndDirectReplayAreExact()
     {
         FmSynthSound sound = Noise(new FmNoiseNode(2));
