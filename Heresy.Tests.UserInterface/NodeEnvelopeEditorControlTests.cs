@@ -119,6 +119,96 @@ public sealed class NodeEnvelopeEditorControlTests
 	}
 
 	[AvaloniaTest]
+	public void EnvelopeRangeLinkStartsFromCurrentBoundsAndRecentersAtomically()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition env =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Symmetry");
+		NodeEnvelopeEditorControl editor = new(workspace, env, _ => { });
+		ValueRangeLinkToggle toggle = Field<ValueRangeLinkToggle>(editor, "_rangeLink");
+		TextBox min = Field<TextBox>(editor, "_vmin");
+		TextBox max = Field<TextBox>(editor, "_vmax");
+		Assert.That(toggle.IsChecked, Is.False,
+			"the original Envelope display range 0..1 is asymmetric");
+		uint audio = workspace.Document.AudioRevision;
+		uint initial = workspace.Document.DocumentRevision;
+		toggle.IsChecked = true;
+		Assert.Multiple(() =>
+		{
+			Assert.That(env.Vmin, Is.EqualTo(-0.5));
+			Assert.That(env.Vmax, Is.EqualTo(0.5));
+			Assert.That(min.Text, Is.EqualTo("-0.5"));
+			Assert.That(max.Text, Is.EqualTo("0.5"));
+			Assert.That(workspace.Document.DocumentRevision,
+				Is.EqualTo(initial + 1), "a recenter is one atomic update");
+			Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio),
+				"display limits do not change audio PCM");
+		});
+		min.Text = "-3";
+		FocusLoss(min);
+		Assert.That(env.Vmin, Is.EqualTo(-3));
+		Assert.That(env.Vmax, Is.EqualTo(3));
+		Assert.That(max.Text, Is.EqualTo("3"));
+		Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(initial + 2));
+
+		max.Text = "2";
+		FocusLoss(max);
+		Assert.That(env.Vmin, Is.EqualTo(-2));
+		Assert.That(env.Vmax, Is.EqualTo(2));
+		Assert.That(min.Text, Is.EqualTo("-2"));
+		Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(initial + 3));
+		toggle.IsChecked = false;
+		Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(initial + 3),
+			"unlinking must be entirely UI-only");
+		min.Text = "-7";
+		FocusLoss(min);
+		Assert.That(env.Vmin, Is.EqualTo(-7));
+		Assert.That(env.Vmax, Is.EqualTo(2));
+		Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(initial + 4));
+		toggle.IsChecked = true;
+		Assert.That(env.Vmax, Is.EqualTo(4.5),
+			"newVmax = (oldVmax - oldVmin) / 2");
+		Assert.That(env.Vmin, Is.EqualTo(-4.5));
+		Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(initial + 5));
+		Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio));
+		NodeEnvelopeEditorControl reopened = new(workspace, env, _ => { });
+		Assert.That(Field<ValueRangeLinkToggle>(reopened, "_rangeLink").IsChecked,
+			Is.True);
+	}
+
+	[AvaloniaTest]
+	public void EnvelopeLinkedInvalidSignOrPendingRawTextIsNeverPartiallyCommitted()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition env =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Ranges");
+		NodeEnvelopeEditorControl editor = new(workspace, env, _ => { });
+		ValueRangeLinkToggle toggle = Field<ValueRangeLinkToggle>(editor, "_rangeLink");
+		toggle.IsChecked = true;
+		uint revision = workspace.Document.DocumentRevision;
+		TextBox min = Field<TextBox>(editor, "_vmin");
+		TextBox max = Field<TextBox>(editor, "_vmax");
+		TextBox nodes = Field<TextBox>(editor, "_nodesInput");
+		nodes.Text = "not a node";
+		min.Text = "1"; // Linked positive Vmin would violate Vmin < Vmax.
+		FocusLoss(min);
+		Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(revision));
+		Assert.That(env.Vmin, Is.EqualTo(-0.5));
+		Assert.That(env.Vmax, Is.EqualTo(0.5));
+		Assert.That(max.Text, Is.EqualTo("0.5"));
+		Assert.That(nodes.Text, Is.EqualTo("not a node"));
+		Assert.That(Field<TextBlock>(editor, "_message").Text,
+			Does.Contain("less than"));
+		min.Text = "-2";
+		FocusLoss(min);
+		Assert.That(env.Vmin, Is.EqualTo(-2));
+		Assert.That(env.Vmax, Is.EqualTo(2));
+		Assert.That(nodes.Text, Is.EqualTo("not a node"),
+			"the raw node draft remains separately staged");
+		Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(revision + 1));
+	}
+
+	[AvaloniaTest]
 	public void InvalidNodeTextDoesNotBlockIndependentValidParameterCommit()
 	{
 		DocumentWorkspace workspace = new();
@@ -302,8 +392,20 @@ public sealed class NodeEnvelopeEditorControlTests
 		TextBox end = Field<TextBox>(editor, "_sustainEnd");
 		Grid.GetColumn(start).Should().Be(1);
 		Grid.GetColumn(end).Should().Be(3);
-		Grid.GetColumn(Field<TextBox>(editor, "_vmin")).Should().Be(1);
-		Grid.GetColumn(Field<TextBox>(editor, "_vmax")).Should().Be(3);
+		StackPanel range = grid.Children.OfType<StackPanel>()
+			.Single(x => x.Name == "EnvelopeValueRange");
+		Grid.GetRow(range).Should().Be(2);
+		Grid.GetColumn(range).Should().Be(0);
+		Grid.GetColumnSpan(range).Should().Be(4);
+		range.Children.OfType<StackPanel>().Should().HaveCount(2);
+		range.Children.OfType<StackPanel>().Select(x =>
+			x.Children.OfType<TextBlock>().Single().Text)
+			.Should().Equal("Vmin", "Vmax");
+		range.Children.OfType<ValueRangeLinkToggle>().Should().ContainSingle();
+		range.Children.OfType<StackPanel>()
+			.SelectMany(x => x.Children.OfType<TextBox>())
+			.Should().Equal(Field<TextBox>(editor, "_vmin"),
+				Field<TextBox>(editor, "_vmax"));
 	}
 
 	[AvaloniaTest]
