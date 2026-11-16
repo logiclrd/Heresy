@@ -4082,6 +4082,10 @@ public sealed class FmSynthInspectorTransportPcmTests
         TextBox frequency = Field<TextBox>(inspector, "Frequency Hz");
         TextBox minimum = Field<TextBox>(inspector, "Vmin");
         TextBox maximum = Field<TextBox>(inspector, "Vmax");
+        // These legacy independent range edits intentionally unlink first.
+        inspector.Children.OfType<StackPanel>()
+            .Single(x => x.Name == "ValueRangeFields")
+            .Children.OfType<ValueRangeLinkToggle>().Single().IsChecked = false;
         CheckBox fixedPitch = inspector.Children.OfType<CheckBox>()
             .Single(box => Equals(box.Content, "Constant"));
         CheckBox exponential = inspector.Children.OfType<CheckBox>()
@@ -5857,8 +5861,17 @@ public sealed class FmSynthInspectorTransportPcmTests
 
     private static T Field<T>(StackPanel panel, string label) where T : Control
     {
-        int index = panel.Children.Select((child, i) => (child, i))
-            .Single(x => x.child is TextBlock text && text.Text == label).i;
+        if (label is "Vmin" or "Vmax")
+        {
+            StackPanel row = panel.Children.OfType<StackPanel>()
+                .Single(x => x.Name == "ValueRangeFields");
+            return (T)(Control)row.Children.OfType<StackPanel>()
+                .Single(x => x.Children.OfType<TextBlock>()
+                    .Any(t => t.Text == label))
+                .Children.OfType<TextBox>().Single();
+        }
+        int index = panel.Children.Select((child, j) => (child, j))
+            .Single(x => x.child is TextBlock text && text.Text == label).j;
         return (T)panel.Children[index + 1];
     }
 
