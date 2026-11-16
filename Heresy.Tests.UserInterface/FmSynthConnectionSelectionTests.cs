@@ -254,6 +254,9 @@ public sealed class FmSynthConnectionSelectionTests
 
             Point nodePoint = graph.TranslatePoint(
                 new Point(300 + 40, 220 + 35), window)!.Value;
+            // Headless pointer presses target the last hit-tested surface;
+            // move onto the body before clicking after a wire capture.
+            window.MouseMove(nodePoint);
             window.MouseDown(nodePoint, MouseButton.Left);
             window.MouseUp(nodePoint, MouseButton.Left);
             Assert.That(Field<FmSynthConnectionCandidate?>(
