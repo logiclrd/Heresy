@@ -140,6 +140,70 @@ public sealed class FmSynthConnectionSelectionTests
             Has.Count.EqualTo(1));
     }
 
+    [Test]
+    public void FilterModulationDisconnectionRetainsAudioInputAndOtherPortBindings()
+    {
+        DocumentWorkspace work = new();
+        FilterDefinition definition = FilterDocumentEditor.CreateFilter(
+            work, "Modulation");
+        FmSynthDefinition synth =
+            FmSynthDocumentEditor.CreateFmSynth(work, "Filter modulation");
+        int modulator = FmSynthDocumentEditor.AddConstantNode(
+            work, synth, 0.25, 240, 80);
+        int filterId = FmSynthDocumentEditor.AddFilterNode(
+            work, synth, 520, 80);
+        FmSynthDocumentEditor.SetFilterConfiguration(
+            work, synth, filterId, new FilterInstance(definition));
+        FmSynthDocumentEditor.ConnectNodes(work, synth, 0, filterId, 0);
+        FmSynthDocumentEditor.ConnectNodes(work, synth, modulator, filterId, 1);
+        FmSynthDocumentEditor.SetRoutingHint(work, synth, 0, filterId, 0,
+            [new FmSynthRoutePoint(290, 150)]);
+        FmSynthDocumentEditor.SetRoutingHint(work, synth, modulator, filterId, 1,
+            [new FmSynthRoutePoint(310, 190)]);
+
+        uint audio = work.Document.AudioRevision;
+        FmSynthDocumentEditor.DisconnectConnection(
+            work, synth, modulator, filterId, 1);
+        FmFilterNode after = synth.Graph.Nodes
+            .OfType<FmFilterNode>().Single();
+        Assert.That(after.GetPorts()[0].SourceNodeId, Is.EqualTo(0));
+        Assert.That(after.GetPorts()[1].SourceNodeId, Is.Null);
+        Assert.That(after.Connections, Is.Empty);
+        Assert.That(synth.ConnectionRoutingHints,
+            Has.Count.EqualTo(1));
+        Assert.That(synth.ConnectionRoutingHints.Single().TargetInputIndex,
+            Is.EqualTo(0));
+        Assert.That(work.Document.AudioRevision, Is.EqualTo(audio + 1));
+    }
+
+    [Test]
+    public void MultiAndSoundSourceDisconnectOnlyTheirOptionalInputs()
+    {
+        DocumentWorkspace work = new();
+        FmSynthDefinition synth =
+            FmSynthDocumentEditor.CreateFmSynth(work, "Optional inputs");
+        int multiId = FmSynthDocumentEditor.AddMultiNode(
+            work, synth, 350, 80);
+        int sourceId = FmSynthDocumentEditor.AddSoundSourceNode(
+            work, synth, 580, 80, constant: true);
+        FmSynthDocumentEditor.ConnectNodes(work, synth, 0, multiId, 0);
+        FmSynthDocumentEditor.ConnectNodes(work, synth, 0, sourceId, 0);
+
+        uint audio = work.Document.AudioRevision;
+        FmSynthDocumentEditor.DisconnectConnection(
+            work, synth, 0, multiId, 0);
+        FmSynthDocumentEditor.DisconnectConnection(
+            work, synth, 0, sourceId, 0);
+        Assert.That(synth.Graph.Nodes.OfType<FmMultiNode>()
+            .Single().InputNodeId, Is.Null);
+        FmSoundSourceNode source = synth.Graph.Nodes
+            .OfType<FmSoundSourceNode>().Single();
+        Assert.That(source.MultiplierNodeId, Is.Null);
+        Assert.That(source.Constant, Is.True);
+        Assert.That(synth.Graph.Nodes, Has.Count.EqualTo(3));
+        Assert.That(work.Document.AudioRevision, Is.EqualTo(audio + 2));
+    }
+
     [AvaloniaTest]
     public void WirePressSelectsConnectionWhileNodePressRestoresExclusiveNodeSelection()
     {
