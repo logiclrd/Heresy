@@ -264,10 +264,14 @@ Do not reintroduce completed-task checklists here.
   ignoring Skip so repeated incoming notes overwrite the same row under
   the existing edit mask. Play+Record plays **all channels** of each row.
   P wraps within the same Pattern; S advances the Sequence and stops at
-  its end. Ctrl+Space selects Play+Record; Ctrl+Shift+Space selects Record;
-  Escape from Record or Play+Record goes to **Pause first**, then Escape
-  alternates **Stop → Pause → Stop**, so three consecutive Escapes from
-  recording enter Pause, Stop, Pause respectively.
+  its end. Ctrl+Space selects Play+Record; Ctrl+Shift+Space selects Record.
+  Entering either record-head mode **remembers the current Stop/Pause state**;
+  switching Record ↔ Play+Record does not change this memory. Escape in a
+  recording mode **restores that remembered state** (Stop or Pause), including
+  after repeated start/stop cycles. In Stop or Pause, Escape switches to
+  the other resting state and updates the memory used by the next recording
+  session. Clicking a depressed Play/Record half also returns to the
+  remembered resting state.
   Include a **Velocity** toggle for MIDI and the physical keyboard piano:
   off uses current-channel volume for preview without writing it; on
   uses translated MIDI velocity (or keyboard current-channel volume) for
