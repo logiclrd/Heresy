@@ -170,36 +170,6 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth editor — UI defects
 
-- [ ] **Make Synth graph connections selectable and removable with Delete.**
-  Use a single mutually exclusive graph-selection space for **nodes and
-  connections**: pressing a rendered connection changes selection to that
-  particular connection (identified by source node, target node and target
-  input index), clearing any selected node or other connection; selecting a
-  node clears any selected connection. A connection's selection serves
-  **only** to let the graph-focused, unmodified **Delete** key disconnect it;
-  it does not require a connection inspector or new editing controls.
-  Preserve existing node selection/inspector behaviour and node deletion
-  with Delete; Delete in inspector text fields must continue to edit text.
-  Give the selected connection an unambiguous visual indication and clear
-  or otherwise safely reconcile the selection if the connection is removed,
-  replaced, rewired or its target input index changes. Disconnect the
-  **semantic graph edge**, not merely its routing hint, without deleting
-  either endpoint node or unrelated connections. Cover input-specific
-  removal for each connected node kind (including repeated sources in
-  distinct ordered Operator inputs, Filter inputs and optional multiplier/
-  pitch inputs), preserving valid graph and audio-revision semantics and
-  reporting unsupported invalid states clearly rather than corrupting the
-  graph. A pointer press on the wire selects it even when followed by a
-  drag; **do not change** existing wire-to-waypoint insertion, waypoint
-  dragging, or background-pan precedence except for selection on wire
-  press. Keep existing **double-click waypoint removal**: delete only
-  that waypoint, reroute through any remaining constraints, and restore
-  automatic routing when the last is removed. Regression-test wire/port/
-  waypoint hit priorities, click-without-drag, node↔connection selection,
-  Delete focus handling, duplicate Operator operands, rewires, undo/redo
-  and persistence where applicable, and scrolled or negatively positioned
-  graphs. See [UI workflow](user-interface-workflows.md).
-
 ## Synth editor — live parameter audition
 
 - [x] **Apply *all non-structural Synth property changes* to ongoing preview
