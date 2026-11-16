@@ -46,10 +46,10 @@ public static class FmSynthConnectionPorts
 	public const double FilterInputRowHeight = 22.0;
 	public const double OperatorModeRowHeight = 22.0;
 	public const double StatusRowHeight = 22.0;
-	// At the standard 10-DIP label font size, half a visual line is
-	// approximately 6 DIPs. Only the "Out" TEXT moves down; its port
-	// stays at the centre of the 72-DIP base node.
-	public const double OutputLabelTextDrop = 6.0;
+	// Halfway between the original centered text and the 6-DIP drop.
+	// This adjusts only the "Out" text; output ports remain fixed at
+	// 36 DIPs from the top, regardless of the full node height.
+	public const double OutputLabelTextDrop = 3.0;
 
 	// Every output remains fixed at the vertical center of the base node,
 	// even when Filter/Operator grows taller.
