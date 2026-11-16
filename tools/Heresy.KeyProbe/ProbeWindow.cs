@@ -23,7 +23,6 @@ namespace Heresy.KeyProbe;
 /// </summary>
 internal sealed class ProbeWindow : Window
 {
-    private readonly ProbeOptions _options;
     private readonly StreamWriter _writer;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly StringBuilder _visible = new();
@@ -36,7 +35,6 @@ internal sealed class ProbeWindow : Window
 
     public ProbeWindow(ProbeOptions options)
     {
-        _options = options;
         _writer = new StreamWriter(new FileStream(options.Output,
             FileMode.CreateNew, FileAccess.Write, FileShare.Read))
         {
