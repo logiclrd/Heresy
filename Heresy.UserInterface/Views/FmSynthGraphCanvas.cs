@@ -317,6 +317,47 @@ public sealed class FmSynthGraphCanvas : UserControl
 		ApplySelectionVisuals();
 	}
 
+	/// <summary>Suggest a free editor position for a newly inserted node.
+	/// This is evaluated BEFORE insertion, against the existing scene.
+	/// The 80-DIP search height covers every currently available initial
+	/// node shape; after insertion its true height governs reveal/extents.
+	/// </summary>
+	public FmSynthRoutePoint FindUnobstructedSpawnPosition()
+	{
+		FmSynthLayoutRect[] bodies = _synth.Graph.Nodes
+			.Where(node => _positions.ContainsKey(node.Id))
+			.Select(node => ToRect(_positions[node.Id], node))
+			.ToArray();
+		IReadOnlyList<FmSynthRoutePoint>[] edges = GetRenderedConnections()
+			.Select(connection => connection.Route)
+			.ToArray();
+		return FmSynthGraphNodePlacement.FindUnobstructedPosition(
+			bodies, edges, _camera, _viewportWidth, _viewportHeight,
+			NodeWidth, FmSynthGraphNodePlacement.InitialNodeHeight);
+	}
+
+	/// <summary>Only a newly added node requests a camera adjustment.
+	/// Normal content/range updates always preserve the existing camera.
+	/// </summary>
+	public void RevealNewNode(int nodeId)
+	{
+		// A new extent can change scrollbar visibility and thus the viewport.
+		// Resolve that layout before determining whether the buffer is visible.
+		_scrollViewer?.UpdateLayout();
+		UpdateViewportSize();
+		if (_viewportWidth <= 0 || _viewportHeight <= 0
+			|| !_positions.TryGetValue(nodeId, out FmSynthNodePosition position))
+			return;
+		FmSynthNode? node = _synth.Graph.Nodes
+			.FirstOrDefault(candidate => candidate.Id == nodeId);
+		if (node is null)
+			return;
+		FmSynthRoutePoint camera = FmSynthGraphNodePlacement.CameraToReveal(
+			_camera, ToRect(position, node), _viewportWidth, _viewportHeight);
+		if (camera != _camera)
+			SetCamera(camera);
+	}
+
 	/// <summary>
 	/// Use the identical routed wire geometry for drawing, hit testing, and
 	/// waypoint ordering. The drag preview substitutes editor-only hints but

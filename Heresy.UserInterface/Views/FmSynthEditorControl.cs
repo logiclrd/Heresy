@@ -289,7 +289,7 @@ public sealed class FmSynthEditorControl : UserControl
 					value: 0.0,
 					X,
 					Y);
-			AfterGraphChange(
+			AfterAddedNode(
 				id,
 				$"Added FM constant node #{id}");
 		}
@@ -315,7 +315,7 @@ public sealed class FmSynthEditorControl : UserControl
 					frequencyHz: 440.0,
 					x: X,
 					y: Y);
-			AfterGraphChange(
+			AfterAddedNode(
 				id,
 				$"Added FM oscillator node #{id}");
 		}
@@ -333,7 +333,7 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			(double x, double y) = NextSpawnPosition();
 			int id = FmSynthDocumentEditor.AddNoiseNode(_workspace, _synth, x, y);
-			AfterGraphChange(id, $"Added FM white-noise node #{id}");
+			AfterAddedNode(id, $"Added FM white-noise node #{id}");
 		}
 		catch (Exception ex) { _message.Text = ex.Message; }
 	}
@@ -347,7 +347,7 @@ public sealed class FmSynthEditorControl : UserControl
 			(double x, double y) = NextSpawnPosition();
 			int id = FmSynthDocumentEditor.AddSoundSourceNode(
 				_workspace, _synth, x, y);
-			AfterGraphChange(id, $"Added unassigned FM source node #{id}");
+			AfterAddedNode(id, $"Added unassigned FM source node #{id}");
 		}
 		catch (Exception ex) { _message.Text = ex.Message; }
 	}
@@ -363,7 +363,7 @@ public sealed class FmSynthEditorControl : UserControl
 			(double X, double Y) = NextSpawnPosition();
 			int id = FmSynthDocumentEditor.AddEnvelopeNode(
 				_workspace, _synth, ObjectId.None, X, Y);
-			AfterGraphChange(id,
+			AfterAddedNode(id,
 				$"Added unassigned FM envelope node #{id}");
 		}
 		catch (Exception ex)
@@ -381,7 +381,7 @@ public sealed class FmSynthEditorControl : UserControl
 			(double x, double y) = NextSpawnPosition();
 			int id = FmSynthDocumentEditor.AddMultiNode(
 				_workspace, _synth, x, y);
-			AfterGraphChange(id, $"Added FM Multi node #{id}");
+			AfterAddedNode(id, $"Added FM Multi node #{id}");
 		}
 		catch (Exception ex) { _message.Text = ex.Message; }
 	}
@@ -395,7 +395,7 @@ public sealed class FmSynthEditorControl : UserControl
 			(double x, double y) = NextSpawnPosition();
 			int id = FmSynthDocumentEditor.AddFilterNode(
 				_workspace, _synth, x, y);
-			AfterGraphChange(id, $"Added unassigned FM Filter node #{id}");
+			AfterAddedNode(id, $"Added unassigned FM Filter node #{id}");
 		}
 		catch (Exception ex)
 		{
@@ -422,7 +422,7 @@ public sealed class FmSynthEditorControl : UserControl
 					[input],
 					X,
 					Y);
-			AfterGraphChange(
+			AfterAddedNode(
 				id,
 				$"Added FM operator node #{id}");
 		}
@@ -2120,6 +2120,15 @@ public sealed class FmSynthEditorControl : UserControl
 		_changed($"Updated FM node #{nodeId}");
 	}
 
+	/// <summary>New-node insertion alone is permitted to scroll the graph.
+	/// Placement is chosen before the document edit; the added node is then
+	/// revealed after its real height and routes have been laid out.</summary>
+	private void AfterAddedNode(int nodeId, string message)
+	{
+		AfterGraphChange(nodeId, message);
+		_canvas.RevealNewNode(nodeId);
+	}
+
 	private void AfterGraphChange(
 		int? selectedNodeId,
 		string message)
@@ -2137,11 +2146,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private (double X, double Y) NextSpawnPosition()
 	{
-		int index =
-			_synth.Graph.Nodes.Count;
-		return (
-			80.0 + ((index % 4) * 220.0),
-			80.0 + ((index / 4) * 130.0));
+		FmSynthRoutePoint position = _canvas.FindUnobstructedSpawnPosition();
+		return (position.X, position.Y);
 	}
 
 	private void AddField(
