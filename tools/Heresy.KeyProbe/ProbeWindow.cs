@@ -290,8 +290,9 @@ internal sealed class ProbeWindow : Window
         Dispatcher.UIThread.Post(() =>
         {
             _refreshQueued = false;
-            _logView.Text = _visible.ToString();
-            _logView.CaretIndex = _logView.Text.Length;
+            string visibleText = _visible.ToString();
+            _logView.Text = visibleText;
+            _logView.CaretIndex = visibleText.Length;
         }, DispatcherPriority.Background);
     }
 }
