@@ -117,7 +117,7 @@ public sealed class FmSynthSourceEditorTests
             .Select((child, i) => (child, i))
             .Single(x => x.child is TextBlock label
                 && label.Text == "Frequency Hz").i;
-        inspector.Children[index + 1].Should().BeAssignableTo<TextBox>();
+        inspector.Children[index + 1].Should().BeOfType<TextBox>();
         CheckBox constant = inspector.Children[index + 2]
             .Should().BeOfType<CheckBox>().Which;
         constant.Content.Should().Be("Constant");
