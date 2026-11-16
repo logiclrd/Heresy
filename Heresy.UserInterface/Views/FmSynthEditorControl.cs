@@ -710,12 +710,115 @@ public sealed class FmSynthEditorControl : UserControl
 		});
 		TextBox minimum = NumberBox(node.Minimum);
 		TextBox maximum = NumberBox(node.Maximum);
-		AddField("Vmin", minimum);
-		AddField("Vmax", maximum);
-		BindParameterText(minimum, text => UpdateNoise(node.Id,
-			minimum: ParseDouble(text, "Vmin")));
-		BindParameterText(maximum, text => UpdateNoise(node.Id,
-			maximum: ParseDouble(text, "Vmax")));
+		AddValueRangeFields(minimum, maximum, node.Minimum, node.Maximum,
+			() =>
+			{
+				FmNoiseNode live = (FmNoiseNode)CurrentNode(node.Id);
+				return (live.Minimum, live.Maximum);
+			},
+			(min, max) => UpdateNoise(node.Id, min, max));
+	}
+
+	/// <summary>Both bound fields commit through one existing Synth node
+	/// replacement. A linked edit rewrites the opposite textbox's accepted
+	/// baseline too, so its later focus loss/Escape cannot restore stale data.
+	/// The link is UI-only; reopening reconstructs it from authored bounds.</summary>
+	private void AddValueRangeFields(
+		TextBox minimum, TextBox maximum,
+		double initialMinimum, double initialMaximum,
+		Func<(double Minimum, double Maximum)> current,
+		Action<double, double> update)
+	{
+		minimum.Width = 170;
+		maximum.Width = 170;
+		ValueRangeLinkToggle link = new(
+			ValueRangeSymmetry.IsSymmetric(initialMinimum, initialMaximum));
+		StackPanel minColumn = new() { Spacing = 3 };
+		minColumn.Children.Add(new TextBlock
+		{
+			Text = "Vmin", FontWeight = FontWeight.SemiBold,
+		});
+		minColumn.Children.Add(minimum);
+		StackPanel maxColumn = new() { Spacing = 3 };
+		maxColumn.Children.Add(new TextBlock
+		{
+			Text = "Vmax", FontWeight = FontWeight.SemiBold,
+		});
+		maxColumn.Children.Add(maximum);
+		StackPanel row = new()
+		{
+			Name = "ValueRangeFields",
+			Orientation = Orientation.Horizontal,
+			Spacing = 8,
+		};
+		row.Children.Add(minColumn);
+		row.Children.Add(link);
+		row.Children.Add(maxColumn);
+		_inspector.Children.Add(row);
+
+		FmSynthParameterTextField? minimumState = null;
+		FmSynthParameterTextField? maximumState = null;
+		void SyncBoth()
+		{
+			var (min, max) = current();
+			string minText = min.ToString("R", CultureInfo.InvariantCulture);
+			string maxText = max.ToString("R", CultureInfo.InvariantCulture);
+			minimum.Text = minText;
+			maximum.Text = maxText;
+			minimumState?.AcceptCommittedText(minText);
+			maximumState?.AcceptCommittedText(maxText);
+		}
+
+		minimumState = BindParameterText(minimum, text =>
+		{
+			var (min, max) = current();
+			var revised = ValueRangeSymmetry.SetMinimum(
+				ParseDouble(text, "Vmin"), max, link.IsChecked == true);
+			update(revised.Minimum, revised.Maximum);
+			if (link.IsChecked == true)
+			{
+				string updated = revised.Maximum.ToString(
+					"R", CultureInfo.InvariantCulture);
+				maximum.Text = updated;
+				maximumState?.AcceptCommittedText(updated);
+			}
+		});
+		maximumState = BindParameterText(maximum, text =>
+		{
+			var (min, max) = current();
+			var revised = ValueRangeSymmetry.SetMaximum(
+				min, ParseDouble(text, "Vmax"), link.IsChecked == true);
+			update(revised.Minimum, revised.Maximum);
+			if (link.IsChecked == true)
+			{
+				string updated = revised.Minimum.ToString(
+					"R", CultureInfo.InvariantCulture);
+				minimum.Text = updated;
+				minimumState?.AcceptCommittedText(updated);
+			}
+		});
+
+		bool reverting = false;
+		link.PropertyChanged += (_, e) =>
+		{
+			if (reverting || e.Property != ToggleButton.IsCheckedProperty
+				|| link.IsChecked != true)
+				return;
+			try
+			{
+				var (min, max) = current();
+				var centered = ValueRangeSymmetry.Center(min, max);
+				update(centered.Minimum, centered.Maximum);
+				SyncBoth();
+			}
+			catch (Exception ex)
+			{
+				_message.Text = ex.Message;
+				reverting = true;
+				try { link.IsChecked = false; }
+				finally { reverting = false; }
+			}
+		};
 	}
 
 	private void AddConstantInspector(FmConstantNode node)
@@ -825,8 +928,14 @@ public sealed class FmSynthEditorControl : UserControl
 		_inspector.Children.Add(waveformRow);
 		AddField("Frequency Hz", frequency);
 		_inspector.Children.Add(constant);
-		AddField("Vmin", minimum);
-		AddField("Vmax", maximum);
+		AddValueRangeFields(minimum, maximum, node.Minimum, node.Maximum,
+			() =>
+			{
+				FmOscillatorNode live = (FmOscillatorNode)CurrentNode(node.Id);
+				return (live.Minimum, live.Maximum);
+			},
+			(min, max) => UpdateOscillator(node.Id,
+				minimum: min, maximum: max));
 		AddField("Multiplier input", multiplier);
 		_inspector.Children.Add(exponential);
 
@@ -860,17 +969,6 @@ public sealed class FmSynthEditorControl : UserControl
 			constant,
 			() => ((FmOscillatorNode)CurrentNode(node.Id)).Constant,
 			value => UpdateOscillator(node.Id, constant: value));
-		BindParameterText(
-			minimum,
-			text => UpdateOscillator(
-				node.Id,
-				minimum: ParseDouble(text, "Vmin")));
-		BindParameterText(
-			maximum,
-			text => UpdateOscillator(
-				node.Id,
-				maximum: ParseDouble(text, "Vmax")));
-
 		BindParameterSelection(
 			multiplier,
 			() =>
@@ -1793,7 +1891,7 @@ public sealed class FmSynthEditorControl : UserControl
 	/// another field gains focus would steal that focus, so model commits only
 	/// refresh the graph canvas; the existing controls remain mounted.
 	/// </summary>
-	private void BindParameterText(TextBox box, Action<string> apply)
+	private FmSynthParameterTextField BindParameterText(TextBox box, Action<string> apply)
 	{
 		FmSynthParameterTextField field = new(box.Text ?? string.Empty);
 
@@ -1825,6 +1923,7 @@ public sealed class FmSynthEditorControl : UserControl
 			}
 		};
 		box.LostFocus += (_, _) => Commit(focusLost: true);
+		return field;
 	}
 
 	private void BindParameterSelection(
