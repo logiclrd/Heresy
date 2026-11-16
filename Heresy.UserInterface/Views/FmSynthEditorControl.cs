@@ -55,6 +55,7 @@ public sealed class FmSynthEditorControl : UserControl
 		};
 
 	private int? _selectedNodeId;
+	private FmSynthConnectionCandidate? _selectedConnection;
 	// The selected Filter's embedded inspector survives shared-definition
 	// commits: replacing it would silently discard an unsaved per-use draft.
 	private int? _activeFilterInspectorNodeId;
@@ -105,11 +106,11 @@ public sealed class FmSynthEditorControl : UserControl
 				SelectNode,
 				MoveNode,
 				ConnectNodes,
-				EditConnectionWaypoints);
+				EditConnectionWaypoints,
+				SelectConnection);
 		_selectedNodeId =
 			synth.Graph.OutputNodeId;
-		_canvas.SetSelectedNode(
-			_selectedNodeId);
+		ApplyGraphSelection();
 		// Only graph focus should delete graph nodes. Inspector TextBoxes
 		// retain their normal Delete-key text editing behavior.
 		_canvas.KeyDown += OnGraphKeyDown;
@@ -450,13 +451,48 @@ public sealed class FmSynthEditorControl : UserControl
 	{
 		if (!TryCommitPendingFilterChanges())
 		{
-			_canvas.SetSelectedNode(_selectedNodeId);
+			ApplyGraphSelection();
 			return;
 		}
 		_selectedNodeId = nodeId;
-		_canvas.SetSelectedNode(
-			nodeId);
+		_selectedConnection = null;
+		ApplyGraphSelection();
 		RebuildInspector();
+	}
+
+	private void SelectConnection(FmSynthConnectionCandidate connection)
+	{
+		if (!TryCommitPendingFilterChanges())
+		{
+			ApplyGraphSelection();
+			return;
+		}
+		_selectedNodeId = null;
+		_selectedConnection = connection;
+		ApplyGraphSelection();
+		RebuildInspector();
+	}
+
+	/// <summary>Reconcile the exclusive editor selection with the current
+	/// graph after any rewire or parameter update. A stale wire must never
+	/// permit Delete to affect a new occupant of its former input slot.</summary>
+	private void ApplyGraphSelection()
+	{
+		if (_selectedConnection is FmSynthConnectionCandidate connection)
+		{
+			FmSynthNode? target = _synth.Graph.Nodes.FirstOrDefault(
+				node => node.Id == connection.TargetNodeId);
+			if (target is not null
+				&& FmSynthConnectionPorts.GetConnectedInputs(target).Any(
+					input => input.Index == connection.TargetInputIndex
+						&& input.SourceId == connection.SourceNodeId))
+			{
+				_canvas.SetSelectedConnection(connection);
+				return;
+			}
+			_selectedConnection = null;
+		}
+		ApplyGraphSelection();
 	}
 
 	private void MoveNode(
@@ -475,15 +511,13 @@ public sealed class FmSynthEditorControl : UserControl
 			_changed(
 				$"Moved FM node #{nodeId}");
 			_canvas.Refresh();
-			_canvas.SetSelectedNode(
-				_selectedNodeId);
+			ApplyGraphSelection();
 		}
 		catch (Exception ex)
 		{
 			_message.Text = ex.Message;
 			_canvas.Refresh();
-			_canvas.SetSelectedNode(
-				_selectedNodeId);
+			ApplyGraphSelection();
 		}
 	}
 
@@ -514,7 +548,7 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			_message.Text = $"Cannot connect FM nodes: {ex.Message}";
 			_canvas.Refresh();
-			_canvas.SetSelectedNode(_selectedNodeId);
+			ApplyGraphSelection();
 		}
 	}
 
@@ -539,14 +573,14 @@ public sealed class FmSynthEditorControl : UserControl
 			}
 
 			_canvas.Refresh();
-			_canvas.SetSelectedNode(_selectedNodeId);
+			ApplyGraphSelection();
 			_changed($"Updated waypoints into FM node #{targetNodeId}");
 		}
 		catch (Exception ex)
 		{
 			_message.Text = $"Could not edit FM connection: {ex.Message}";
 			_canvas.Refresh();
-			_canvas.SetSelectedNode(_selectedNodeId);
+			ApplyGraphSelection();
 		}
 	}
 
@@ -674,15 +708,41 @@ public sealed class FmSynthEditorControl : UserControl
 	private void OnGraphKeyDown(object? sender, KeyEventArgs e)
 	{
 		if (e.Handled || e.Key != Key.Delete
-			|| e.KeyModifiers != KeyModifiers.None
-			|| _selectedNodeId is not int nodeId
-			|| !_synth.Graph.Nodes.Any(node => node.Id == nodeId))
+			|| e.KeyModifiers != KeyModifiers.None)
+			return;
+
+		if (_selectedConnection is FmSynthConnectionCandidate connection)
 		{
+			e.Handled = true;
+			RemoveConnection(connection);
 			return;
 		}
+		if (_selectedNodeId is not int nodeId
+			|| !_synth.Graph.Nodes.Any(node => node.Id == nodeId))
+			return;
 
 		e.Handled = true;
 		RemoveNode(nodeId);
+	}
+
+	private void RemoveConnection(FmSynthConnectionCandidate connection)
+	{
+		if (!TryCommitPendingFilterChanges())
+			return;
+		try
+		{
+			FmSynthDocumentEditor.DisconnectConnection(
+				_workspace, _synth, connection.SourceNodeId,
+				connection.TargetNodeId, connection.TargetInputIndex);
+			AfterGraphChange(null,
+				$"Disconnected FM connection #{connection.SourceNodeId} to "
+				+ $"#{connection.TargetNodeId}, input {connection.TargetInputIndex + 1}");
+		}
+		catch (Exception ex)
+		{
+			_message.Text = $"Cannot disconnect FM connection: {ex.Message}";
+			ApplyGraphSelection();
+		}
 	}
 
 	/// <summary>The button and Delete key share identical graph mutation,
@@ -1825,7 +1885,7 @@ public sealed class FmSynthEditorControl : UserControl
 	private void OnSharedFilterDefinitionCommitted(int filterNodeId)
 	{
 		_canvas.Refresh();
-		_canvas.SetSelectedNode(_selectedNodeId);
+		ApplyGraphSelection();
 		if (_selectedNodeId != filterNodeId
 			|| _activeFilterInspectorNodeId != filterNodeId
 			|| _activeFilterInstanceEditor is not FilterInstanceEditorControl instance
@@ -2115,7 +2175,7 @@ public sealed class FmSynthEditorControl : UserControl
 			_synth,
 			replacement);
 		_canvas.Refresh();
-		_canvas.SetSelectedNode(_selectedNodeId);
+		ApplyGraphSelection();
 		_message.Text = string.Empty;
 		_changed($"Updated FM node #{nodeId}");
 	}
@@ -2136,9 +2196,9 @@ public sealed class FmSynthEditorControl : UserControl
 		if (!TryCommitPendingFilterChanges())
 			return;
 		_selectedNodeId = selectedNodeId;
+		_selectedConnection = null;
 		_canvas.Refresh();
-		_canvas.SetSelectedNode(
-			selectedNodeId);
+		ApplyGraphSelection();
 		RebuildInspector();
 		_message.Text = string.Empty;
 		_changed(message);
