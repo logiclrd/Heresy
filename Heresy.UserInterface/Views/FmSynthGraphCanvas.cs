@@ -549,105 +549,108 @@ public sealed class FmSynthGraphCanvas : UserControl
 		FmSynthNode node,
 		FmSynthNodePosition position)
 	{
-		TextBlock title =
-			new()
-			{
-				Text =
-					$"#{node.Id} {NodeTypeName(node)}"
-					+ (node.Id == _synth.Graph.OutputNodeId
-						? "  [OUTPUT]"
-						: string.Empty),
-				FontWeight = FontWeight.SemiBold,
-				Foreground = Brushes.White,
-			};
-		TextBlock detail =
-			new()
-			{
-				Text = NodeDetail(node),
-				Foreground =
-					new SolidColorBrush(
-						Color.FromRgb(
-							205,
-							205,
-							215)),
-				TextWrapping = TextWrapping.Wrap,
-				FontSize = 11,
-			};
-		StackPanel content =
-			new()
-			{
-				Spacing = 4,
-				Margin = new Thickness(8, 6),
-			};
-		if (node is FmFilterNode filter)
+		TextBlock title = new()
 		{
-			// The output is vertically centred on the header's "Out"
-			// label. Each input label is centred in its fixed-height row;
-			// FmSynthConnectionPorts uses these SAME dimensions for sockets,
-			// wire endpoints and pointer hit testing.
+			Text = GraphNodeTitle(node),
+			FontWeight = FontWeight.SemiBold,
+			Foreground = Brushes.White,
+			TextTrimming = TextTrimming.CharacterEllipsis,
+		};
+		ToolTip.SetTip(title, title.Text);
+
+		TextBlock detail = new()
+		{
+			Text = NodeDetail(node),
+			Foreground = new SolidColorBrush(Color.FromRgb(205, 205, 215)),
+			TextWrapping = TextWrapping.Wrap,
+			FontSize = 11,
+		};
+		StackPanel content = new()
+		{
+			Spacing = 4,
+			// Keep a right-side lane available for the common Out label.
+			Margin = new Thickness(8, 6, 40, 6),
+		};
+		if (node is FmFilterNode or FmOperatorNode)
+		{
+			// Graph rows and connection centres use the same DIP constants.
 			content.Spacing = 0;
-			title.TextTrimming = TextTrimming.CharacterEllipsis;
 			title.VerticalAlignment = VerticalAlignment.Center;
 			Grid header = new()
 			{
 				Height = FmSynthConnectionPorts.FilterHeaderHeight,
-				ColumnDefinitions = new ColumnDefinitions("*,Auto"),
 			};
 			header.Children.Add(title);
-			TextBlock outputLabel = new()
-			{
-				Name = "FilterOutputPortLabel",
-				Text = "Out",
-				FontSize = 10,
-				Foreground = Brushes.LightGreen,
-				VerticalAlignment = VerticalAlignment.Center,
-			};
-			Grid.SetColumn(outputLabel, 1);
-			header.Children.Add(outputLabel);
 			content.Children.Add(header);
-			foreach (FmFilterInputPort port in filter.GetPorts())
+
+			if (node is FmFilterNode filter)
 			{
-				string label = port.IsAudio ? "Input"
-					: $"{filter.Configuration!.Definition.GetStage(port.StageId).Name}."
-						+ port.ParameterName;
-				Border labelRow = new()
+				foreach (FmFilterInputPort port in filter.GetPorts())
 				{
-					Height = FmSynthConnectionPorts.FilterInputRowHeight,
-					Child = new TextBlock
-					{
-						Text = label,
-						FontSize = 10,
-						Foreground = Brushes.LightSkyBlue,
-						TextTrimming = TextTrimming.CharacterEllipsis,
-						VerticalAlignment = VerticalAlignment.Center,
-					},
-				};
-				content.Children.Add(labelRow);
+					string label = port.IsAudio ? "Input"
+						: $"{filter.Configuration!.Definition.GetStage(port.StageId).Name}."
+							+ port.ParameterName;
+					content.Children.Add(PortLabelRow(
+						label, "FilterInputPortLabelRow", Brushes.LightSkyBlue));
+				}
+			}
+			else if (node is FmOperatorNode operation)
+			{
+				// The mode gets its own row BEFORE the connected inputs.
+				content.Children.Add(PortLabelRow(
+					$"Mode: {operation.Operation}",
+					"OperatorModeRow", Brushes.LightGray,
+					FmSynthConnectionPorts.OperatorModeRowHeight));
+				foreach (int sourceId in operation.InputNodeIds)
+				{
+					FmSynthNode? source = _synth.Graph.Nodes
+						.FirstOrDefault(other => other.Id == sourceId);
+					string label = source is null
+						? $"#{sourceId} (missing)"
+						: GraphNodeTitle(source);
+					content.Children.Add(PortLabelRow(
+						label, "OperatorInputPortLabelRow", Brushes.LightSkyBlue));
+				}
 			}
 		}
 		else
 		{
-			// Other node kinds have no per-port label rows; their existing
-			// centered handles and compact title/detail layout are unchanged.
 			content.Children.Add(title);
 			content.Children.Add(detail);
 		}
 
-		Border border =
-			new()
-			{
-				Width = NodeWidth,
-				Height = FmSynthConnectionPorts.GetNodeHeight(node),
-				CornerRadius = new CornerRadius(5),
-				BorderThickness = new Thickness(2),
-				Background =
-					new SolidColorBrush(
-						Color.FromRgb(
-							48,
-							52,
-							62)),
-				Child = content,
-			};
+		// Output is always at BASE node-height midpoint (36 DIP below
+		// its top), never the midpoint of a taller Filter/Operator.
+		TextBlock outputLabel = new()
+		{
+			Name = "NodeOutputPortLabel",
+			Text = "Out",
+			FontSize = 10,
+			Foreground = Brushes.LightGreen,
+			Height = FmSynthConnectionPorts.FilterHeaderHeight,
+			HorizontalAlignment = HorizontalAlignment.Right,
+			VerticalAlignment = VerticalAlignment.Top,
+			Margin = new Thickness(0,
+				FmSynthConnectionPorts.OutputCenterOffset
+					- FmSynthConnectionPorts.FilterBorderThickness
+					- FmSynthConnectionPorts.FilterHeaderHeight / 2.0,
+				2, 0),
+			IsHitTestVisible = false,
+		};
+		Grid body = new();
+		body.Children.Add(content);
+		body.Children.Add(outputLabel);
+
+		Border border = new()
+		{
+			Width = NodeWidth,
+			Height = FmSynthConnectionPorts.GetNodeHeight(node),
+			CornerRadius = new CornerRadius(5),
+			BorderThickness = new Thickness(
+				FmSynthConnectionPorts.FilterBorderThickness),
+			Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
+			Child = body,
+		};
 
 		border.PointerExited += (_, e) =>
 		{
@@ -681,6 +684,31 @@ public sealed class FmSynthGraphCanvas : UserControl
 				e);
 
 		return border;
+	}
+
+	private string GraphNodeTitle(FmSynthNode node)
+		=> $"#{node.Id} {NodeTypeName(node)}"
+			+ (node.Id == _synth.Graph.OutputNodeId ? "  [OUTPUT]" : "");
+
+	private static Border PortLabelRow(
+		string label, string name, IBrush color,
+		double height = FmSynthConnectionPorts.FilterInputRowHeight)
+	{
+		TextBlock text = new()
+		{
+			Text = label,
+			FontSize = 10,
+			Foreground = color,
+			TextTrimming = TextTrimming.CharacterEllipsis,
+			VerticalAlignment = VerticalAlignment.Center,
+		};
+		ToolTip.SetTip(text, label);
+		return new Border
+		{
+			Name = name,
+			Height = height,
+			Child = text,
+		};
 	}
 
 	private void OnNodePointerPressed(
