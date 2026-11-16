@@ -225,7 +225,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private Point PointerInWindow(PointerEventArgs e)
 	{
 		TopLevel? window = TopLevel.GetTopLevel(this);
-		return e.GetPosition(window ?? this);
+		return window is null ? e.GetPosition(this) : e.GetPosition(window);
 	}
 
 	public void SetSelectedNode(
