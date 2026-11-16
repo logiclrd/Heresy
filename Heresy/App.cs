@@ -13,13 +13,21 @@ using Heresy.Render.SDL;
 using Heresy.Render.Realtime;
 using Heresy.UserInterface;
 using Heresy.UserInterface.Startup;
+using Heresy.UserInterface.Keyboard;
 
 namespace Heresy;
 
 public sealed class App : Application
 {
+	private X11CapsLockTextInputCorrection? _xephyrTextCorrection;
+
 	public override void Initialize()
-		=> RegisterStyles(Styles);
+	{
+		RegisterStyles(Styles);
+		// Intercept the four known Xephyr Caps punctuation anomalies once
+		// for every TopLevel; leave every stock TextBox and its theme alone.
+		_xephyrTextCorrection ??= new X11CapsLockTextInputCorrection();
+	}
 
 	/// <summary>
 	/// Configures desktop control styles independently of the platform asset
