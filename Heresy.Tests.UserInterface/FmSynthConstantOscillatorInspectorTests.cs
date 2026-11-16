@@ -40,7 +40,7 @@ public sealed class FmSynthConstantOscillatorInspectorTests
 			.Single(pair => pair.child is TextBlock label
 				&& label.Text == "Frequency Hz").index;
 		inspector.Children[frequencyLabelIndex + 1].Should()
-			.BeOfType<TextBox>().Which.Text.Should().Be("5");
+			.BeAssignableTo<TextBox>().Which.Text.Should().Be("5");
 		CheckBox constant = inspector.Children[frequencyLabelIndex + 2]
 			.Should().BeOfType<CheckBox>().Which;
 		constant.Content.Should().Be("Constant");
