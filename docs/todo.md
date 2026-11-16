@@ -265,7 +265,9 @@ Do not reintroduce completed-task checklists here.
   the existing edit mask. Play+Record plays **all channels** of each row.
   P wraps within the same Pattern; S advances the Sequence and stops at
   its end. Ctrl+Space selects Play+Record; Ctrl+Shift+Space selects Record;
-  Escape enters Stop except that Escape from Stop enters Pause.
+  Escape from Record or Play+Record goes to **Pause first**, then Escape
+  alternates **Stop → Pause → Stop**, so three consecutive Escapes from
+  recording enter Pause, Stop, Pause respectively.
   Include a **Velocity** toggle for MIDI and the physical keyboard piano:
   off uses current-channel volume for preview without writing it; on
   uses translated MIDI velocity (or keyboard current-channel volume) for
