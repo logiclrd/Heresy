@@ -259,6 +259,22 @@ even if an outermost node changes the graph bounds during the gesture.
 The graph opens showing the content's first 20-DIP margin, with the
 additional 20% scrollbar room available outside the original edges.
 
+**New Synth nodes** are placed using the current camera and visible viewport,
+not a hardcoded object-count grid. Before insertion, the editor searches
+nearby cells for a position where the node's full initial body and a
+20-DIP buffer avoid every existing node body and every segment of every
+already-rendered connection, including remote routing detours and waypoints.
+The search uses signed graph coordinates, extends outward through populated
+areas and always has a fallback beyond existing graph geometry. Subsequent
+additions must independently find free space; manual node moves remain
+unrestricted. After each insertion, the editor intentionally pans **only if
+necessary** to reveal the entire new node with its 20-DIP buffer, using its
+actual height and the current post-layout viewport. If a viewport axis is
+too small to fit the buffered node, align the padded near edge. This
+insertion-only reveal is presentation state: it changes neither document nor
+audio revisions. Ordinary graph extent recalculations must continue to
+preserve the camera without this auto-reveal behavior.
+
 Connection routes terminate at the exact input-port positions, including the
 individual inputs of an operator; backward connections travel around an
 exterior lane to reach the fixed port sides. Arrowheads follow the last
