@@ -322,6 +322,8 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 				SyncFieldFromEnvelope(_vmax);
 			else if (linked && ReferenceEquals(field, _vmax))
 				SyncFieldFromEnvelope(_vmin);
+			if (ReferenceEquals(field, _vmin) || ReferenceEquals(field, _vmax))
+				_graph.RefreshFromEnvelope();
 			_message.Text = "Envelope parameter updated.";
 			if (_workspace.Document.DocumentRevision != before)
 				_changed($"Updated envelope {_envelope.Name}");
@@ -355,6 +357,7 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			finally { _publishing = false; }
 			SyncFieldFromEnvelope(_vmin);
 			SyncFieldFromEnvelope(_vmax);
+			_graph.RefreshFromEnvelope();
 			_message.Text = "Envelope value range linked.";
 			if (_workspace.Document.DocumentRevision != before)
 				_changed($"Updated envelope {_envelope.Name}");
