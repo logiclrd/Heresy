@@ -55,7 +55,7 @@ public sealed class CapsLockNumericTextBoxTests
         Assert.That(CapsLockNumericTextBox.RestoreUnshifted(
             PhysicalKey.Digit2, "!", caps), Is.EqualTo("!"));
         Assert.That(CapsLockNumericTextBox.RestoreUnshifted(
-            PhysicalKey.KeyA, "A", caps), Is.EqualTo("A"),
+            PhysicalKey.A, "A", caps), Is.EqualTo("A"),
             "Caps must still uppercase letters");
         Assert.That(CapsLockNumericTextBox.RestoreUnshifted(
             PhysicalKey.Digit0, "0.2", caps), Is.EqualTo("0.2"),
