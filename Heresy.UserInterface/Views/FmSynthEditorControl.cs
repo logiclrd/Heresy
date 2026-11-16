@@ -771,7 +771,7 @@ public sealed class FmSynthEditorControl : UserControl
 
 		minimumState = BindParameterText(minimum, text =>
 		{
-			var (min, max) = current();
+			var (_, max) = current();
 			var revised = ValueRangeSymmetry.SetMinimum(
 				ParseDouble(text, "Vmin"), max, link.IsChecked == true);
 			update(revised.Minimum, revised.Maximum);
@@ -785,7 +785,7 @@ public sealed class FmSynthEditorControl : UserControl
 		});
 		maximumState = BindParameterText(maximum, text =>
 		{
-			var (min, max) = current();
+			var (min, _) = current();
 			var revised = ValueRangeSymmetry.SetMaximum(
 				min, ParseDouble(text, "Vmax"), link.IsChecked == true);
 			update(revised.Minimum, revised.Maximum);
