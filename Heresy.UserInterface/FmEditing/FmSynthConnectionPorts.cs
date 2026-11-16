@@ -35,11 +35,63 @@ public readonly record struct FmSynthConnectionCandidate(
 public static class FmSynthConnectionPorts
 {
 	public const double HitRadius = 9.0;
+	public const double BaseNodeHeight = 72.0;
 
-	public static double GetNodeHeight(FmSynthNode node) =>
-		node is FmFilterNode filter
-			? Math.Max(72.0, 22.0 * (filter.GetPorts().Count + 1))
-			: 72.0;
+	// Shared DIP measurements for the Filter and Operator UI and their
+	// framework-neutral connection geometry. Labels occupy one actual row
+	// each, rather than dividing the node rectangle into N equal slices.
+	public const double FilterBorderThickness = 2.0;
+	public const double FilterVerticalMargin = 6.0;
+	public const double FilterHeaderHeight = 20.0;
+	public const double FilterInputRowHeight = 22.0;
+	public const double OperatorModeRowHeight = 22.0;
+	public const double StatusRowHeight = 22.0;
+	// Halfway between the original centered text and the 6-DIP drop.
+	// This adjusts only the "Out" text; output ports remain fixed at
+	// 36 DIPs from the top, regardless of the full node height.
+	public const double OutputLabelTextDrop = 3.0;
+
+	// Every output remains fixed at the vertical center of the base node,
+	// even when Filter/Operator grows taller.
+	public static double OutputCenterOffset => BaseNodeHeight / 2.0;
+
+	public static double FilterInputCenterOffset(int inputIndex)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(inputIndex);
+		return FilterBorderThickness + FilterVerticalMargin + FilterHeaderHeight
+			+ FilterInputRowHeight * (inputIndex + 0.5);
+	}
+
+	// Oscillator, Source and Multi show their original status beneath
+	// the header, followed by one distinctly labelled blue input row.
+	public static double SingleInputCenterOffset =>
+		FilterBorderThickness + FilterVerticalMargin + FilterHeaderHeight
+			+ StatusRowHeight + FilterInputRowHeight / 2.0;
+
+	public static double OperatorInputCenterOffset(int inputIndex)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(inputIndex);
+		return FilterBorderThickness + FilterVerticalMargin + FilterHeaderHeight
+			+ OperatorModeRowHeight
+			+ FilterInputRowHeight * (inputIndex + 0.5);
+	}
+
+	public static double GetNodeHeight(FmSynthNode node) => node switch
+	{
+		FmFilterNode filter => Math.Max(BaseNodeHeight,
+			2.0 * (FilterBorderThickness + FilterVerticalMargin)
+			+ FilterHeaderHeight
+			+ FilterInputRowHeight * filter.GetPorts().Count),
+		FmOperatorNode operation => Math.Max(BaseNodeHeight,
+			2.0 * (FilterBorderThickness + FilterVerticalMargin)
+			+ FilterHeaderHeight + OperatorModeRowHeight
+			+ FilterInputRowHeight * operation.InputNodeIds.Count),
+		FmOscillatorNode or FmSoundSourceNode or FmMultiNode =>
+			Math.Max(BaseNodeHeight,
+				2.0 * (FilterBorderThickness + FilterVerticalMargin)
+				+ FilterHeaderHeight + StatusRowHeight + FilterInputRowHeight),
+		_ => BaseNodeHeight,
+	};
 
 	/// <summary>Actual wired inputs with the correct stable port ordinal.
 	/// A Filter's disconnected and invalidated parameter ports cannot
@@ -79,7 +131,7 @@ public static class FmSynthConnectionPorts
 					-1,
 					new FmSynthRoutePoint(
 						bounds.Right,
-						bounds.CenterY)),
+						bounds.Top + OutputCenterOffset)),
 			];
 		for (int inputIndex = 0; inputIndex < inputCount; inputIndex++)
 		{
@@ -90,8 +142,17 @@ public static class FmSynthConnectionPorts
 					inputIndex,
 					new FmSynthRoutePoint(
 						bounds.Left,
-						bounds.Top
-							+ (bounds.Height * (inputIndex + 1) / (inputCount + 1)))));
+						bounds.Top + (node switch
+						{
+							FmFilterNode => FilterInputCenterOffset(inputIndex),
+							FmOperatorNode operation
+								when inputIndex == operation.InputNodeIds.Count =>
+									bounds.Height, // Gold append handle: bottom-left corner.
+							FmOperatorNode => OperatorInputCenterOffset(inputIndex),
+							FmOscillatorNode or FmSoundSourceNode or FmMultiNode =>
+								SingleInputCenterOffset,
+							_ => bounds.Height * (inputIndex + 1) / (inputCount + 1),
+						}))));
 		}
 		return [.. ports];
 	}

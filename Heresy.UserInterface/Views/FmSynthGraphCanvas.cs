@@ -38,6 +38,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private int? _hoverNodeId;
 	private FmSynthConnectionPort? _dragPort;
 	private Point _dragPortPointer;
+	private bool _rootPortDrag;
 	private WaypointDrag? _waypointDrag;
 
 	private sealed class WaypointDrag
@@ -121,6 +122,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 	{
 		_hoverNodeId = null;
 		_dragPort = null;
+		_rootPortDrag = false;
 		_waypointDrag = null;
 		_canvas.Children.Clear();
 		_nodeControls.Clear();
@@ -287,6 +289,26 @@ public sealed class FmSynthGraphCanvas : UserControl
 			return;
 
 		Point pointer = e.GetPosition(_canvas);
+		// A corner-mounted append port straddles the lower-left node
+		// boundary. The outside half is hit-tested by the background,
+		// not by Border.PointerPressed, so start that same port drag here.
+		if (e.ClickCount == 1 && FindPortAt(pointer)
+			is FmSynthConnectionPort borderPort)
+		{
+			Focus();
+			_selectedNodeId = borderPort.NodeId;
+			ApplySelectionVisuals();
+			_selected(borderPort.NodeId);
+			_dragPort = borderPort;
+			_dragPortPointer = pointer;
+			_hoverNodeId = borderPort.NodeId;
+			_rootPortDrag = true;
+			_portLayer.InvalidateVisual();
+			e.Pointer.Capture((IInputElement)sender!);
+			e.Handled = true;
+			return;
+		}
+
 		FmSynthRoutePoint position = new(pointer.X, pointer.Y);
 		FmSynthRenderedConnection[] connections = GetRenderedConnections();
 		FmSynthWaypointHit? waypoint = FmSynthWaypointGeometry.HitWaypoint(
@@ -356,8 +378,22 @@ public sealed class FmSynthGraphCanvas : UserControl
 		PointerEventArgs e)
 	{
 		_ = sender;
-		if (_waypointDrag is not WaypointDrag drag)
+		if (_rootPortDrag)
+		{
+			Point current = e.GetPosition(_canvas);
+			_dragPortPointer = current;
+			UpdateHover(current);
+			_portLayer.InvalidateVisual();
+			e.Handled = true;
 			return;
+		}
+		if (_waypointDrag is not WaypointDrag drag)
+		{
+			// Also reveal corner-mounted append ports while hovering just
+			// OUTSIDE the node's border (where PointerMoved targets root).
+			UpdateHover(e.GetPosition(_canvas));
+			return;
+		}
 		Point pointer = e.GetPosition(_canvas);
 		double dx = pointer.X - drag.PointerStart.X;
 		double dy = pointer.Y - drag.PointerStart.Y;
@@ -380,6 +416,15 @@ public sealed class FmSynthGraphCanvas : UserControl
 		PointerReleasedEventArgs e)
 	{
 		_ = sender;
+		if (_rootPortDrag)
+		{
+			_rootPortDrag = false;
+			if (_dragPort is FmSynthConnectionPort start)
+				FinishPortDrag(start, e);
+			else
+				e.Pointer.Capture(null);
+			return;
+		}
 		if (_waypointDrag is not WaypointDrag drag)
 			return;
 		_waypointDrag = null;
@@ -405,6 +450,13 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_ = sender;
 		_ = e;
 		_waypointDrag = null;
+		if (_rootPortDrag)
+		{
+			_rootPortDrag = false;
+			_dragPort = null;
+			_hoverNodeId = null;
+			_portLayer.InvalidateVisual();
+		}
 		_connectionLayer.InvalidateVisual();
 	}
 
@@ -549,75 +601,128 @@ public sealed class FmSynthGraphCanvas : UserControl
 		FmSynthNode node,
 		FmSynthNodePosition position)
 	{
-		TextBlock title =
-			new()
-			{
-				Text =
-					$"#{node.Id} {NodeTypeName(node)}"
-					+ (node.Id == _synth.Graph.OutputNodeId
-						? "  [OUTPUT]"
-						: string.Empty),
-				FontWeight = FontWeight.SemiBold,
-				Foreground = Brushes.White,
-			};
-		TextBlock detail =
-			new()
-			{
-				Text = NodeDetail(node),
-				Foreground =
-					new SolidColorBrush(
-						Color.FromRgb(
-							205,
-							205,
-							215)),
-				TextWrapping = TextWrapping.Wrap,
-				FontSize = 11,
-			};
-		StackPanel content =
-			new()
-			{
-				Spacing = 4,
-				Margin = new Thickness(8, 6),
-			};
-		content.Children.Add(title);
-		if (node is FmFilterNode filter)
+		TextBlock title = new()
 		{
-			// The text follows the same stage order and port ordinals as
-			// connection hit-testing, while height grows with port count.
-			content.Spacing = 2;
-			foreach (FmFilterInputPort port in filter.GetPorts())
+			Text = GraphNodeTitle(node),
+			FontWeight = FontWeight.SemiBold,
+			Foreground = Brushes.White,
+			TextTrimming = TextTrimming.CharacterEllipsis,
+		};
+		ToolTip.SetTip(title, title.Text);
+
+		TextBlock detail = new()
+		{
+			Text = NodeDetail(node),
+			Foreground = new SolidColorBrush(Color.FromRgb(205, 205, 215)),
+			TextWrapping = TextWrapping.Wrap,
+			FontSize = 11,
+		};
+		StackPanel content = new()
+		{
+			Spacing = 4,
+			// Keep a right-side lane available for the common Out label.
+			Margin = new Thickness(8, 6, 40, 6),
+		};
+		if (node is FmFilterNode or FmOperatorNode
+			or FmOscillatorNode or FmSoundSourceNode or FmMultiNode)
+		{
+			// Graph rows and connection centres use the same DIP constants.
+			content.Spacing = 0;
+			title.VerticalAlignment = VerticalAlignment.Center;
+			Grid header = new()
 			{
-				string label = port.IsAudio ? "Input"
-					: $"{filter.Configuration!.Definition.GetStage(port.StageId).Name}."
-						+ port.ParameterName;
-				content.Children.Add(new TextBlock
+				Height = FmSynthConnectionPorts.FilterHeaderHeight,
+			};
+			header.Children.Add(title);
+			content.Children.Add(header);
+
+			if (node is FmFilterNode filter)
+			{
+				foreach (FmFilterInputPort port in filter.GetPorts())
 				{
-					Text = label,
-					FontSize = 10,
-					Height = 16,
-					Foreground = Brushes.LightSkyBlue,
-					TextTrimming = TextTrimming.CharacterEllipsis,
+					string label = port.IsAudio ? "Input"
+						: $"{filter.Configuration!.Definition.GetStage(port.StageId).Name}."
+							+ port.ParameterName;
+					content.Children.Add(PortLabelRow(
+						label, "FilterInputPortLabelRow", Brushes.LightSkyBlue));
+				}
+			}
+			else if (node is FmOperatorNode operation)
+			{
+				// The mode gets its own row BEFORE the connected inputs.
+				content.Children.Add(PortLabelRow(
+					$"Mode: {operation.Operation}",
+					"OperatorModeRow", Brushes.LightGray,
+					FmSynthConnectionPorts.OperatorModeRowHeight));
+				foreach (int sourceId in operation.InputNodeIds)
+				{
+					FmSynthNode? source = _synth.Graph.Nodes
+						.FirstOrDefault(other => other.Id == sourceId);
+					string label = source is null
+						? $"#{sourceId} (missing)"
+						: GraphNodeTitle(source);
+					content.Children.Add(PortLabelRow(
+						label, "OperatorInputPortLabelRow", Brushes.LightSkyBlue));
+				}
+			}
+			else
+			{
+				// Preserve the original waveform, sample or voice status
+				// as an independent row; never mislabel it as the socket.
+				detail.TextWrapping = TextWrapping.NoWrap;
+				detail.TextTrimming = TextTrimming.CharacterEllipsis;
+				detail.VerticalAlignment = VerticalAlignment.Center;
+				ToolTip.SetTip(detail, detail.Text);
+				content.Children.Add(new Border
+				{
+					Name = "SingleInputStatusRow",
+					Height = FmSynthConnectionPorts.StatusRowHeight,
+					Child = detail,
 				});
+				content.Children.Add(PortLabelRow(
+					node is FmMultiNode ? "In" : "Pitch",
+					"SingleInputPortLabelRow", Brushes.LightSkyBlue));
 			}
 		}
 		else
+		{
+			content.Children.Add(title);
 			content.Children.Add(detail);
+		}
 
-		Border border =
-			new()
-			{
-				Width = NodeWidth,
-				Height = FmSynthConnectionPorts.GetNodeHeight(node),
-				CornerRadius = new CornerRadius(5),
-				BorderThickness = new Thickness(2),
-				Background =
-					new SolidColorBrush(
-						Color.FromRgb(
-							48,
-							52,
-							62)),
-				Child = content,
-			};
+		// Output is always at BASE node-height midpoint (36 DIP below
+		// its top), never the midpoint of a taller Filter/Operator.
+		TextBlock outputLabel = new()
+		{
+			Name = "NodeOutputPortLabel",
+			Text = "Out",
+			FontSize = 10,
+			Foreground = Brushes.LightGreen,
+			Height = FmSynthConnectionPorts.FilterHeaderHeight,
+			HorizontalAlignment = HorizontalAlignment.Right,
+			VerticalAlignment = VerticalAlignment.Top,
+			Margin = new Thickness(0,
+				FmSynthConnectionPorts.OutputCenterOffset
+					- FmSynthConnectionPorts.FilterBorderThickness
+					- FmSynthConnectionPorts.FilterHeaderHeight / 2.0
+					+ FmSynthConnectionPorts.OutputLabelTextDrop,
+				2, 0),
+			IsHitTestVisible = false,
+		};
+		Grid body = new();
+		body.Children.Add(content);
+		body.Children.Add(outputLabel);
+
+		Border border = new()
+		{
+			Width = NodeWidth,
+			Height = FmSynthConnectionPorts.GetNodeHeight(node),
+			CornerRadius = new CornerRadius(5),
+			BorderThickness = new Thickness(
+				FmSynthConnectionPorts.FilterBorderThickness),
+			Background = new SolidColorBrush(Color.FromRgb(48, 52, 62)),
+			Child = body,
+		};
 
 		border.PointerExited += (_, e) =>
 		{
@@ -651,6 +756,31 @@ public sealed class FmSynthGraphCanvas : UserControl
 				e);
 
 		return border;
+	}
+
+	private string GraphNodeTitle(FmSynthNode node)
+		=> $"#{node.Id} {NodeTypeName(node)}"
+			+ (node.Id == _synth.Graph.OutputNodeId ? "  [OUTPUT]" : "");
+
+	private static Border PortLabelRow(
+		string label, string name, IBrush color,
+		double height = FmSynthConnectionPorts.FilterInputRowHeight)
+	{
+		TextBlock text = new()
+		{
+			Text = label,
+			FontSize = 10,
+			Foreground = color,
+			TextTrimming = TextTrimming.CharacterEllipsis,
+			VerticalAlignment = VerticalAlignment.Center,
+		};
+		ToolTip.SetTip(text, label);
+		return new Border
+		{
+			Name = name,
+			Height = height,
+			Child = text,
+		};
 	}
 
 	private void OnNodePointerPressed(
@@ -750,21 +880,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		if (_dragPort is FmSynthConnectionPort start
 			&& start.NodeId == nodeId)
 		{
-			FmSynthConnectionPort? end = FindPortAt(e.GetPosition(_canvas));
-			_dragPort = null;
-			_hoverNodeId = null;
-			e.Pointer.Capture(null);
-			_portLayer.InvalidateVisual();
-			if (end is FmSynthConnectionPort target
-				&& FmSynthConnectionPorts.TryResolve(
-					start, target, out FmSynthConnectionCandidate connection))
-			{
-				_connected(
-					connection.SourceNodeId,
-					connection.TargetNodeId,
-					connection.TargetInputIndex);
-			}
-			e.Handled = true;
+			FinishPortDrag(start, e);
 			return;
 		}
 		if (_dragNodeId != nodeId)
@@ -781,6 +897,26 @@ public sealed class FmSynthGraphCanvas : UserControl
 				nodeId,
 				position.X,
 				position.Y);
+		}
+		e.Handled = true;
+	}
+
+	private void FinishPortDrag(
+		FmSynthConnectionPort start, PointerReleasedEventArgs e)
+	{
+		FmSynthConnectionPort? end = FindPortAt(e.GetPosition(_canvas));
+		_dragPort = null;
+		_hoverNodeId = null;
+		e.Pointer.Capture(null);
+		_portLayer.InvalidateVisual();
+		if (end is FmSynthConnectionPort target
+			&& FmSynthConnectionPorts.TryResolve(
+				start, target, out FmSynthConnectionCandidate connection))
+		{
+			_connected(
+				connection.SourceNodeId,
+				connection.TargetNodeId,
+				connection.TargetInputIndex);
 		}
 		e.Handled = true;
 	}

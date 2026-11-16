@@ -159,6 +159,59 @@ the output node displays the same refusal as the button. Delete with no node
 selected or with keyboard modifiers is ignored. When a parameter text field
 has focus, Delete continues editing that text and cannot remove a graph node.
 
+### Synth graph labels and connection-port geometry
+
+**Every** node shows the green **Out** label on its right side. The
+output socket remains **36 DIPs below the top**, the midpoint of the
+**base 72-DIP** node, regardless of subsequent height expansion. The
+**Out text** itself is lowered **3 DIPs** from the original
+centre-aligned label position, halfway toward the previous 6-DIP drop.
+The change is purely typographic: the green
+socket and attached output wires do **not** move. Coordinates remain in
+logical canvas DIPs, without display-scaling offsets.
+
+**Filter** inputs occupy individually labelled rows in the order of
+`GetPorts()`: Input and the stage-parameter names. **Operator** nodes
+likewise expand vertically and have an explicit **Mode: ...** row followed
+by one row for each connected input, in operand order. Each Operator input
+row repeats its connected node's graph title (`#id Type`, plus
+`[OUTPUT]` if that source is selected as the graph's output). Duplicate
+operands each retain their own row. Long labels can be inspected through
+their tooltip when clipped to the node width.
+
+**Oscillator** and **Source** nodes preserve their existing grey
+waveform/source status below the heading, then add a separate light-blue
+**Pitch** input row; **Multi** preserves its distribution/voice status,
+then adds an identically coloured **In** row. The corresponding blue
+connector moves to the centre of this explicit input row, rather than
+coincidentally lining up with the grey status. These three compact node
+types are now 80 DIPs tall (20-DIP heading, 22-DIP status, 22-DIP named
+input, plus content margins/borders). Their output stays at the base
+height's fixed 36-DIP position. Nodes with no input continue to show
+their ordinary heading and status at the original 72-DIP height. Full
+status text remains available in a tooltip if the line is truncated.
+
+The Filter and Operator layouts share a 20-DIP title/header row, 22-DIP
+input rows, 6-DIP top/bottom content margins and 2-DIP border thickness;
+an Operator inserts an extra 22-DIP mode row before the inputs. The
+framework-neutral `FmSynthConnectionPorts` calculates port centers from
+these **same** dimensions so rendered labels, wire endpoints, hover dots
+and hit-testing remain aligned even for many connections.
+
+The Operator's special **gold/yellow append-input handle** is always
+centred on the **bottom-left corner** of its border, rather than getting a
+blank dedicated row. Dropping a connection there appends a semantic input
+and adds one new, properly labelled blue input row; the gold handle moves
+down to the new bottom-left corner. Because the handle straddles the
+border, drags can be started from either its inside or outside half.
+The append port itself never carries a persistent connection.
+
+This is editor-only geometry; neither the audio graph nor its persisted
+node connections change. Actual arranged Avalonia label positions are
+regression-tested against sockets and routes for varying Filter/Operator
+input counts and positions.
+
+
 Connection routes terminate at the exact input-port positions, including the
 individual inputs of an operator; backward connections travel around an
 exterior lane to reach the fixed port sides. Arrowheads follow the last
@@ -215,6 +268,16 @@ changing the mode twice; changing focus within the window does not rearm it.
 The window-wide observer does not mark Caps Lock as handled, leaving other
 controls free to process the event. The Test piano keys themselves only work
 while Test is focused.
+
+**Nested Xephyr note (2026-11-16).** A separate nested-X11 keyboard
+problem caused Caps Lock to generate shifted punctuation for the physical
+apostrophe, comma, period and semicolon keys. It was traced to incorrect
+**Xephyr XKB key type assignments**, not a Heresy preview or textbox
+policy. Explicitly **reloading the XKB map inside the Xephyr session**
+restores those assignments. The attempted local correction and diagnostic
+branches (PRs #22 and #23) were closed unmerged; no application-wide key
+translation shim is installed. The number-row keys were not among the
+four affected keys.
 
 Native Wayland does not provide a generally queryable global lock-state API
 outside the compositor's keyboard protocol. If a native query is unavailable,
