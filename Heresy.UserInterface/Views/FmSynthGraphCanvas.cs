@@ -548,6 +548,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		{
 			Point current = e.GetPosition(_canvas);
 			_dragPortPointer = current;
+			UpdateContentExtent();
 			UpdateHover(current);
 			_portLayer.InvalidateVisual();
 			e.Handled = true;
@@ -632,6 +633,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			_hoverNodeId = null;
 			_portLayer.InvalidateVisual();
 		}
+		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 	}
 
@@ -1007,6 +1009,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		if (_dragPort is not null)
 		{
 			_dragPortPointer = current;
+			UpdateContentExtent();
 			UpdateHover(current);
 			_portLayer.InvalidateVisual();
 			e.Handled = true;
@@ -1074,6 +1077,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		FmSynthConnectionPort? end = FindPortAt(e.GetPosition(_canvas));
 		_dragPort = null;
 		_hoverNodeId = null;
+		UpdateContentExtent();
 		e.Pointer.Capture(null);
 		_portLayer.InvalidateVisual();
 		if (end is FmSynthConnectionPort target
@@ -1099,6 +1103,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		{
 			_dragPort = null;
 			_hoverNodeId = null;
+			UpdateContentExtent();
 			_portLayer.InvalidateVisual();
 			return;
 		}
@@ -1113,6 +1118,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		Canvas.SetTop(
 			border,
 			_dragOriginal.Y);
+		UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 		_portLayer.InvalidateVisual();
 	}
