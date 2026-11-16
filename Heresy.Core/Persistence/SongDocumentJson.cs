@@ -923,8 +923,10 @@ public static class SongDocumentJson
 					nodeJson["value"] = constant.Value;
 					break;
 
-				case FmNoiseNode:
+				case FmNoiseNode noise:
 					nodeJson["type"] = "noise";
+					nodeJson["minimum"] = noise.Minimum;
+					nodeJson["maximum"] = noise.Maximum;
 					break;
 
 				case FmOscillatorNode oscillator:
@@ -1123,7 +1125,11 @@ public static class SongDocumentJson
 						new FmConstantNode(
 							nodeId,
 							RequiredDouble(node, "value")),
-					"noise" => new FmNoiseNode(nodeId),
+					"noise" => new FmNoiseNode(nodeId,
+						node["minimum"] is null ? -1.0
+							: RequiredDouble(node, "minimum"),
+						node["maximum"] is null ? 1.0
+							: RequiredDouble(node, "maximum")),
 					"oscillator" =>
 						new FmOscillatorNode(
 							nodeId,
