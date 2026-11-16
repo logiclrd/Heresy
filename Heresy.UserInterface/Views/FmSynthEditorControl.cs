@@ -492,7 +492,7 @@ public sealed class FmSynthEditorControl : UserControl
 			}
 			_selectedConnection = null;
 		}
-		ApplyGraphSelection();
+		_canvas.SetSelectedNode(_selectedNodeId);
 	}
 
 	private void MoveNode(
