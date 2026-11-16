@@ -112,8 +112,8 @@ public sealed class FmSynthLiveSampleEnvelopeNoiseTests
         SoundState fresh = revised.CreateState();
         live.SetNoiseSeed(53);
         fresh.SetNoiseSeed(53);
-        float[] previous = new float[128], actual = new float[160],
-            reference = new float[288];
+        float[] previous = new float[128], actual = new float[5000],
+            reference = new float[5128];
         original.Render(context, live, 0, previous.Length, previous);
         revised.Render(context, fresh, 0, reference.Length, reference);
         original.TryPrepareRunningState(revised, live).Should().BeTrue();
