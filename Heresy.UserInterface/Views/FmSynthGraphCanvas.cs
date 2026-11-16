@@ -622,6 +622,11 @@ public sealed class FmSynthGraphCanvas : UserControl
 	{
 		_ = sender;
 		_ = e;
+		// Only wire/waypoint previews can have changed the extent. A plain
+		// background pan changed the camera alone: rebuilding its range here
+		// would leave a pending-layout guard that can swallow the user's next
+		// scrollbar edit before another layout pass.
+		bool previewChangedExtent = _waypointDrag is not null || _rootPortDrag;
 		_waypointDrag = null;
 		_isBackgroundPanning = false;
 		if (_rootPortDrag)
@@ -631,7 +636,8 @@ public sealed class FmSynthGraphCanvas : UserControl
 			_hoverNodeId = null;
 			_portLayer.InvalidateVisual();
 		}
-		UpdateContentExtent();
+		if (previewChangedExtent)
+			UpdateContentExtent();
 		_connectionLayer.InvalidateVisual();
 	}
 
