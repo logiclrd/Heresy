@@ -5,6 +5,7 @@ using System.Reflection;
 
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Headless.NUnit;
 using Avalonia.VisualTree;
 
@@ -192,6 +193,55 @@ public sealed class FmSynthOperatorRowLayoutTests
                 Assert.That(FmSynthConnectionPorts.GetPorts(model, rect)[0].Center.Y,
                     Is.EqualTo(rect.Top + 36));
             }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+
+    [AvaloniaTest]
+    public void OutsideHalfOfBottomCornerAppendHandleCanStartConnectionDrag()
+    {
+        DocumentWorkspace work = new();
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            work, "Append drag");
+        const double x = 550, y = 220;
+        int operatorId = FmSynthDocumentEditor.AddOperatorNode(
+            work, synth, FmOperatorKind.Add, [0], x, y);
+        List<FmSynthConnectionCandidate> connected = [];
+        FmSynthGraphCanvas surface = new(synth, _ => { }, (_, _, _) => { },
+            (source, target, index) =>
+                connected.Add(new FmSynthConnectionCandidate(source, target, index)),
+            (_, _, _, _) => { });
+        Window window = new() { Width = 1450, Height = 1000, Content = surface };
+        window.Show();
+        try
+        {
+            Canvas graph = Field<Canvas>(surface, "_canvas");
+            Dictionary<int, FmSynthNodePosition> positions =
+                Field<Dictionary<int, FmSynthNodePosition>>(surface, "_positions");
+            FmOperatorNode op = synth.Graph.Nodes.OfType<FmOperatorNode>().Single();
+            double bottom = y + FmSynthConnectionPorts.GetNodeHeight(op);
+
+            Point start = graph.TranslatePoint(
+                new Point(x - 4, bottom + 3), window)!.Value;
+            FmSynthNodePosition producer = positions[0];
+            Point finish = graph.TranslatePoint(
+                new Point(producer.X + FmSynthGraphCanvas.NodeWidth,
+                    producer.Y + FmSynthConnectionPorts.OutputCenterOffset),
+                window)!.Value;
+            window.MouseMove(start);
+            window.MouseDown(start, MouseButton.Left);
+            window.MouseMove(finish);
+            window.MouseUp(finish, MouseButton.Left);
+
+            Assert.That(connected, Has.Count.EqualTo(1),
+                "pressing the outside half of the gold border dot must initiate a drag");
+            Assert.That(connected[0], Is.EqualTo(
+                new FmSynthConnectionCandidate(0, operatorId, 1)),
+                "the append port accepts a source output and retains the next input index");
         }
         finally
         {
