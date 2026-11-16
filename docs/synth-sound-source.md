@@ -814,6 +814,27 @@ child samples. Direct-Render callers may explicitly seed new
 Output spatialization is the same mono-source-to-speakers path as
 existing oscillator output, not independent random data for each speaker.
 
+Noise nodes now also author **Vmin** and **Vmax**. The original
+counter-based sample remains unchanged, but the renderer maps its native
+`[-1, 1)` value by `(Vmin + Vmax)/2 + sample * (Vmax - Vmin)/2`.
+Both bounds are finite and independently editable, as with Oscillator
+ranges; equal bounds yield a constant and reversed bounds invert polarity.
+New Noise nodes default to **-1 / +1**, preserving the exact legacy
+bipolar stream. The existing v1 `"noise"` node now optionally stores
+`"minimum"` and `"maximum"`; old files with neither field load
+the original defaults without changing the saved-format version.
+Cross-song imports and frozen snapshots preserve the authored bounds.
+
+Changes in either bound on a compatible, already-playing Synth voice
+adopt through the ordinary off-thread prepared revision and use the
+bounded output smoothing for an audible Noise path. A Noise change used
+only as an FM control does not artificially hold the audible output;
+the seed/node/frame white-noise history and time cursor remain stable.
+The frozen normal arrangement/export path renders authored bounds
+directly without preview crossfades. A changed Noise range must not be
+classified as an *identical frozen* child graph for Multi onset decisions.
+These are headless/PCM contracts, not proof of physical speaker playback.
+
 The editor offers **+ Noise**, displaying the node as **White Noise**
 with a single output port and an explanatory no-frequency inspector.
 Graph output selection, movement, Delete, wiring into Filter/Operator
