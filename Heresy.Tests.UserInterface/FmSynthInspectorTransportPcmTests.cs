@@ -48,6 +48,74 @@ public sealed class FmSynthInspectorTransportPcmTests
     private const int Rate = 1000;
 
     [AvaloniaTest]
+    public async Task NoiseBoundsFromActualInspectorRetuneContinuingProductionNote()
+    {
+        foreach ((string field, string value, double final) in new[]
+            {
+                ("Vmin", "1", 1.0),
+                ("Vmax", "-1", -1.0),
+            })
+        {
+            DocumentWorkspace workspace = new();
+            FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+                workspace, "Noise "+ field);
+            int noiseId = FmSynthDocumentEditor.AddNoiseNode(
+                workspace, synth, 80, 80);
+            FmSynthDocumentEditor.SetOutputNode(workspace, synth, noiseId);
+            TrackingFactory factory = new(Mono(), synth.Id);
+            ManualBackend backend = new();
+            using SongPlaybackTransport transport = new(backend, factory);
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(44), [new StartNoteCommand(synth.Id)]);
+            float[] baseline = backend.Render(13);
+            int callbacks = 0, changed = 0;
+            TaskCompletionSource published =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+            FmSynthEditorControl editor = new(workspace, synth,
+                () => { }, _ => changed++,
+                publishSynthEditAsync: async () =>
+                {
+                    callbacks++;
+                    try
+                    {
+                        await transport.PublishSynthEditAsync(
+                            workspace.Document, synth.Id);
+                        published.TrySetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        published.TrySetException(ex);
+                        throw;
+                    }
+                });
+            uint audio = workspace.Document.AudioRevision;
+            Enter(Field<TextBox>(Inspector(editor), field), value);
+            await published.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(audio + 1));
+            Assert.That(changed, Is.EqualTo(1));
+            Assert.That(callbacks, Is.EqualTo(1));
+            Assert.That(factory.Preparations, Has.Count.EqualTo(1));
+            Assert.That(factory.Preparations[0].Noise, Is.Not.Null);
+            FmNoiseNode frozen = factory.Preparations[0].Noise!;
+            Assert.That(field == "Vmin" ? frozen.Minimum : frozen.Maximum,
+                Is.EqualTo(final));
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            float[] changedPcm = backend.Render(101);
+            CheckSmoothstep(changedPcm, baseline[^1], (float)final, 13);
+            Assert.That(factory.OlderAudioCount, Is.Zero,
+                "the held Noise voice must adopt new bounds, not stay older");
+            Assert.That(backend.Render(32),
+                Is.All.EqualTo((float)final).Within(2e-6f));
+            Enter(Field<TextBox>(Inspector(editor), field), value);
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(audio + 1),
+                "same authored range must be an inspector no-op");
+            Assert.That(callbacks, Is.EqualTo(1));
+        }
+    }
+
+    [AvaloniaTest]
     public async Task ActualInspectorEditPublishesThroughTransportWorkerAndRetunesHeldProductionPcm()
     {
         DocumentWorkspace workspace = new();
@@ -5872,7 +5940,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         FmSoundSourceNode? Source = null, FmMultiNode? Multi = null,
         ObjectId? FilterDefinitionId = null, double? FilterCutoffHz = null,
         int? FilterStageCount = null, double? FilterTailSeconds = null,
-        double? InstrumentVolumeLevel = null);
+        double? InstrumentVolumeLevel = null, FmNoiseNode? Noise = null);
 
     private sealed class TrackingFactory(RenderConfiguration configuration,
         ObjectId editedSynthId)
@@ -5928,6 +5996,9 @@ public sealed class FmSynthInspectorTransportPcmTests
             FmSoundSourceNode? sourceNode = sourceId == editedSynthId
                 ? frozen.Graph.Nodes.OfType<FmSoundSourceNode>()
                     .SingleOrDefault() : null;
+            FmNoiseNode? noise = sourceId == editedSynthId
+                ? frozen.Graph.Nodes.OfType<FmNoiseNode>().SingleOrDefault()
+                : null;
             Preparations.Add(new Preparation(sourceId,
                 snapshot.AudioRevision, operation?.Operation,
                 low?.Value, Environment.CurrentManagedThreadId, q,
@@ -5956,7 +6027,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                     && snapshot.Document.Objects.TryGetValue(
                         volumeId, out SongObject? envelope)
                     && envelope is NodeEnvelopeDefinition curve
-                        ? curve.Nodes[0].Value : null));
+                        ? curve.Nodes[0].Value : null, noise));
             return _actual.PrepareLiveSynthSource(snapshot, sourceId);
         }
     }
