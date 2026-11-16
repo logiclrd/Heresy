@@ -38,6 +38,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private int? _hoverNodeId;
 	private FmSynthConnectionPort? _dragPort;
 	private Point _dragPortPointer;
+	private bool _rootPortDrag;
 	private WaypointDrag? _waypointDrag;
 
 	private sealed class WaypointDrag
@@ -121,6 +122,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 	{
 		_hoverNodeId = null;
 		_dragPort = null;
+		_rootPortDrag = false;
 		_waypointDrag = null;
 		_canvas.Children.Clear();
 		_nodeControls.Clear();
@@ -287,6 +289,26 @@ public sealed class FmSynthGraphCanvas : UserControl
 			return;
 
 		Point pointer = e.GetPosition(_canvas);
+		// A corner-mounted append port straddles the lower-left node
+		// boundary. The outside half is hit-tested by the background,
+		// not by Border.PointerPressed, so start that same port drag here.
+		if (e.ClickCount == 1 && FindPortAt(pointer)
+			is FmSynthConnectionPort borderPort)
+		{
+			Focus();
+			_selectedNodeId = borderPort.NodeId;
+			ApplySelectionVisuals();
+			_selected(borderPort.NodeId);
+			_dragPort = borderPort;
+			_dragPortPointer = pointer;
+			_hoverNodeId = borderPort.NodeId;
+			_rootPortDrag = true;
+			_portLayer.InvalidateVisual();
+			e.Pointer.Capture((IInputElement)sender!);
+			e.Handled = true;
+			return;
+		}
+
 		FmSynthRoutePoint position = new(pointer.X, pointer.Y);
 		FmSynthRenderedConnection[] connections = GetRenderedConnections();
 		FmSynthWaypointHit? waypoint = FmSynthWaypointGeometry.HitWaypoint(
@@ -356,6 +378,15 @@ public sealed class FmSynthGraphCanvas : UserControl
 		PointerEventArgs e)
 	{
 		_ = sender;
+		if (_rootPortDrag)
+		{
+			Point current = e.GetPosition(_canvas);
+			_dragPortPointer = current;
+			UpdateHover(current);
+			_portLayer.InvalidateVisual();
+			e.Handled = true;
+			return;
+		}
 		if (_waypointDrag is not WaypointDrag drag)
 			return;
 		Point pointer = e.GetPosition(_canvas);
@@ -380,6 +411,15 @@ public sealed class FmSynthGraphCanvas : UserControl
 		PointerReleasedEventArgs e)
 	{
 		_ = sender;
+		if (_rootPortDrag)
+		{
+			_rootPortDrag = false;
+			if (_dragPort is FmSynthConnectionPort start)
+				FinishPortDrag(start, e);
+			else
+				e.Pointer.Capture(null);
+			return;
+		}
 		if (_waypointDrag is not WaypointDrag drag)
 			return;
 		_waypointDrag = null;
@@ -405,6 +445,13 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_ = sender;
 		_ = e;
 		_waypointDrag = null;
+		if (_rootPortDrag)
+		{
+			_rootPortDrag = false;
+			_dragPort = null;
+			_hoverNodeId = null;
+			_portLayer.InvalidateVisual();
+		}
 		_connectionLayer.InvalidateVisual();
 	}
 
@@ -808,21 +855,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		if (_dragPort is FmSynthConnectionPort start
 			&& start.NodeId == nodeId)
 		{
-			FmSynthConnectionPort? end = FindPortAt(e.GetPosition(_canvas));
-			_dragPort = null;
-			_hoverNodeId = null;
-			e.Pointer.Capture(null);
-			_portLayer.InvalidateVisual();
-			if (end is FmSynthConnectionPort target
-				&& FmSynthConnectionPorts.TryResolve(
-					start, target, out FmSynthConnectionCandidate connection))
-			{
-				_connected(
-					connection.SourceNodeId,
-					connection.TargetNodeId,
-					connection.TargetInputIndex);
-			}
-			e.Handled = true;
+			FinishPortDrag(start, e);
 			return;
 		}
 		if (_dragNodeId != nodeId)
@@ -839,6 +872,26 @@ public sealed class FmSynthGraphCanvas : UserControl
 				nodeId,
 				position.X,
 				position.Y);
+		}
+		e.Handled = true;
+	}
+
+	private void FinishPortDrag(
+		FmSynthConnectionPort start, PointerReleasedEventArgs e)
+	{
+		FmSynthConnectionPort? end = FindPortAt(e.GetPosition(_canvas));
+		_dragPort = null;
+		_hoverNodeId = null;
+		e.Pointer.Capture(null);
+		_portLayer.InvalidateVisual();
+		if (end is FmSynthConnectionPort target
+			&& FmSynthConnectionPorts.TryResolve(
+				start, target, out FmSynthConnectionCandidate connection))
+		{
+			_connected(
+				connection.SourceNodeId,
+				connection.TargetNodeId,
+				connection.TargetInputIndex);
 		}
 		e.Handled = true;
 	}
