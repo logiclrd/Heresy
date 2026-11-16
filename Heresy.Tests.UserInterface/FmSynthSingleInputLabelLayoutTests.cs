@@ -125,6 +125,8 @@ public sealed class FmSynthSingleInputLabelLayoutTests
             Assert.That(ports[0].Center.Y, Is.EqualTo(y + 36),
                 "the green socket stays fixed at the base node midpoint");
             Assert.That(outputLabel.Text, Is.EqualTo("Out"));
+            Assert.That(FmSynthConnectionPorts.OutputLabelTextDrop, Is.EqualTo(3),
+                "Out text is halfway between its original and 6-DIP positions");
             Point outputTextCenter = outputLabel.TranslatePoint(
                 new Point(0, outputLabel.Bounds.Height / 2), graph)!.Value;
             Assert.That(outputTextCenter.Y, Is.EqualTo(ports[0].Center.Y
