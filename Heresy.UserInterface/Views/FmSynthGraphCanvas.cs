@@ -502,6 +502,28 @@ public sealed class FmSynthGraphCanvas : UserControl
 			return;
 
 		Point pointer = e.GetPosition(_canvas);
+		// The root can receive a press even when its screen coordinates
+		// fall inside a node (for example immediately after a captured
+		// wire gesture). In that case use the *existing* node handler,
+		// which retains node selection, port priority and body dragging.
+		// Never infer a body press from outside proximity alone.
+		foreach (FmSynthNode node in _synth.Graph.Nodes.Reverse())
+		{
+			if (!_positions.TryGetValue(
+				node.Id, out FmSynthNodePosition nodePosition)
+				|| !_nodeControls.TryGetValue(node.Id, out Border? border))
+				continue;
+			FmSynthLayoutRect rect = ToRect(nodePosition, node);
+			if (pointer.X >= rect.Left && pointer.X <= rect.Right
+				&& pointer.Y >= rect.Top && pointer.Y <= rect.Bottom)
+			{
+				OnNodePointerPressed(border, node.Id, nodePosition, e);
+				if (e.Handled)
+					return;
+				break;
+			}
+		}
+
 		// A socket near a node boundary can be hit *outside* the node
 		// body. The root owns that gesture; body movement is never
 		// initiated here. Repeated port presses work like body port presses.
