@@ -23,6 +23,12 @@ public static class FmSynthGraphNodePlacement
         + FmSynthConnectionPorts.StatusRowHeight
         + FmSynthConnectionPorts.FilterInputRowHeight;
 
+    // Stable logical-space lattice: a camera movement changes which cells
+    // are considered nearby, never the coordinates of the cells themselves.
+    // A newly opened graph starts at (80,80), independently of its viewport.
+    public const double GridOriginX = 80.0;
+    public const double GridOriginY = 80.0;
+
     public static FmSynthRoutePoint FindUnobstructedPosition(
         IEnumerable<FmSynthLayoutRect> existingBodies,
         IEnumerable<IReadOnlyList<FmSynthRoutePoint>> renderedEdges,
@@ -44,19 +50,27 @@ public static class FmSynthGraphNodePlacement
         FmSynthLayoutRect[] bodies = existingBodies.ToArray();
         IReadOnlyList<FmSynthRoutePoint>[] edges = renderedEdges.ToArray();
         double margin = FmSynthGraphExtentGeometry.Margin;
-        double firstX = camera.X + margin;
-        double firstY = camera.Y + margin;
         double stepX = nodeWidth + margin;
         double stepY = nodeHeight + margin;
 
-        // Prefer fully visible cells, and then search expanding right/down
-        // bands. This gives repeated additions stable, nearby vacancies and
-        // does not assume graph coordinates begin at zero.
+        // Start at the first fixed lattice cell whose padded left/top edge
+        // fits the camera. Auto-reveal and manual panning may move the camera
+        // by arbitrary fractions of a cell; neither may shift the lattice.
+        double firstX = GridOriginX + Math.Ceiling(
+            (camera.X + margin - GridOriginX) / stepX) * stepX;
+        double firstY = GridOriginY + Math.Ceiling(
+            (camera.Y + margin - GridOriginY) / stepY) * stepY;
+
+        // Prefer fully visible cells, and then expand right/down. Count
+        // visible cells using the aligned first cell's real position rather
+        // than assuming it lies exactly one margin inside the viewport.
         int visibleColumns = Math.Clamp(
-            (int)Math.Floor(Math.Max(0, viewportWidth - 2 * margin - nodeWidth)
+            (int)Math.Floor(
+                (camera.X + viewportWidth - margin - nodeWidth - firstX)
                 / stepX) + 1, 1, 10);
         int visibleRows = Math.Clamp(
-            (int)Math.Floor(Math.Max(0, viewportHeight - 2 * margin - nodeHeight)
+            (int)Math.Floor(
+                (camera.Y + viewportHeight - margin - nodeHeight - firstY)
                 / stepY) + 1, 1, 10);
         for (int band = 0; band < 12; band++)
         {
@@ -81,8 +95,11 @@ public static class FmSynthGraphNodePlacement
         // edges: place to the right of *all* bodies and rendered route points.
         FmSynthGraphBounds extent =
             FmSynthGraphExtentGeometry.Calculate(bodies, edges);
+        // Even this rare escape remains on the *same* logical-space grid.
+        double fallbackColumns = Math.Ceiling(
+            Math.Max(0.0, (extent.Right + 1.0 - firstX) / stepX));
         return new FmSynthRoutePoint(
-            Math.Max(firstX, extent.Right + 1.0), firstY);
+            firstX + fallbackColumns * stepX, firstY);
     }
 
     /// <summary>
