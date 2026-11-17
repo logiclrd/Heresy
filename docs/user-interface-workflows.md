@@ -57,9 +57,29 @@ with a live reference shows the actual object name in the original 22-DIP
 status row, on the matching type-colour background, with its full source ID
 and pitch information in the tooltip. Unassigned/missing Source nodes retain
 their original text and warning styling. These editor changes do not affect
-audio or source IDs. The separately persisted random source-row colours in
-the Pattern editor are intentionally untouched until its two-layer colour
-slice. See [document panes](document-panes.md) and [open work](todo.md).
+audio or source IDs.
+
+The Pattern editor uses **two independent Source colours**: each live source
+already owns a persisted translucent `SourceColourArgb` (alpha 0x33), used
+for resolved Note-start cell backgrounds; the Source toolbar dropdown and
+Source-column popup now also render each option on that source-specific
+translucent row colour. Inside the option is a separate type-coloured name
+inset with **2-DIP rounded corners**, created using the same shared
+`SongObjectTypePalette` as the main object tree. The toolbar's closed
+selected option has the same two-layer template. In every Pattern grid's
+Source field, an explicit, resolvable Source shows its **actual name**
+on that type-coloured inset, with the full ID/name in its tooltip.
+Unassigned and missing references remain uncoloured and retain the
+existing warning text; transient Source changes and referenced-object
+renames repaint the existing field without rebuilding cells.
+
+The existing **28-DIP grid row, 24-DIP Source field, note-start tints,
+cursor/selection shading, flattened-range overlays, source IDs, playback,
+and edit semantics do not change**. No vertical padding is added to option
+rows or field insets, keeping dropdown/cell row heights unchanged.
+The source-colour tint and type-colour name are separate layers and must
+never replace or persist over one another. See
+[document panes](document-panes.md).
 
 ## Held-key input and nested X11 servers
 

@@ -63,8 +63,17 @@ selector (both expanded items and selected collapsed value), the Synth graph
 Source inspector's selector, and the coloured actual referenced name on a Synth
 Source node's fixed-height status row. Unassigned and unresolved references do
 not gain type colours; the graph status tooltip preserves the full source ID
-and frequency. Pattern source-row colour remains a separate layer: the open
-[object-colour TODO](todo.md) tracks that final two-layer source-name treatment.
+and frequency. The Pattern editor now presents an additional two-layer Source treatment:
+the existing per-source translucent colour fills each Source dropdown
+option row (including the collapsed toolbar selection), while the
+source's **actual name** appears on its own object-type-coloured inset,
+with 2-DIP rounded corners. Grid Source fields receive the same type
+badge without affecting the existing 28-DIP row height, 24-DIP Source
+field height, or independent Note-start source tint. Missing/blank
+references have no type-colour badge. The entire object-colour feature
+is now implemented across trees, Synth Source nodes, Instrument Source
+selectors, and Pattern Source controls; see
+[UI workflow](user-interface-workflows.md).
 
 ## Backward-compatible loading
 

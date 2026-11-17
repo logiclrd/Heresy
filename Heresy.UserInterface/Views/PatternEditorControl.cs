@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
@@ -14,6 +15,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 
+using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
 using Heresy.Playback;
@@ -21,6 +23,7 @@ using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.PatternEditing;
+using Heresy.UserInterface.Styling;
 using Heresy.UserInterface.ViewModels;
 
 namespace Heresy.UserInterface.Views;
@@ -157,6 +160,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteSuffixTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _sourceTexts = [];
+	private readonly Dictionary<(int Row, int Channel), Border> _sourceNameBadges = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _volumeFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _volumeTexts = [];
 	private readonly Dictionary<(int Row, int Channel), PatternEffectStripControl> _effectStrips = [];
@@ -331,6 +335,9 @@ public sealed class PatternEditorControl : UserControl
 				ItemsSource = _noteSources,
 				SelectedItem = defaultSource,
 				Width = 180,
+				// The selected value and dropdown rows use the same two
+				// independent colours, without replacing Source IDs.
+				ItemTemplate = PatternSourceItemTemplate(),
 			};
 		_noteSource.SelectionChanged += (_, _) =>
 		{
@@ -880,6 +887,7 @@ public sealed class PatternEditorControl : UserControl
 		_noteSuffixTexts.Clear();
 		_sourceFields.Clear();
 		_sourceTexts.Clear();
+		_sourceNameBadges.Clear();
 		_volumeFields.Clear();
 		_volumeTexts.Clear();
 		_effectStrips.Clear();
@@ -1112,8 +1120,23 @@ public sealed class PatternEditorControl : UserControl
 				FontWeight = FontWeight.Normal,
 				VerticalAlignment = VerticalAlignment.Center,
 				TextTrimming = TextTrimming.CharacterEllipsis,
-				Margin = new Thickness(4, 0),
 			};
+		Border sourceNameBadge = new()
+		{
+			Background = Brushes.Transparent,
+			CornerRadius = new CornerRadius(2),
+			Padding = new Thickness(3, 0),
+			Margin = new Thickness(2, 0),
+			MaxWidth = SourceWidth - 6,
+			VerticalAlignment = VerticalAlignment.Center,
+			HorizontalAlignment = HorizontalAlignment.Left,
+			IsHitTestVisible = false,
+			Child = sourceText,
+		};
+		UpdateSourceNameBadge(sourceNameBadge, sourceText,
+			row.Pattern.Grid[row.PatternRow, channel]?.SourceId
+				?? ObjectId.None,
+			view.SourceText);
 		Border sourceField =
 			new()
 			{
@@ -1124,7 +1147,7 @@ public sealed class PatternEditorControl : UserControl
 				BorderBrush = Brushes.Transparent,
 				BorderThickness = new Thickness(1),
 				Background = Brushes.Transparent,
-				Child = sourceText,
+				Child = sourceNameBadge,
 			};
 		ToolTip.SetTip(sourceField, view.SourceText);
 		MenuItem clearSource = new() { Header = "Clear" };
@@ -1295,6 +1318,7 @@ public sealed class PatternEditorControl : UserControl
 		_noteSuffixTexts[(displayRow, channel)] = noteSuffix;
 		_sourceFields[(displayRow, channel)] = sourceField;
 		_sourceTexts[(displayRow, channel)] = sourceText;
+		_sourceNameBadges[(displayRow, channel)] = sourceNameBadge;
 		_volumeFields[(displayRow, channel)] = volumeField;
 		_volumeTexts[(displayRow, channel)] = volumeText;
 		_effectStrips[(displayRow, channel)] = effects;
@@ -3903,6 +3927,72 @@ public sealed class PatternEditorControl : UserControl
 			Heresy.Core.Objects.ObjectId.None);
 	}
 
+	/// <summary>Use the source's own translucent ARGB tint for the full
+	/// dropdown row, then inset the object's *type* background behind its
+	/// actual name. The same template paints the toolbar ComboBox's closed
+	/// selected value; neither dimension adds vertical row padding.</summary>
+	private IDataTemplate PatternSourceItemTemplate()
+		=> new FuncDataTemplate<PatternSourceOption>((choice, _) =>
+			choice is null ? null : BuildSourceOptionVisual(choice));
+
+	private Control BuildSourceOptionVisual(PatternSourceOption choice)
+	{
+		Color? typeColour = null;
+		IBrush rowTint = Brushes.Transparent;
+		string displayName = choice.Name;
+		if (_workspace.Document.TryGet(
+			choice.Id, out SongObject? songObject) && songObject is not null)
+		{
+			displayName = songObject.Name;
+			typeColour = SongObjectTypePalette.ForObject(songObject);
+			if (songObject.SourceColourArgb is uint tint)
+				rowTint = TintBrush(tint);
+		}
+		Control name = SongObjectTypeNameLabel.Create(
+			displayName, typeColour, compact: true);
+		ToolTip.SetTip(name, $"{displayName} <{choice.Id.Value}>");
+		return new Border
+		{
+			Background = rowTint,
+			Padding = new Thickness(2, 0),
+			HorizontalAlignment = HorizontalAlignment.Stretch,
+			Child = name,
+		};
+	}
+
+	/// <summary>Separate factory allows the popup and its row-size/colour
+	/// contract to be tested without opening a transient OS popup.</summary>
+	private ListBox BuildSourcePopupList(PatternSourceOption[] options)
+		=> new()
+		{
+			ItemsSource = options,
+			ItemTemplate = PatternSourceItemTemplate(),
+			Width = 300,
+			MaxHeight = 320,
+		};
+
+	/// <summary>Refresh only the Source label, leaving the row's existing
+	/// independent source-tint grid, cursor borders and height unchanged.
+	/// Only a resolvable explicit Source receives an object-type inset.</summary>
+	private void UpdateSourceNameBadge(
+		Border badge, TextBlock label, ObjectId sourceId, string fallback)
+	{
+		if (!sourceId.IsNone
+			&& _workspace.Document.TryGet(
+				sourceId, out SongObject? songObject)
+			&& songObject is not null
+			&& SongObjectTypePalette.ForObject(songObject) is Color typeColour)
+		{
+			label.Text = songObject.Name;
+			label.Foreground = Brushes.Black;
+			badge.Background = new SolidColorBrush(typeColour);
+			return;
+		}
+		label.Text = fallback;
+		label.Foreground = null;
+		badge.Background = Brushes.Transparent;
+	}
+
 	private void OpenSourcePopup(
 		int row,
 		int channel,
@@ -3911,13 +4001,7 @@ public sealed class PatternEditorControl : UserControl
 		PatternEditorRow editorRow = _context.GetRow(row);
 		PatternSourceOption[] options =
 			PatternSourceCatalog.GetSources(_workspace.Document);
-		ListBox list =
-			new()
-			{
-				ItemsSource = options,
-				Width = 300,
-				MaxHeight = 320,
-			};
+		ListBox list = BuildSourcePopupList(options);
 
 		Heresy.Core.Objects.ObjectId current =
 			editorRow.Pattern.Grid[editorRow.PatternRow, channel]?.SourceId
@@ -3986,7 +4070,12 @@ public sealed class PatternEditorControl : UserControl
 		{
 			SetNoteParts(note, octave, suffix, view.NoteText, string.Empty);
 		}
-		source.Text = view.SourceText;
+		if (_sourceNameBadges.TryGetValue(
+			(row, channel), out Border? badge))
+			UpdateSourceNameBadge(badge, source,
+				editorRow.Pattern.Grid[editorRow.PatternRow, channel]?.SourceId
+					?? ObjectId.None,
+				view.SourceText);
 		if (_sourceFields.TryGetValue((row, channel), out Border? sourceField))
 			ToolTip.SetTip(sourceField, view.SourceText);
 		volume.Text = view.VolumeText;
