@@ -101,8 +101,13 @@ Do not reintroduce completed-task checklists here.
   Source+Multi combination, nested Instruments/Synths, shared
   Envelopes/Filters, inactive Filter wires, missing-reference diagnostics,
   and disconnected graph roots. The old import command remains unchanged.
-  The editable plan, provenance, TreeDataGrid, two-stage validation and
-  atomic commit are still open.
+  A stacked draft slice now adds pure editable import-plan decisions,
+  per-use overrides, stable canonical ownership, manual/automatic provenance,
+  collision-avoiding editable names and multi-document identity handling,
+  with dedicated regression tests. Neither slice changes the old importer.
+  Effective-plan liveness and Filter rewiring, strict match proofs,
+  TreeDataGrid, two-stage validation, Sample asset handling and atomic
+  commit remain open.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
