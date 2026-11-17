@@ -1364,6 +1364,9 @@ public sealed class PatternEditorControl : UserControl
 		int channel,
 		KeyEventArgs e)
 	{
+		// Each new key event expires any unmatched suppressed TextInput
+		// from the preceding physically handled punctuation key.
+		_suppressHandledTrackerKeyTextInput = false;
 		// The grid owns F2 while a tracker cell is focused; the title's
 		// existing inline editor owns all rename validation, Enter/Escape
 		// and persistence. Toolbar TextBoxes do not route through this cell.
@@ -1374,9 +1377,6 @@ public sealed class PatternEditorControl : UserControl
 			e.Handled = true;
 			return;
 		}
-		// Each new key event expires any unmatched suppressed TextInput
-		// from the preceding physically handled punctuation key.
-		_suppressHandledTrackerKeyTextInput = false;
 		if (_cursor.Row != row || _cursor.Channel != channel)
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
