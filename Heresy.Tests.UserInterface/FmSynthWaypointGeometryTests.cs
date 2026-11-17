@@ -17,43 +17,89 @@ public sealed class FmSynthWaypointGeometryTests
 		new(1, 5, 2);
 
 	[Test]
-	public void LineHitHasThreePhysicalPixelToleranceAtEveryZoom()
+	public void WireHitIncludesThreePhysicalPixelBufferBeyondVisibleStrokeAtEveryScale()
 	{
-		FmSynthRenderedConnection connection =
-			new(
-				Connection,
-				[
-					new FmSynthRoutePoint(10, 10),
-					new FmSynthRoutePoint(110, 10),
-					new FmSynthRoutePoint(110, 90),
-				],
-				[]);
+		FmSynthRenderedConnection connection = new(
+			Connection,
+			[
+				new FmSynthRoutePoint(10, 10),
+				new FmSynthRoutePoint(110, 10),
+				new FmSynthRoutePoint(110, 90),
+			],
+			[]);
 
-		FmSynthWaypointGeometry.HitConnection(
-				[connection],
-				new FmSynthRoutePoint(45, 12.9),
-				renderScaling: 1)
-			.Should().NotBeNull();
-		FmSynthWaypointGeometry.HitConnection(
-				[connection],
-				new FmSynthRoutePoint(45, 13.1),
-				renderScaling: 1)
-			.Should().BeNull();
-		FmSynthWaypointGeometry.HitConnection(
-				[connection],
-				new FmSynthRoutePoint(107.2, 40),
-				renderScaling: 1)
-			.Should().NotBeNull();
-		FmSynthWaypointGeometry.HitConnection(
-				[connection],
-				new FmSynthRoutePoint(45, 11.4),
-				renderScaling: 2)
-			.Should().NotBeNull();
-		FmSynthWaypointGeometry.HitConnection(
-				[connection],
-				new FmSynthRoutePoint(45, 11.6),
-				renderScaling: 2)
-			.Should().BeNull();
+		FmSynthWaypointGeometry.WireBufferPixels.Should().Be(3.0);
+		FmSynthWaypointGeometry.WireStrokeWidthDips.Should().Be(2.0);
+		// Unselected stroke: 2-DIP total => 1-DIP half-width.
+		// Add three PHYSICAL pixels on either side of the visible stroke.
+		Hit(45, 13.99, 1).Should().NotBeNull();
+		Hit(45, 14.01, 1).Should().BeNull();
+		Hit(45, 6.01, 1).Should().NotBeNull();
+		Hit(45, 5.99, 1).Should().BeNull();
+		Hit(106.01, 40, 1).Should().NotBeNull();
+		Hit(105.99, 40, 1).Should().BeNull();
+
+		// The DIP pen thickness is unchanged while the physical-pixel
+		// buffer shrinks in DIPs on HiDPI monitors.
+		Hit(45, 12.49, 2).Should().NotBeNull();
+		Hit(45, 12.51, 2).Should().BeNull();
+		Hit(45, 14.99, .75).Should().NotBeNull();
+		Hit(45, 15.01, .75).Should().BeNull();
+
+		// The white selected wire is rendered 3 DIPs wide; hit testing
+		// uses that actual pen width rather than the unselected pen width.
+		Hit(45, 14.49, 1, Connection).Should().NotBeNull();
+		Hit(45, 14.51, 1, Connection).Should().BeNull();
+		Hit(45, 12.99, 2, Connection).Should().NotBeNull();
+		Hit(45, 13.01, 2, Connection).Should().BeNull();
+
+		FmSynthConnectionLineHit? Hit(double x, double y, double scaling,
+			FmSynthConnectionCandidate? selected = null)
+			=> FmSynthWaypointGeometry.HitConnection([connection],
+				new FmSynthRoutePoint(x, y), scaling, selected);
+	}
+
+	[Test]
+	public void WireHitIsDistanceToFiniteSegmentNotItsInfiniteLine()
+	{
+		FmSynthRenderedConnection segment = new(
+			Connection,
+			[new FmSynthRoutePoint(10, 10),
+			 new FmSynthRoutePoint(100, 10)],
+			[]);
+		FmSynthConnectionLineHit? hit =
+			FmSynthWaypointGeometry.HitConnection([segment],
+				new FmSynthRoutePoint(7, 7.5), 1);
+		hit.Should().NotBeNull(); // 3 by 2.5 from start => 3.91, under 4.
+		FmSynthWaypointGeometry.HitConnection([segment],
+			new FmSynthRoutePoint(7, 7), 1).Should().BeNull();
+		FmSynthWaypointGeometry.HitConnection([segment],
+			new FmSynthRoutePoint(50, 25), 1).Should().BeNull();
+	}
+
+	[Test]
+	public void WaypointHasCircularEightPhysicalPixelHitZoneAndStablePriority()
+	{
+		FmSynthRenderedConnection horizontal = new(
+			Connection,
+			[new FmSynthRoutePoint(10, 60),
+			 new FmSynthRoutePoint(120, 60)],
+			[new FmSynthRoutePoint(50, 60)]);
+		FmSynthWaypointGeometry.HandleTolerancePixels.Should().Be(8.0);
+		Hit(58, 60, 1).Should().NotBeNull();
+		Hit(58.01, 60, 1).Should().BeNull();
+		Hit(54.8, 66.4, 1).Should().NotBeNull();
+		Hit(54.81, 66.4, 1).Should().BeNull();
+		Hit(54, 60, 2).Should().NotBeNull();
+		Hit(54.01, 60, 2).Should().BeNull();
+		Hit(60, 60, .75).Should().NotBeNull();
+		Hit(61, 60, .75).Should().BeNull();
+		Hit(50, 70, 1).Should().BeNull();
+		Hit(55, 60, 1)!.Value.Connection.Should().Be(Connection);
+
+		FmSynthWaypointHit? Hit(double x, double y, double scaling)
+			=> FmSynthWaypointGeometry.HitWaypoint([horizontal],
+				new FmSynthRoutePoint(x, y), scaling);
 	}
 
 	[Test]
