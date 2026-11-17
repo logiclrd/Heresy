@@ -3950,7 +3950,7 @@ public sealed class PatternEditorControl : UserControl
 		}
 		Control name = SongObjectTypeNameLabel.Create(
 			displayName, typeColour, compact: true);
-		ToolTip.SetTip(name, choice.DisplayName);
+		ToolTip.SetTip(name, $"{displayName} <{choice.Id.Value}>");
 		return new Border
 		{
 			Background = rowTint,
