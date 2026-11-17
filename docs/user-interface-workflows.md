@@ -323,10 +323,11 @@ must invalidate a stale connection selection before Delete can act on
 a different edge. On successful disconnect the graph selection clears.
 
 Connection waypoints are edited directly on the canvas. Wire clicks
-accept a **3-physical-pixel buffer beyond either outer edge of the actual
-rendered stroke**, including its full 2-DIP unselected or 3-DIP selected
-width. The proximity test measures shortest distance to each finite route
-segment, with render scaling applied only to the extra physical-pixel buffer.
+accept a **4-DIP buffer beyond either outer edge of the actual rendered
+stroke**, including its full 2-DIP unselected or 3-DIP selected width.
+That buffer is 4 physical pixels at 100% scaling and 6 at 150%.
+The proximity test measures shortest distance to each finite route
+segment in graph-space DIPs, so it follows display scaling automatically.
 The closest eligible connection wins where these hit zones overlap. A
 persisted routing waypoint (the small gold connector node) has a separate
 **8-physical-pixel-radius circular hit zone**, measured from its center
