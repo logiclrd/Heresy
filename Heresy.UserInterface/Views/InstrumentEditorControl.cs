@@ -21,6 +21,7 @@ using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.InstrumentEditing;
 using Heresy.UserInterface.PatternEditing;
+using Heresy.UserInterface.Styling;
 
 namespace Heresy.UserInterface.Views;
 
@@ -995,6 +996,20 @@ public sealed class InstrumentEditorControl : UserControl
 			ItemsSource = options,
 			SelectedItem = options.FirstOrDefault(x => x.Id == selectedId)
 				?? options[0],
+			// ItemTemplate is used both in the popup and for the selected
+			// item when the dropdown is closed. Never colour the whole row.
+			ItemTemplate = new FuncDataTemplate<SourceChoice>((choice, _) =>
+			{
+				if (choice is null)
+					return null;
+				Color? colour = null;
+				if (choice.Id is ObjectId objectId
+					&& _workspace.Document.TryGet(
+						objectId, out SongObject? songObject))
+					colour = SongObjectTypePalette.ForObject(songObject);
+				return SongObjectTypeNameLabel.Create(
+					choice.Name, colour, compact: true);
+			}),
 		});
 	}
 
