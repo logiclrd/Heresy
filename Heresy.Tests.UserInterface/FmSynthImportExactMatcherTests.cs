@@ -83,9 +83,10 @@ public sealed class FmSynthImportExactMatcherTests
         other.ReplaceCurve([
             new EnvelopeNode(TimeSpan.Zero, .0),
             new EnvelopeNode(TimeSpan.FromMilliseconds(10), 1),
-            new EnvelopeNode(TimeSpan.FromMilliseconds(150), .7),
+            new EnvelopeNode(TimeSpan.FromMilliseconds(151), .7),
         ], 1, 2, EnvelopeSustainLoopMode.Forward);
-        Assert.That(FmSynthImportExactMatcher.StrictlyEqual(original, other), Is.False);
+        Assert.That(FmSynthImportExactMatcher.StrictlyEqual(original, other), Is.False,
+            "a one-millisecond timestamp difference must be detected");
         other.ReplaceCurve(original.Nodes, 0, 2, EnvelopeSustainLoopMode.Forward);
         Assert.That(FmSynthImportExactMatcher.StrictlyEqual(original, other), Is.False);
     }
