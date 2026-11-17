@@ -163,6 +163,12 @@ public sealed class SongObjectTypePaletteTests
         }
         finally
         {
+            // Avoid asking an unshown headless window to display the
+            // unsaved-document confirmation dialog during teardown.
+            DocumentWorkspace workspace = (DocumentWorkspace)typeof(MainWindow)
+                .GetField("_workspace", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(window)!;
+            workspace.New();
             window.Close();
         }
     }
