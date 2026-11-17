@@ -169,6 +169,7 @@ public sealed class MainWindow : Window
 	private CancellationTokenSource? _exportCancellation;
 	private bool _renderAudioPending;
 	private bool _renamePromptInProgress;
+	private TextPromptDialog? _activeRenamePrompt;
 
 	public MainWindow()
 		: this(new DocumentWorkspace(), null, null) { }
@@ -1704,9 +1705,8 @@ public sealed class MainWindow : Window
 
 		if (selected.Node is SongTreeFolder folder)
 		{
-			TextPromptDialog dialog =
-				new("Rename folder", "Folder name:", folder.Name);
-			string? name = await dialog.ShowDialog<string?>(this);
+			string? name = await PromptRenameAsync(
+				"Rename folder", "Folder name:", folder.Name);
 			if (name is null)
 				return;
 
@@ -1722,9 +1722,8 @@ public sealed class MainWindow : Window
 			return;
 		}
 
-		TextPromptDialog objectDialog =
-			new("Rename object", "Object name:", selected.DisplayName);
-		string? objectName = await objectDialog.ShowDialog<string?>(this);
+		string? objectName = await PromptRenameAsync(
+			"Rename object", "Object name:", selected.DisplayName);
 		if (objectName is null)
 			return;
 
@@ -1736,6 +1735,22 @@ public sealed class MainWindow : Window
 	/// the same rename dialog as its context menu. Do not catch F2 at
 	/// window level: a TextBox or Pattern editor might own keyboard focus.
 	/// </summary>
+	private async Task<string?> PromptRenameAsync(
+		string title, string label, string currentName)
+	{
+		TextPromptDialog dialog = new(title, label, currentName);
+		_activeRenamePrompt = dialog;
+		try
+		{
+			return await dialog.ShowDialog<string?>(this);
+		}
+		finally
+		{
+			if (ReferenceEquals(_activeRenamePrompt, dialog))
+				_activeRenamePrompt = null;
+		}
+	}
+
 	private void OnTreeRenameKeyDown(TreeView tree, KeyEventArgs e)
 	{
 		if (!RenameKeyboardShortcut.IsRequested(
