@@ -455,8 +455,10 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private void DrawConnections(DrawingContext context)
 	{
 		Pen connectionPen = new(
-			new SolidColorBrush(Color.FromRgb(125, 175, 235)), 2.0);
-		Pen selectedPen = new(Brushes.White, 3.0);
+			new SolidColorBrush(Color.FromRgb(125, 175, 235)),
+			FmSynthWaypointGeometry.WireStrokeWidthDips);
+		Pen selectedPen = new(
+			Brushes.White, FmSynthWaypointGeometry.SelectedWireStrokeWidthDips);
 		foreach (FmSynthRenderedConnection connection in GetRenderedConnections())
 		{
 			Pen pen = _selectedConnection == connection.Connection
@@ -560,7 +562,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			};
 		}
 		else if (FmSynthWaypointGeometry.HitConnection(
-			connections, position, RenderScaling)
+			connections, position, RenderScaling, _selectedConnection)
 			is FmSynthConnectionLineHit line)
 		{
 			SelectConnection(line.Connection);
