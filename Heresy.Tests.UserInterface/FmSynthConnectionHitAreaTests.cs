@@ -88,6 +88,87 @@ public sealed class FmSynthConnectionHitAreaTests
     }
 
     [AvaloniaTest]
+    public void RenderLayerWireHitsAreSymmetricUnderOneHundredAndFiftyPercentTransform()
+    {
+        DocumentWorkspace work = new();
+        FmSynthDefinition synth =
+            FmSynthDocumentEditor.CreateFmSynth(work, "Symmetric wire hit");
+        int source = FmSynthDocumentEditor.AddConstantNode(
+            work, synth, 1, 210, 140);
+        int target = FmSynthDocumentEditor.AddOperatorNode(
+            work, synth, FmOperatorKind.Add, [source], 660, 140);
+        // An offset routing constraint guarantees sufficiently long
+        // horizontal and vertical segments, away from endpoint sockets.
+        FmSynthDocumentEditor.SetRoutingHint(work, synth, source, target, 0,
+            [new FmSynthRoutePoint(520, 415)]);
+        List<FmSynthConnectionCandidate> selected = [];
+        FmSynthGraphCanvas canvas = new(synth, _ => { }, (_, _, _) => { },
+            (_, _, _) => { }, (_, _, _, _) => { }, selected.Add);
+        Window window = new()
+        {
+            Width = 1600, Height = 1200,
+            Content = canvas,
+        };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            Grid root = Field<Grid>(canvas, "_graphRoot");
+            Control layer = Field<Control>(canvas, "_connectionLayer");
+            // Exercise the full visual/event transform at 150% zoom,
+            // rather than testing only bare model coordinates.
+            root.RenderTransformOrigin =
+                new RelativePoint(0, 0, RelativeUnit.Relative);
+            root.RenderTransform = new Avalonia.Media.ScaleTransform(1.5, 1.5);
+            window.UpdateLayout();
+            FmSynthRenderedConnection wire =
+                ((FmSynthRenderedConnection[])typeof(FmSynthGraphCanvas)
+                    .GetMethod("GetRenderedConnections",
+                        BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .Invoke(canvas, null)!).Single();
+            var segments = wire.Route.Zip(wire.Route.Skip(1),
+                (a, b) => (a, b)).ToArray();
+            var horizontal = segments
+                .Where(s => Math.Abs(s.a.Y - s.b.Y) < .001)
+                .OrderByDescending(s => Math.Abs(s.a.X - s.b.X)).First();
+            var vertical = segments
+                .Where(s => Math.Abs(s.a.X - s.b.X) < .001)
+                .OrderByDescending(s => Math.Abs(s.a.Y - s.b.Y)).First();
+            Assert.That(Math.Abs(horizontal.a.X - horizontal.b.X),
+                Is.GreaterThan(80), "use a long horizontal segment");
+            Assert.That(Math.Abs(vertical.a.Y - vertical.b.Y),
+                Is.GreaterThan(80), "use a long vertical segment");
+
+            foreach (var segment in new[] { horizontal, vertical })
+            {
+                double midpointX = (segment.a.X + segment.b.X) / 2;
+                double midpointY = (segment.a.Y + segment.b.Y) / 2;
+                bool horizontalSegment = Math.Abs(
+                    segment.a.Y - segment.b.Y) < .001;
+                foreach (double offset in new[] { -5.75, -4.75, 4.75, 5.75 })
+                {
+                    canvas.SetSelectedConnection(null);
+                    selected.Clear();
+                    Point inLayer = new(
+                        midpointX + (horizontalSegment ? 0 : offset),
+                        midpointY + (horizontalSegment ? offset : 0));
+                    Point click = layer.TranslatePoint(inLayer, window)!.Value;
+                    window.MouseMove(click);
+                    window.MouseDown(click, MouseButton.Left);
+                    bool expected = Math.Abs(offset) < 5.0;
+                    Assert.That(selected.Count > 0, Is.EqualTo(expected),
+                        $"Segment {(horizontalSegment ? "horizontal" : "vertical")}, "
+                        + $"offset {offset} DIPs");
+                    if (expected)
+                        Assert.That(selected.Single(), Is.EqualTo(wire.Connection));
+                    window.MouseUp(click, MouseButton.Left);
+                }
+            }
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaTest]
     public void EightPixelCircleAroundWaypointSelectsAndDragsItsExistingNode()
     {
         DocumentWorkspace work = new();
