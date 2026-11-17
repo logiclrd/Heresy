@@ -123,6 +123,19 @@ public sealed class PatternSourceTypeNameInsetsTests
         AssertSourceTint(selectedRow, script.SourceColourArgb!.Value);
         Assert.That(Background(selectedName),
             Is.EqualTo(SongObjectTypePalette.ScriptedInstrument));
+
+        // Source choices are snapshots, but rendering must consult the live
+        // document to show a referenced object's current name and tooltip.
+        sample.Name = "Updated Kick";
+        foreach (var template in new[] { toolbar.ItemTemplate!, list.ItemTemplate! })
+        {
+            var (_, renamedBadge, renamedText) = Render(template, kick);
+            Assert.That(renamedText.Text, Is.EqualTo("Updated Kick"));
+            Assert.That(ToolTip.GetTip(renamedBadge),
+                Is.EqualTo($"Updated Kick <{sampleId.Value}>"));
+            Assert.That(Background(renamedBadge),
+                Is.EqualTo(SongObjectTypePalette.Sample));
+        }
     }
 
     [AvaloniaTest]
