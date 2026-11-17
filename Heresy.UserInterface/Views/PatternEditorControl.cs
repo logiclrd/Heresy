@@ -3939,15 +3939,17 @@ public sealed class PatternEditorControl : UserControl
 	{
 		Color? typeColour = null;
 		IBrush rowTint = Brushes.Transparent;
+		string displayName = choice.Name;
 		if (_workspace.Document.TryGet(
 			choice.Id, out SongObject? songObject) && songObject is not null)
 		{
+			displayName = songObject.Name;
 			typeColour = SongObjectTypePalette.ForObject(songObject);
 			if (songObject.SourceColourArgb is uint tint)
 				rowTint = TintBrush(tint);
 		}
 		Control name = SongObjectTypeNameLabel.Create(
-			choice.Name, typeColour, compact: true);
+			displayName, typeColour, compact: true);
 		ToolTip.SetTip(name, choice.DisplayName);
 		return new Border
 		{
@@ -3965,7 +3967,6 @@ public sealed class PatternEditorControl : UserControl
 		{
 			ItemsSource = options,
 			ItemTemplate = PatternSourceItemTemplate(),
-			HorizontalContentAlignment = HorizontalAlignment.Stretch,
 			Width = 300,
 			MaxHeight = 320,
 		};
