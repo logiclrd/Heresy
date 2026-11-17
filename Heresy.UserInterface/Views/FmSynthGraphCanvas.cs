@@ -10,7 +10,9 @@ using Avalonia.Layout;
 using Avalonia.Media;
 
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Objects;
 using Heresy.UserInterface.FmEditing;
+using Heresy.UserInterface.Styling;
 
 namespace Heresy.UserInterface.Views;
 
@@ -20,6 +22,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 	public const double NodeHeight = 72.0;
 
 	private readonly FmSynthDefinition _synth;
+	private readonly SongDocument? _document;
 	private readonly Action<int> _selected;
 	private readonly Action<FmSynthConnectionCandidate>? _connectionSelected;
 	private readonly Action<int, double, double> _moved;
@@ -75,11 +78,13 @@ public sealed class FmSynthGraphCanvas : UserControl
 		Action<int, double, double> moved,
 		Action<int, int, int> connected,
 		Action<int, int, int, IReadOnlyList<FmSynthRoutePoint>> waypointsChanged,
-		Action<FmSynthConnectionCandidate>? connectionSelected = null)
+		Action<FmSynthConnectionCandidate>? connectionSelected = null,
+		SongDocument? document = null)
 	{
 		_synth =
 			synth
 				?? throw new ArgumentNullException(nameof(synth));
+		_document = document;
 		_selected =
 			selected
 				?? throw new ArgumentNullException(nameof(selected));
@@ -946,11 +951,28 @@ public sealed class FmSynthGraphCanvas : UserControl
 				detail.TextTrimming = TextTrimming.CharacterEllipsis;
 				detail.VerticalAlignment = VerticalAlignment.Center;
 				ToolTip.SetTip(detail, detail.Text);
+				Control status = detail;
+				if (node is FmSoundSourceNode source
+					&& _document is not null
+					&& _document.TryGet(source.SourceId,
+						out SongObject? linked)
+					&& SongObjectTypePalette.ForObject(linked)
+						is Color background)
+				{
+					// A source's actual name, not "Source <id>", appears
+					// inside the same 22-DIP status row. Keep its full
+					// identity/frequency accessible on hover.
+					status = SongObjectTypeNameLabel.Create(
+						linked!.Name, background, compact: true);
+					ToolTip.SetTip(status,
+						$"{linked.Name} <{linked.Id.Value}> — "
+						+ NodeDetail(node));
+				}
 				content.Children.Add(new Border
 				{
 					Name = "SingleInputStatusRow",
 					Height = FmSynthConnectionPorts.StatusRowHeight,
-					Child = detail,
+					Child = status,
 				});
 				content.Children.Add(PortLabelRow(
 					node is FmMultiNode ? "In" : "Pitch",
