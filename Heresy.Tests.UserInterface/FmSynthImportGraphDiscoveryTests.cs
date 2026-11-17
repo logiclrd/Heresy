@@ -224,6 +224,42 @@ public sealed class FmSynthImportGraphDiscoveryTests
 	}
 
 	[Test]
+	public void StaleFilterModulationWireIsRecordedButDoesNotOwnAnActiveRoot()
+	{
+		SongDocument song = new();
+		FilterDefinition definition =
+			new(song.AllocateObjectId(), "Reusable filter");
+		song.Add(definition);
+		FmFilterNode filter = new(2, null, new FilterInstance(definition),
+			[new FmFilterParameterConnection(999, FilterKind.OnePole,
+				0, "CutoffHz", 1)]);
+		Assert.That(filter.StaleConnections.Count, Is.EqualTo(1));
+		Assert.That(filter.GetPorts().All(p => p.SourceNodeId is null),
+			Is.True);
+		FmSynthDefinition synth = Add(song, "Saved stale wiring",
+			new FmSynthGraph([
+				new FmConstantNode(1, .5),
+				filter,
+			], 2));
+		var discovery = FmSynthImportGraphDiscovery.Discover(
+			new SongFmSynthImportSource("stale.hm", song, [synth]),
+			[synth.Id]);
+		Assert.That(discovery.Issues, Is.Empty);
+		Assert.That(discovery.Connections, Has.Count.EqualTo(1));
+		FmImportGraphConnection stale = discovery.Connections.Single();
+		Assert.That(stale.IsActive, Is.False);
+		Assert.That(stale.TargetInputIndex, Is.EqualTo(-1));
+		Assert.That(stale.PortIdentity,
+			Does.Contain("filter:999:").And.Contain(":CutoffHz"));
+		Assert.That(discovery.SynthGraphs.Single().PresentationRoots
+			.Select(node => node.NodeId), Is.EqualTo(new[] { 2, 1 }),
+			"the stale wire must not make the disconnected authored node reachable");
+		Assert.That(discovery.ObjectReferences.Single(r =>
+			r.Kind == FmImportReferenceKind.Filter).Target?.SourceObjectId,
+			Is.EqualTo(definition.Id));
+	}
+
+	[Test]
 	public void IncompatibleSourceObjectsAreReportedRatherThanDiscardingTheirUse()
 	{
 		SongDocument song = new();
