@@ -96,6 +96,13 @@ Do not reintroduce completed-task checklists here.
   regression coverage for the new engine, rather than a standalone
   throwaway fix. See the complete approved [Synth import design](synth-import-plan.md).
   This is separate from the future **Duplicate Object** feature.
+  **Implementation progress:** draft PR #34 creates the read-only discovery
+  graph and semantic connection/use identities, including the original
+  Source+Multi combination, nested Instruments/Synths, shared
+  Envelopes/Filters, inactive Filter wires, missing-reference diagnostics,
+  and disconnected graph roots. The old import command remains unchanged.
+  The editable plan, provenance, TreeDataGrid, two-stage validation and
+  atomic commit are still open.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
