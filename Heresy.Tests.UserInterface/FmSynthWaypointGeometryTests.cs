@@ -88,8 +88,12 @@ public sealed class FmSynthWaypointGeometryTests
 		FmSynthWaypointGeometry.HandleTolerancePixels.Should().Be(8.0);
 		Hit(58, 60, 1).Should().NotBeNull();
 		Hit(58.01, 60, 1).Should().BeNull();
-		Hit(54.8, 66.4, 1).Should().NotBeNull();
-		Hit(54.81, 66.4, 1).Should().BeNull();
+		// Use strictly interior/exterior diagonal points: decimal
+		// coordinates nominally exactly on the circle can round across
+		// the boundary in floating point. Axis-aligned radius=8 above
+		// verifies that the exact boundary itself is included.
+		Hit(54.79, 66.39, 1).Should().NotBeNull();
+		Hit(54.81, 66.41, 1).Should().BeNull();
 		Hit(54, 60, 2).Should().NotBeNull();
 		Hit(54.01, 60, 2).Should().BeNull();
 		Hit(60, 60, .75).Should().NotBeNull();
