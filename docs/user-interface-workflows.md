@@ -328,7 +328,7 @@ stroke**, including its full 2-DIP unselected or 3-DIP selected width.
 That buffer is 4 physical pixels at 100% scaling and 6 at 150%.
 The proximity test measures shortest distance to each finite route
 segment in graph-space DIPs, so it follows display scaling automatically.
-The closest eligible connection wins where these hit zones overlap. A
+Both visible segments and their pointer hit regions are evaluated in the connection-rendering layer's own coordinate system, so scrolling, scene transforms and display scaling cannot introduce a sibling-layer coordinate offset. The closest eligible connection wins where these hit zones overlap. A
 persisted routing waypoint (the small gold connector node) has a separate
 **8-physical-pixel-radius circular hit zone**, measured from its center
 with Euclidean distance and render scaling. Waypoint hits take precedence
