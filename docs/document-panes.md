@@ -49,8 +49,8 @@ The canonical object-type backgrounds are:
 | Sample | `#FBBD73` |
 | Synth | `#73FBF3` |
 | Filter (1 to 4+ stages) | `#FEE0DE` → `#F79893` in linear RGB, one-third per extra stage |
-| Envelope / Scripted Envelope | `#D29BF9` / `#DE97F9` |
-| Instrument / Scripted Instrument | `#B2DBFA` / `#B8CFFA` |
+| Envelope / Scripted Envelope | `#D29BF9` / `#D26CE1` |
+| Instrument / Scripted Instrument | `#B2DBFA` / `#9AA7E5` |
 | Pattern / Scripted Pattern | `#B8FAB8` / `#91F975` |
 | Sequence / Scripted Sequence | `#FFFFC0` / `#FFFF40` |
 
