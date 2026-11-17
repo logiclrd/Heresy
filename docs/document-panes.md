@@ -56,9 +56,15 @@ The canonical object-type backgrounds are:
 
 The runtime object subtype selects scripted colours even though the persisted
 `SongObjectKind` enum is shared with ordinary objects. Filter stage counts
-recompute from the current definition on tree refresh. Future slices of the
-open [object-colour TODO](todo.md) will reuse this one palette in graph nodes,
-Filter/Instrument Source pickers and the two-layer Pattern source-name insets.
+recompute from the current definition on tree refresh.
+
+The second UI slice uses the same palette in the Instrument tone grid's Source
+selector (both expanded items and selected collapsed value), the Synth graph
+Source inspector's selector, and the coloured actual referenced name on a Synth
+Source node's fixed-height status row. Unassigned and unresolved references do
+not gain type colours; the graph status tooltip preserves the full source ID
+and frequency. Pattern source-row colour remains a separate layer: the open
+[object-colour TODO](todo.md) tracks that final two-layer source-name treatment.
 
 ## Backward-compatible loading
 

@@ -46,6 +46,21 @@ load directly. Saving writes six sections, and migration itself does not
 increment audio or document revisions. See
 [document panes](document-panes.md).
 
+## Object-type colour presentation
+
+The six main document trees use a canonical shared object-type colour around
+each live name; folder labels and missing-object tombstones remain uncoloured.
+The Instrument tone Source ComboBox uses the same name badges for expanded
+choices and the selected collapsed value, without colouring the whole grid
+cell. The Synth graph Source inspector also uses these badges; a Source node
+with a live reference shows the actual object name in the original 22-DIP
+status row, on the matching type-colour background, with its full source ID
+and pitch information in the tooltip. Unassigned/missing Source nodes retain
+their original text and warning styling. These editor changes do not affect
+audio or source IDs. The separately persisted random source-row colours in
+the Pattern editor are intentionally untouched until its two-layer colour
+slice. See [document panes](document-panes.md) and [open work](todo.md).
+
 ## Held-key input and nested X11 servers
 
 The Synth **Test** area, Sample **Test** area, Pattern editor's momentary
