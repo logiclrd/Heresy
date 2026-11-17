@@ -126,6 +126,9 @@ public sealed class FmSynthImportPlan
     private readonly HashSet<FmImportNodeKey> _excludedNodes = [];
     private readonly HashSet<FmImportGraphInputKey> _disconnectedInputs = [];
     private readonly Dictionary<FmImportObjectKey, FmImportMapping> _definitionMappings = [];
+    // Proven exact suggestions are captured once at plan creation, never
+    // regenerated from the resulting target ID after manual intervention.
+    private readonly Dictionary<FmImportObjectKey, ObjectId> _defaultExactMatches = [];
     private readonly Dictionary<FmImportReferenceKey, FmImportMapping> _useOverrides = [];
     // Clearing a per-use override is still a manual action. An inherited
     // automatic match must never reacquire orange provenance until Reset.
@@ -292,6 +295,38 @@ public sealed class FmSynthImportPlan
         return true;
     }
 
+    /// <summary>Only the strict matcher can seed automatic defaults. Keep
+    /// the proof results for ResetToDefaults without reexamining mutable
+    /// source or destination songs during plan editing.</summary>
+    internal void InitializeExactMatchDefaults(
+        IReadOnlyList<FmImportExactMatch> matches)
+    {
+        ArgumentNullException.ThrowIfNull(matches);
+        if (_defaultExactMatches.Count != 0 || _definitionMappings.Count != 0)
+            throw new InvalidOperationException(
+                "Automatic exact-match defaults can only be initialized on a fresh plan.");
+        foreach (FmImportExactMatch match in matches)
+        {
+            if (!_objects.TryGetValue(match.Source, out FmImportDiscoveredObject? obj)
+                || _rootSet.Contains(match.Source)
+                || obj.Kind is not (SongObjectKind.Envelope or SongObjectKind.Filter)
+                || match.ExistingId.IsNone
+                || !_defaultExactMatches.TryAdd(match.Source, match.ExistingId))
+                throw new ArgumentException("Invalid exact-match recommendation.", nameof(matches));
+        }
+        ApplyStoredExactMatchDefaults();
+        RefreshNames();
+        RefreshEffective();
+    }
+
+    private void ApplyStoredExactMatchDefaults()
+    {
+        foreach ((FmImportObjectKey key, ObjectId existingId) in _defaultExactMatches)
+            _definitionMappings.Add(key, new FmImportMapping(
+                FmImportMappingKind.ReuseExisting, existingId,
+                FmImportMappingProvenance.AutomaticExactMatch));
+    }
+
     public void SetReferenceOverride(FmImportReferenceKey use,
         FmImportMappingKind kind, ObjectId? existingId = null)
     {
@@ -391,6 +426,7 @@ public sealed class FmSynthImportPlan
         _preservedNodes.Clear();
         _names.Clear();
         _canonical.Clear();
+        ApplyStoredExactMatchDefaults();
         RefreshNames();
         RefreshEffective();
     }
