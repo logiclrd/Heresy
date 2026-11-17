@@ -109,9 +109,12 @@ Do not reintroduce completed-task checklists here.
   active/inactive projections, originally-disconnected node preservation,
   semantic Filter stage/parameter port matching across local swaps, and
   explicit inactive reasons. No destination edits or UI changes occur.
-  Strong strict match proofs, complete per-stage override translation,
-  TreeDataGrid, two-stage validation, Sample asset handling and atomic
-  commit remain open.
+  A fourth slice adds conservative Node/Script Envelope and Filter exact
+  equivalence, captured automatic reuse defaults and one-way manual
+  provenance, with reset support and identity/history regression tests.
+  Cross-filter stage translation and per-instance override checks, target
+  type/Stage-A and Stage-B validation, TreeDataGrid, Sample assets and
+  atomic commit remain open.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
