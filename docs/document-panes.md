@@ -33,6 +33,33 @@ button and the **Edit Filter...** tree activation, with stage ordering,
 rename/type selection and parameter defaults in the standalone editor.
 Existing song types retain their current activation and creation actions.
 
+## Song-object type colour foundation (first UI slice)
+
+Song names in all six main document trees now use the shared
+`SongObjectTypePalette` as a **small, rounded background around the name**,
+without colouring the whole selectable row. The palette is independent of the
+per-source random `SongObject.SourceColourArgb` used by Pattern source rows.
+Folders and missing references keep their original uncoloured headers;
+selection, renaming, dragging, and existing tree actions are unchanged.
+
+The canonical object-type backgrounds are:
+
+| Type | Colour |
+| --- | --- |
+| Sample | `#FBBD73` |
+| Synth | `#73FBF3` |
+| Filter (1 to 4+ stages) | `#FEE0DE` → `#F79893` in linear RGB, one-third per extra stage |
+| Envelope / Scripted Envelope | `#D29BF9` / `#D26CE1` |
+| Instrument / Scripted Instrument | `#B2DBFA` / `#9AA7E5` |
+| Pattern / Scripted Pattern | `#B8FAB8` / `#91F975` |
+| Sequence / Scripted Sequence | `#FFFFC0` / `#FFFF40` |
+
+The runtime object subtype selects scripted colours even though the persisted
+`SongObjectKind` enum is shared with ordinary objects. Filter stage counts
+recompute from the current definition on tree refresh. Future slices of the
+open [object-colour TODO](todo.md) will reuse this one palette in graph nodes,
+Filter/Instrument Source pickers and the two-layer Pattern source-name insets.
+
 ## Backward-compatible loading
 
 All three layouts retain the pre-release file-format `version: 1`.
