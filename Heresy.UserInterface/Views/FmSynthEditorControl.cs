@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -22,6 +23,7 @@ using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.FmEditing;
 using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.PatternEditing;
+using Heresy.UserInterface.Styling;
 
 namespace Heresy.UserInterface.Views;
 
@@ -107,7 +109,8 @@ public sealed class FmSynthEditorControl : UserControl
 				MoveNode,
 				ConnectNodes,
 				EditConnectionWaypoints,
-				SelectConnection);
+				SelectConnection,
+				document: _workspace.Document);
 		_selectedNodeId =
 			synth.Graph.OutputNodeId;
 		ApplyGraphSelection();
@@ -1072,6 +1075,17 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			ItemsSource = options,
 			SelectedItem = options.First(c => c.Id == node.SourceId),
+			ItemTemplate = new FuncDataTemplate<SourceChoice>((choice, _) =>
+			{
+				if (choice is null)
+					return null;
+				Color? colour = _workspace.Document.TryGet(
+					choice.Id, out SongObject? songObject)
+					? SongObjectTypePalette.ForObject(songObject)
+					: null;
+				return SongObjectTypeNameLabel.Create(
+					choice.DisplayName, colour);
+			}),
 		};
 		AddField("Source (Sample / Instrument / Synth)", source);
 		if (missing is not null)
