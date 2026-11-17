@@ -330,9 +330,13 @@ The proximity test measures shortest distance to each finite route
 segment in graph-space DIPs, so it follows display scaling automatically.
 Both visible segments and their pointer hit regions are evaluated in the connection-rendering layer's own coordinate system, so scrolling, scene transforms and display scaling cannot introduce a sibling-layer coordinate offset. The closest eligible connection wins where these hit zones overlap. A
 persisted routing waypoint (the small gold connector node) has a separate
-**8-physical-pixel-radius circular hit zone**, measured from its center
-with Euclidean distance and render scaling. Waypoint hits take precedence
-over nearby wire segments: pressing within that circle selects its connection
+circular hit zone extending **3 DIPs beyond the actual rendered outer edge**.
+Its disc radius is 4.5 DIPs and its 1.5-DIP outline is centered on that
+radius, so the outside visible radius is 5.25 DIPs and the total hit radius
+is **8.25 DIPs** from the center. Both its paint and hit dimensions are shared
+constants, independent of display scaling (the 3-DIP margin appears as 4.5
+physical pixels at 150% scaling). Waypoint hits take precedence over
+nearby wire segments: pressing within that circle selects its connection
 and begins dragging the *existing* waypoint, preserving the pointer offset.
 Dragging a wire outside a waypoint's circle creates a new waypoint at the
 clicked segment's nearest position, inserted before or after existing waypoints
