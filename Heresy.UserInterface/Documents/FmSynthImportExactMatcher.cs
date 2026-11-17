@@ -98,12 +98,13 @@ public static class FmSynthImportExactMatcher
         ArgumentNullException.ThrowIfNull(destination);
         FmImportExactMatchSource[] inputs = sources.ToArray();
         IReadOnlyList<FmImportExactMatch> matches = Find(inputs, destination);
-        return new FmSynthImportPlan(
+        FmSynthImportPlan plan = new(
             inputs.Select(input => input.Discovery),
             destination.Objects.Values.Select(obj =>
                 new FmImportExistingName(obj.Kind, obj.Name)),
-            destination.Objects.Values.OfType<FilterDefinition>(),
-            matches);
+            destination.Objects.Values.OfType<FilterDefinition>());
+        plan.InitializeExactMatchDefaults(matches);
+        return plan;
     }
 
     /// <summary>Compare strictly persisted authoring semantics, not runtime
