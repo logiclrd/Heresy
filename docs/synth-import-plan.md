@@ -1,6 +1,6 @@
 # Synth import planning and dependency resolution
 
-**Status:** Approved design; implementation underway in bounded slices. The first draft slice (PR #34) supplies read-only graph/dependency discovery but does **not** yet replace the Import Synths UI or perform an import.  
+**Status:** Approved design; implementation underway in bounded slices. Draft PR #34 supplies read-only graph/dependency discovery; the stacked draft plan-domain slice supplies editable mapping/name/provenance state and sticky presentation ownership. Neither yet replaces the Import Synths UI or performs an import.  
 **Scope:** The existing **Import Synths** workflow, including importing Synths back into their own saved song. Independent of the later **Duplicate Object** action for every object list.  
 **Design recorded:** 12 November 2026.  
 **Priority:** Park this while PR #12 (live Synth parameter audition) continues.
@@ -222,3 +222,9 @@ Use invariant-based red-first tests for missing behavior rather than preserving 
 Implementation details still to choose: TreeDataGrid row-model APIs, convenient use-level override UX, precise strict-equivalence comparison for each definition family (especially Filter stage-generation translation), how optional disconnected-node inclusion is presented, transactional document/undo integration, and the detailed Sample asset-recovery control. Choose these within the principles and acceptance cases above, documenting tradeoffs when implemented.
 
 **Scheduling:** This design is locked in on main for later work. Resume PR #12's all-nonstructural Synth live-parameter acceptance before starting this larger import rewrite.
+
+## 13. Implementation note — editable domain-state slice (stacked on PR #34)
+
+The second draft slice introduces `FmSynthImportPlan` as *authoritative, mutable decisions over immutable discovery snapshots*, independent of destination mutation. It supports one batch across multiple distinct source-song identities, mandatory copied explicit Synth roots, definition-level mapping defaults, explicit per-use overrides, provenance distinguished from target equality, editable/pinnable collision-avoiding suggested names, connection suppression and node preservation/exclusion decisions, and stable entity/occurrence keys for canonical row ownership. A returned alias can navigate to its current canonical occurrence; inactive uses do not reclaim ownership merely by becoming active again. Existing authored disconnected roots remain representable. Source snapshots and destination song revisions are untouched by editing the plan.
+
+This is **not** yet the effective graph/liveness and Filter-port translation engine, strict automatic equivalence proof, local-target type checker, stage-A/stage-B validator, TreeDataGrid renderer, Sample asset copier or atomic importer. The `RecommendExactReuse` entry point accepts a candidate only once a subsequent equivalence engine has proved it; the domain layer does not itself prove equality. Manual maps and disconnect decisions can temporarily be invalid; later validation must report them. The `SetGraphInputConnected` operation cannot reactivate a stale Filter wire without semantic port translation. The UI has not changed.
