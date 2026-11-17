@@ -28,14 +28,15 @@ public readonly record struct FmSynthWaypointHit(
 /// <summary>
 /// Framework-neutral graph hit testing and persistent waypoint ordering.
 /// Coordinates are Avalonia DIPs. Wire hits include the visible pen's
-/// half-width PLUS a buffer measured in physical pixels; waypoint hits
-/// use a circular physical-pixel radius. Both follow render scaling.
+/// half-width PLUS a buffer measured in DIPs; waypoint hits use a
+/// circular physical-pixel radius that follows render scaling.
 /// </summary>
 public static class FmSynthWaypointGeometry
 {
-	/// <summary>Additional physical-pixel clearance outside either edge
-	/// of a visible wire stroke (not the distance from its centerline).</summary>
-	public const double WireBufferPixels = 3.0;
+	/// <summary>Additional DIP clearance outside either edge of a
+	/// visible wire stroke (not the distance from its centerline).
+	/// This is four physical pixels at 100% scaling, six at 150%.</summary>
+	public const double WireBufferDips = 4.0;
 	public const double WireStrokeWidthDips = 2.0;
 	public const double SelectedWireStrokeWidthDips = 3.0;
 	/// <summary>Radius around each waypoint's center, in physical pixels.</summary>
@@ -50,10 +51,10 @@ public static class FmSynthWaypointGeometry
 		ArgumentNullException.ThrowIfNull(connections);
 		ValidateScaling(renderScaling);
 
-		// Pen thickness is specified in Avalonia DIPs; the extra buffer
-		// is specified in physical pixels. The centerline radius thus
-		// includes half of the *actual rendered* stroke plus the buffer.
-		double bufferDips = WireBufferPixels / renderScaling;
+		// The stroke and the extra buffer are both in Avalonia DIPs;
+		// only the separate waypoint circle remains in physical pixels.
+		// The centerline radius includes half the rendered stroke width
+		// plus four DIPs on either side.
 		FmSynthConnectionLineHit? best = null;
 		double bestSquared = double.PositiveInfinity;
 		foreach (FmSynthRenderedConnection connection in connections)
@@ -61,7 +62,7 @@ public static class FmSynthWaypointGeometry
 			double penWidthDips = connection.Connection == selectedConnection
 				? SelectedWireStrokeWidthDips : WireStrokeWidthDips;
 			double maximumSquared = Math.Pow(
-				penWidthDips / 2.0 + bufferDips, 2);
+				penWidthDips / 2.0 + WireBufferDips, 2);
 			for (int index = 0; index + 1 < connection.Route.Count; index++)
 			{
 				FmSynthRoutePoint start = connection.Route[index];
