@@ -303,16 +303,45 @@ are retained and the route finishes with a short horizontal approach to the
 consumer. Editor-only node positions and routing hints never alter the
 semantic audio graph.
 
-Connection waypoints are edited directly on the canvas. Pointer hit-testing
-uses a three-physical-pixel tolerance on either side of the rendered wire,
-with the display scaling accounted for. Dragging a wire creates a waypoint at
-the clicked segment's position, inserted before or after existing waypoints
-according to the location along the actual orthogonal route. A small gold
-handle marks every waypoint; drag it to move it, or double-click it to delete
-it. The path is previewed live during drag and persisted only on release,
-and a simple click without moving does not add a waypoint. Deleting the final
-waypoint clears the routing hint, restoring automatic routing. The old raw
-text waypoint editor and its buttons have been removed; these layout-only
+Graph connections share **one exclusive selection space** with nodes:
+pressing a rendered connection (including an existing waypoint) selects
+the exact source/target/input-slot edge and deselects any selected node.
+Pressing a node selects it and deselects any connection. The selected wire
+uses a bright, thicker stroke; selection alone never changes document
+revisions. Clicking and dragging a selected wire still inserts or moves
+routing waypoints using the existing gestures. With graph focus, plain
+**Delete** removes the selected **semantic connection**, leaving its
+source and target nodes intact; with a node selected, Delete retains its
+existing node-removal behavior. Delete inside inspector text fields remains
+ordinary text editing. Removing one of an Operator's ordered operands
+does not remove other instances of the same source; subsequent inputs and
+their routing hints shift left to preserve identity. An Operator losing
+its final operand becomes a silent Constant with the same node ID, as
+when deleting a source node. Disconnecting a Filter input removes only
+that selected audio or modulation connection. Any later graph rewire
+must invalidate a stale connection selection before Delete can act on
+a different edge. On successful disconnect the graph selection clears.
+
+Connection waypoints are edited directly on the canvas. Wire clicks
+accept a **4-DIP buffer beyond either outer edge of the actual rendered
+stroke**, including its full 2-DIP unselected or 3-DIP selected width.
+That buffer is 4 physical pixels at 100% scaling and 6 at 150%.
+The proximity test measures shortest distance to each finite route
+segment in graph-space DIPs, so it follows display scaling automatically.
+Both visible segments and their pointer hit regions are evaluated in the connection-rendering layer's own coordinate system, so scrolling, scene transforms and display scaling cannot introduce a sibling-layer coordinate offset. The closest eligible connection wins where these hit zones overlap. A
+persisted routing waypoint (the small gold connector node) has a separate
+**8-physical-pixel-radius circular hit zone**, measured from its center
+with Euclidean distance and render scaling. Waypoint hits take precedence
+over nearby wire segments: pressing within that circle selects its connection
+and begins dragging the *existing* waypoint, preserving the pointer offset.
+Dragging a wire outside a waypoint's circle creates a new waypoint at the
+clicked segment's nearest position, inserted before or after existing waypoints
+according to the actual route. Double-clicking a waypoint within its circle
+removes only that point. The path is previewed live during drag and persisted
+only on release; a simple click without moving does not add a waypoint.
+Deleting the final waypoint clears the routing hint and restores automatic
+routing. Port and node-body hit priorities remain unchanged, and the old raw
+text waypoint editor and its buttons remain removed. These layout-only
 edits never advance the audio revision.
 
 The FM editor and Sample editor use the **same focusable Test control**, the
