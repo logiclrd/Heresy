@@ -104,6 +104,12 @@ public sealed class FmSynthImportPlanTests
         Assert.That(plan.RecommendExactReuse(key, local), Is.True);
         Assert.That(plan.GetDefinitionMapping(key).Provenance,
             Is.EqualTo(FmImportMappingProvenance.AutomaticExactMatch));
+        FmImportReferenceKey use = discovery.ObjectReferences.Single().Use;
+        plan.SetReferenceOverride(use, FmImportMappingKind.None);
+        plan.ClearReferenceOverride(use);
+        Assert.That(plan.GetReferenceMapping(use).Provenance,
+            Is.EqualTo(FmImportMappingProvenance.Manual),
+            "clearing a manual per-use override must not restore orange");
         plan.SetDefinitionMapping(key, FmImportMappingKind.ImportCopy);
         Assert.That(plan.GetDefinitionMapping(key).Provenance,
             Is.EqualTo(FmImportMappingProvenance.Manual));
