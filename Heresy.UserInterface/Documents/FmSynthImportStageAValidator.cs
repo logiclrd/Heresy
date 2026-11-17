@@ -241,8 +241,8 @@ internal static class FmSynthImportStageAValidator
             FmImportMapping mapping = plan.GetReferenceMapping(use);
             bool explicitlyUnassigned = mapping.Kind == FmImportMappingKind.None
                 && (original.Target is null || plan.HasReferenceOverride(use)
-                    || original.Target is FmImportObjectKey target
-                    && plan.DiscoveredObjects.ContainsKey(target));
+                    || original.Target is FmImportObjectKey existingSource
+                    && plan.DiscoveredObjects.ContainsKey(existingSource));
 
             if (mapping.Kind == FmImportMappingKind.None)
             {
