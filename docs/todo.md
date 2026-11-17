@@ -107,13 +107,14 @@ Do not reintroduce completed-task checklists here.
   | Sequence | `#FFFFC0` |
   | Scripted Sequence | `#FFFF40` |
 
-  **Implementation progress:** draft PR #31 establishes the shared exact
-  object-type palette (including scripted variants and Filter stage
-  interpolation) and applies it to object-name backgrounds in the six main
-  document trees. The remainder of this TODO is **still open**: Filter
-  Source node/name and dropdown, Instrument Source dropdown in both
-  expanded and closed states, and the independent two-layer Pattern
-  Source row/name colours with unchanged row heights.
+  **Implementation progress:** draft PR #31 establishes the shared palette
+  (with revised scripted colours) and colours object names in the six main
+  document trees. Stacked draft PR #32 adds type-coloured Source choices
+  in the Synth graph inspector and Instrument tone grid (open and closed
+  dropdowns), and shows the live referenced object name on Synth Source
+  graph nodes using the same palette. The remainder of this TODO is
+  **still open**: the independent two-layer Pattern Source row/name colours,
+  including unchanged heights and colour preservation.
 
   In the **Filter graph editor**, show the appropriate type colour in
   the Source node's source-selection drop-down, and display the **actual
