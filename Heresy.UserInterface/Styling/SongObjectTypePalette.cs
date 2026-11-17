@@ -29,11 +29,11 @@ public static class SongObjectTypePalette
 		Color.FromRgb(0xF7, 0x98, 0x93);
 	public static readonly Color Envelope = Color.FromRgb(0xD2, 0x9B, 0xF9);
 	public static readonly Color ScriptedEnvelope =
-		Color.FromRgb(0xDE, 0x97, 0xF9);
+		Color.FromRgb(0xD2, 0x6C, 0xE1);
 	public static readonly Color Instrument =
 		Color.FromRgb(0xB2, 0xDB, 0xFA);
 	public static readonly Color ScriptedInstrument =
-		Color.FromRgb(0xB8, 0xCF, 0xFA);
+		Color.FromRgb(0x9A, 0xA7, 0xE5);
 	public static readonly Color Pattern = Color.FromRgb(0xB8, 0xFA, 0xB8);
 	public static readonly Color ScriptedPattern =
 		Color.FromRgb(0x91, 0xF9, 0x75);
