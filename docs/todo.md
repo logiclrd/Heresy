@@ -99,9 +99,9 @@ Do not reintroduce completed-task checklists here.
   | Filter — 2–3 stages | Progressively interpolate between the 1- and 4-stage colours |
   | Filter — 4 or more stages | `#F79893` |
   | Envelope | `#D29BF9` |
-  | Scripted Envelope | `#DE97F9` |
+  | Scripted Envelope | `#D26CE1` |
   | Instrument | `#B2DBFA` |
-  | Scripted Instrument | `#B8CFFA` |
+  | Scripted Instrument | `#9AA7E5` |
   | Pattern | `#B8FAB8` |
   | Scripted Pattern | `#91F975` |
   | Sequence | `#FFFFC0` |
