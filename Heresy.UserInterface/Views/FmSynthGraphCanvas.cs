@@ -522,7 +522,12 @@ public sealed class FmSynthGraphCanvas : UserControl
 			return;
 		}
 
-		FmSynthRoutePoint position = new(pointer.X, pointer.Y);
+		// Wire coordinates are rendered by _connectionLayer, not _canvas.
+		// Resolve pointer positions in the *same* visual that draws the
+		// segments; this avoids assuming sibling layer origins remain
+		// perfectly identical after scaling, scrolling or layout changes.
+		Point wirePointer = e.GetPosition(_connectionLayer);
+		FmSynthRoutePoint position = new(wirePointer.X, wirePointer.Y);
 		FmSynthRenderedConnection[] connections = GetRenderedConnections();
 		FmSynthWaypointHit? waypoint = FmSynthWaypointGeometry.HitWaypoint(
 			connections, position, RenderScaling);
