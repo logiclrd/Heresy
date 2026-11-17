@@ -16,7 +16,10 @@ The desktop document view projects six fixed `SongTreeSection` roots:
 The single Avalonia grid has **four equally sized star columns**. Both top panes
 span two columns; each bottom pane spans one. All panes retain separate tree
 projections, section-local folder organization, drag/move validation and
-rename/delete actions. Headers use wrapping actions to avoid clipping in
+rename/delete actions. With a renameable folder/object selected and its
+pane's tree focused, **F2 opens the same Rename dialog** as the context menu;
+missing object references cannot be renamed. F2 is scoped to the active tree,
+not captured globally from text fields or other editors. Headers use wrapping actions to avoid clipping in
 quarter-width panes. The `Samples` enum retains its historical name while
 the UI calls that pane **Patches**. Synth-specific UI controls use **Synth**/**Synths** without the FM qualifier (`+ Synth`, `+ Import Synths`, and `Edit Synth...`). The implementation still uses `FmSynthDefinition`, `SongObjectKind.FmSynth` and the same v1 persistence representation; this is a presentation-only rename.
 

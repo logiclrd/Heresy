@@ -32,6 +32,7 @@ using Heresy.Render.Realtime;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Exporting;
+using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.ViewModels;
 using Heresy.UserInterface.Views;
@@ -167,6 +168,8 @@ public sealed class MainWindow : Window
 	private bool _closePromptInProgress;
 	private CancellationTokenSource? _exportCancellation;
 	private bool _renderAudioPending;
+	private bool _renamePromptInProgress;
+	private TextPromptDialog? _activeRenamePrompt;
 
 	public MainWindow()
 		: this(new DocumentWorkspace(), null, null) { }
@@ -363,6 +366,7 @@ public sealed class MainWindow : Window
 		int columnSpan)
 	{
 		TreeView tree = new();
+		tree.KeyDown += (_, e) => OnTreeRenameKeyDown(tree, e);
 		_trees.Add(section, tree);
 		tree.SelectionChanged += (_, _) =>
 		{
@@ -1680,15 +1684,29 @@ public sealed class MainWindow : Window
 
 	private async Task RenameSelectedAsync()
 	{
-		SongTreeItemViewModel? selected = _selectedItem;
-		if (selected is null)
+		if (_renamePromptInProgress)
 			return;
+		SongTreeItemViewModel? selected = _selectedItem;
+		if (selected is null || !CanRenameTreeItem(selected))
+			return;
+		_renamePromptInProgress = true;
+		try
+		{
+			await RenameSelectedCoreAsync(selected);
+		}
+		finally
+		{
+			_renamePromptInProgress = false;
+		}
+	}
+
+	private async Task RenameSelectedCoreAsync(SongTreeItemViewModel selected)
+	{
 
 		if (selected.Node is SongTreeFolder folder)
 		{
-			TextPromptDialog dialog =
-				new("Rename folder", "Folder name:", folder.Name);
-			string? name = await dialog.ShowDialog<string?>(this);
+			string? name = await PromptRenameAsync(
+				"Rename folder", "Folder name:", folder.Name);
 			if (name is null)
 				return;
 
@@ -1704,15 +1722,53 @@ public sealed class MainWindow : Window
 			return;
 		}
 
-		TextPromptDialog objectDialog =
-			new("Rename object", "Object name:", selected.DisplayName);
-		string? objectName = await objectDialog.ShowDialog<string?>(this);
+		string? objectName = await PromptRenameAsync(
+			"Rename object", "Object name:", selected.DisplayName);
 		if (objectName is null)
 			return;
 
 		SongTreeEditor.RenameObject(_workspace.Document, objectId, objectName);
 		RefreshDocumentView($"Renamed object to {objectName.Trim()}", selected.Node);
 	}
+
+	/// <summary>F2 applies only to the focused song-tree list, using
+	/// the same rename dialog as its context menu. Do not catch F2 at
+	/// window level: a TextBox or Pattern editor might own keyboard focus.
+	/// </summary>
+	private async Task<string?> PromptRenameAsync(
+		string title, string label, string currentName)
+	{
+		TextPromptDialog dialog = new(title, label, currentName);
+		_activeRenamePrompt = dialog;
+		try
+		{
+			return await dialog.ShowDialog<string?>(this);
+		}
+		finally
+		{
+			if (ReferenceEquals(_activeRenamePrompt, dialog))
+				_activeRenamePrompt = null;
+		}
+	}
+
+	private void OnTreeRenameKeyDown(TreeView tree, KeyEventArgs e)
+	{
+		if (!RenameKeyboardShortcut.IsRequested(
+			e.Key, e.KeyModifiers, e.Handled))
+			return;
+		if (tree.SelectedItem is not TreeViewItem selectedControl
+			|| selectedControl.Tag is not SongTreeItemViewModel selected
+			|| !CanRenameTreeItem(selected)
+			|| !ReferenceEquals(_selectedTree, tree)
+			|| !ReferenceEquals(_selectedItem, selected))
+			return;
+
+		e.Handled = true;
+		_ = RenameSelectedAsync();
+	}
+
+	private static bool CanRenameTreeItem(SongTreeItemViewModel item)
+		=> item.IsFolder || !item.IsMissingReference;
 
 	private async Task DeleteSelectedAsync()
 	{
@@ -2010,7 +2066,7 @@ public sealed class MainWindow : Window
 			new()
 			{
 				Header = "Rename...",
-				IsEnabled = item.IsFolder || !item.IsMissingReference,
+				IsEnabled = CanRenameTreeItem(item),
 			};
 		rename.Click += async (_, _) =>
 		{
