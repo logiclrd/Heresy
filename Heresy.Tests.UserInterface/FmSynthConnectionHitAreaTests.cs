@@ -26,7 +26,7 @@ public sealed class FmSynthConnectionHitAreaTests
             BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owner)!;
 
     [AvaloniaTest]
-    public void ThreePixelBufferAroundWireSelectsWithoutInsertingOrPanning()
+    public void FourDipBufferAroundWireSelectsWithoutInsertingOrPanning()
     {
         DocumentWorkspace work = new();
         FmSynthDefinition synth =
@@ -52,9 +52,10 @@ public sealed class FmSynthConnectionHitAreaTests
                     .GetMethod("GetRenderedConnections",
                         BindingFlags.Instance | BindingFlags.NonPublic)!
                     .Invoke(canvas, null)!).Single();
-            // Pick a long, unobstructed segment, then click 3.5 DIPs
-            // away from its centerline: outside the former 3-pixel hit
-            // radius, inside the visible 1-DIP half-stroke + 3px buffer.
+            // Pick a long, unobstructed segment, then click 4.5 DIPs
+            // from its centerline: outside the previous 1-DIP half-stroke
+            // + 3-physical-pixel buffer at 100% display scaling, but inside
+            // the new 1-DIP half-stroke + 4-DIP buffer at any scaling.
             (FmSynthRoutePoint a, FmSynthRoutePoint b) = wire.Route
                 .Zip(wire.Route.Skip(1), (a, b) => (a, b))
                 .OrderByDescending(pair => Math.Pow(pair.b.X - pair.a.X, 2)
@@ -64,8 +65,8 @@ public sealed class FmSynthConnectionHitAreaTests
             double length = Math.Sqrt(dx * dx + dy * dy);
             Assert.That(length, Is.GreaterThan(60.0));
             FmSynthRoutePoint offLine = new(
-                (a.X + b.X) / 2.0 - dy / length * 3.5,
-                (a.Y + b.Y) / 2.0 + dx / length * 3.5);
+                (a.X + b.X) / 2.0 - dy / length * 4.5,
+                (a.Y + b.Y) / 2.0 + dx / length * 4.5);
             Point click = graph.TranslatePoint(
                 new Point(offLine.X, offLine.Y), window)!.Value;
             uint document = work.Document.DocumentRevision;
