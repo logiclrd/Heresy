@@ -3927,6 +3927,71 @@ public sealed class PatternEditorControl : UserControl
 			Heresy.Core.Objects.ObjectId.None);
 	}
 
+	/// <summary>Use the source's own translucent ARGB tint for the full
+	/// dropdown row, then inset the object's *type* background behind its
+	/// actual name. The same template paints the toolbar ComboBox's closed
+	/// selected value; neither dimension adds vertical row padding.</summary>
+	private IDataTemplate PatternSourceItemTemplate()
+		=> new FuncDataTemplate<PatternSourceOption>((choice, _) =>
+			choice is null ? null : BuildSourceOptionVisual(choice));
+
+	private Control BuildSourceOptionVisual(PatternSourceOption choice)
+	{
+		Color? typeColour = null;
+		IBrush rowTint = Brushes.Transparent;
+		if (_workspace.Document.TryGet(
+			choice.Id, out SongObject? songObject) && songObject is not null)
+		{
+			typeColour = SongObjectTypePalette.ForObject(songObject);
+			if (songObject.SourceColourArgb is uint tint)
+				rowTint = TintBrush(tint);
+		}
+		Control name = SongObjectTypeNameLabel.Create(
+			choice.Name, typeColour, compact: true);
+		ToolTip.SetTip(name, choice.DisplayName);
+		return new Border
+		{
+			Background = rowTint,
+			Padding = new Thickness(2, 0),
+			HorizontalAlignment = HorizontalAlignment.Stretch,
+			Child = name,
+		};
+	}
+
+	/// <summary>Separate factory allows the popup and its row-size/colour
+	/// contract to be tested without opening a transient OS popup.</summary>
+	private ListBox BuildSourcePopupList(PatternSourceOption[] options)
+		=> new()
+		{
+			ItemsSource = options,
+			ItemTemplate = PatternSourceItemTemplate(),
+			HorizontalContentAlignment = HorizontalAlignment.Stretch,
+			Width = 300,
+			MaxHeight = 320,
+		};
+
+	/// <summary>Refresh only the Source label, leaving the row's existing
+	/// independent source-tint grid, cursor borders and height unchanged.
+	/// Only a resolvable explicit Source receives an object-type inset.</summary>
+	private void UpdateSourceNameBadge(
+		Border badge, TextBlock label, ObjectId sourceId, string fallback)
+	{
+		if (!sourceId.IsNone
+			&& _workspace.Document.TryGet(
+				sourceId, out SongObject? songObject)
+			&& songObject is not null
+			&& SongObjectTypePalette.ForObject(songObject) is Color typeColour)
+		{
+			label.Text = songObject.Name;
+			label.Foreground = Brushes.Black;
+			badge.Background = new SolidColorBrush(typeColour);
+			return;
+		}
+		label.Text = fallback;
+		label.Foreground = null;
+		badge.Background = Brushes.Transparent;
+	}
+
 	private void OpenSourcePopup(
 		int row,
 		int channel,
