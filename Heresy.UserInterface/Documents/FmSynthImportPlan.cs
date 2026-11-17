@@ -126,6 +126,9 @@ public sealed class FmSynthImportPlan
     private readonly HashSet<FmImportGraphInputKey> _disconnectedInputs = [];
     private readonly Dictionary<FmImportObjectKey, FmImportMapping> _definitionMappings = [];
     private readonly Dictionary<FmImportReferenceKey, FmImportMapping> _useOverrides = [];
+    // Clearing a per-use override is still a manual action. An inherited
+    // automatic match must never reacquire orange provenance until Reset.
+    private readonly HashSet<FmImportReferenceKey> _manuallyTouchedUses = [];
     private readonly Dictionary<FmImportObjectKey, FmImportProposedName> _names = [];
     private readonly FmImportExistingName[] _existingNames;
 
@@ -217,8 +220,13 @@ public sealed class FmSynthImportPlan
         FmImportObjectReference reference = RequireReference(use);
         if (_useOverrides.TryGetValue(use, out FmImportMapping? overridden))
             return overridden;
-        return reference.Target is FmImportObjectKey target && _objects.ContainsKey(target)
-            ? GetDefinitionMapping(target) : FmImportMapping.Unassigned;
+        FmImportMapping inherited =
+            reference.Target is FmImportObjectKey target && _objects.ContainsKey(target)
+                ? GetDefinitionMapping(target) : FmImportMapping.Unassigned;
+        return _manuallyTouchedUses.Contains(use)
+            && inherited.Provenance == FmImportMappingProvenance.AutomaticExactMatch
+            ? inherited with { Provenance = FmImportMappingProvenance.Manual }
+            : inherited;
     }
 
     public bool HasReferenceOverride(FmImportReferenceKey use)
@@ -264,6 +272,7 @@ public sealed class FmSynthImportPlan
     {
         RequireReference(use);
         _useOverrides[use] = Manual(kind, existingId);
+        _manuallyTouchedUses.Add(use);
         RehomeCanonicalOwners();
     }
 
@@ -271,6 +280,7 @@ public sealed class FmSynthImportPlan
     {
         RequireReference(use);
         _useOverrides.Remove(use);
+        _manuallyTouchedUses.Add(use);
         RehomeCanonicalOwners();
     }
 
@@ -350,6 +360,7 @@ public sealed class FmSynthImportPlan
     {
         _definitionMappings.Clear();
         _useOverrides.Clear();
+        _manuallyTouchedUses.Clear();
         _disconnectedInputs.Clear();
         _excludedNodes.Clear();
         _preservedNodes.Clear();
