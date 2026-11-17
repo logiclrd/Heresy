@@ -166,8 +166,12 @@ public sealed class FmSynthImportEffectivePlanTests
         Assert.That(uses, Has.Length.EqualTo(2));
         Assert.That(plan.Effective.CopiedObjectCount, Is.EqualTo(3));
         plan.SetReferenceOverride(uses[0], FmImportMappingKind.None);
+        Assert.That(plan.Effective.ReferenceByUse[uses[0]].IsActive, Is.False);
+        Assert.That(plan.Effective.ReferenceByUse[uses[0]].InactiveReason,
+            Does.Contain("disconnected"));
         Assert.That(plan.Effective.ObjectByKey[childKey].IsCopied, Is.True);
         plan.SetReferenceOverride(uses[1], FmImportMappingKind.None);
+        Assert.That(plan.Effective.ReferenceByUse[uses[1]].IsActive, Is.False);
         Assert.That(plan.Effective.ObjectByKey[childKey].IsCopied, Is.False);
         Assert.That(plan.Effective.CopiedObjectCount, Is.EqualTo(2));
         plan.ClearReferenceOverride(uses[1]);
