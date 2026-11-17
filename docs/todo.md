@@ -107,6 +107,14 @@ Do not reintroduce completed-task checklists here.
   | Sequence | `#FFFFC0` |
   | Scripted Sequence | `#FFFF40` |
 
+  **Implementation progress:** draft PR #31 establishes the shared exact
+  object-type palette (including scripted variants and Filter stage
+  interpolation) and applies it to object-name backgrounds in the six main
+  document trees. The remainder of this TODO is **still open**: Filter
+  Source node/name and dropdown, Instrument Source dropdown in both
+  expanded and closed states, and the independent two-layer Pattern
+  Source row/name colours with unchanged row heights.
+
   In the **Filter graph editor**, show the appropriate type colour in
   the Source node's source-selection drop-down, and display the **actual
   referenced source name** on the Source node, with the name's background
