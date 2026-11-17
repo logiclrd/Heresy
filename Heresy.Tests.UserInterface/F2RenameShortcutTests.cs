@@ -9,6 +9,7 @@ using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 
+using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.UserInterface;
 using Heresy.UserInterface.Dialogs;
