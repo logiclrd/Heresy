@@ -112,9 +112,13 @@ Do not reintroduce completed-task checklists here.
   A fourth slice adds conservative Node/Script Envelope and Filter exact
   equivalence, captured automatic reuse defaults and one-way manual
   provenance, with reset support and identity/history regression tests.
-  Cross-filter stage translation and per-instance override checks, target
-  type/Stage-A and Stage-B validation, TreeDataGrid, Sample assets and
-  atomic commit remain open.
+  A fifth slice adds snapshotted local-target category/type checks and
+  interactive Stage-A structural diagnostics: required/optional references,
+  Operator operand retention, copied dependency cycles, Filter-instance
+  override compatibility, and available Sample PCM/encoding metadata.
+  Full cross-filter translation, Stage-B destination-wide validation,
+  encoded asset preflight, destination ID/transaction handling,
+  TreeDataGrid and atomic commit remain open.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
