@@ -28,8 +28,8 @@ public readonly record struct FmSynthWaypointHit(
 /// <summary>
 /// Framework-neutral graph hit testing and persistent waypoint ordering.
 /// Coordinates are Avalonia DIPs. Wire hits include the visible pen's
-/// half-width PLUS a buffer measured in DIPs; waypoint hits use a
-/// circular physical-pixel radius that follows render scaling.
+/// half-width PLUS a buffer measured in DIPs; waypoint hits are circular
+/// and extend three DIPs outside the rendered waypoint's outlined edge.
 /// </summary>
 public static class FmSynthWaypointGeometry
 {
@@ -39,8 +39,18 @@ public static class FmSynthWaypointGeometry
 	public const double WireBufferDips = 4.0;
 	public const double WireStrokeWidthDips = 2.0;
 	public const double SelectedWireStrokeWidthDips = 3.0;
-	/// <summary>Radius around each waypoint's center, in physical pixels.</summary>
-	public const double HandleTolerancePixels = 8.0;
+	/// <summary>Radius of the visible gold waypoint disc in DIPs;
+	/// shared with the canvas renderer to prevent hit/paint divergence.</summary>
+	public const double WaypointRadiusDips = 4.5;
+	/// <summary>Width of the black outline, centered on the disc's radius.</summary>
+	public const double WaypointOutlineWidthDips = 1.5;
+	/// <summary>Additional reach beyond the rendered outline's outer edge.</summary>
+	public const double WaypointBufferDips = 3.0;
+	/// <summary>Complete waypoint hit radius, in DIPs:
+	/// 4.5 + 1.5/2 + 3 = 8.25 DIPs from the waypoint center.</summary>
+	public const double WaypointHitRadiusDips =
+		WaypointRadiusDips + WaypointOutlineWidthDips / 2.0
+		+ WaypointBufferDips;
 
 	public static FmSynthConnectionLineHit? HitConnection(
 		IEnumerable<FmSynthRenderedConnection> connections,
@@ -51,8 +61,8 @@ public static class FmSynthWaypointGeometry
 		ArgumentNullException.ThrowIfNull(connections);
 		ValidateScaling(renderScaling);
 
-		// The stroke and the extra buffer are both in Avalonia DIPs;
-		// only the separate waypoint circle remains in physical pixels.
+		// Both wire and waypoint radii use Avalonia DIPs, matching
+		// their actual rendered geometry regardless of display scaling.
 		// The centerline radius includes half the rendered stroke width
 		// plus four DIPs on either side.
 		FmSynthConnectionLineHit? best = null;
@@ -110,8 +120,9 @@ public static class FmSynthWaypointGeometry
 		ArgumentNullException.ThrowIfNull(connections);
 		ValidateScaling(renderScaling);
 
-		double bestSquared =
-			Math.Pow(HandleTolerancePixels / renderScaling, 2);
+		// Match the gold disc plus its centered outline, with exactly
+		// three DIPs of extra pointer reach outside the visible edge.
+		double bestSquared = WaypointHitRadiusDips * WaypointHitRadiusDips;
 		FmSynthWaypointHit? best = null;
 		foreach (FmSynthRenderedConnection connection in connections)
 		{

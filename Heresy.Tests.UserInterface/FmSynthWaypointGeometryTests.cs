@@ -78,27 +78,41 @@ public sealed class FmSynthWaypointGeometryTests
 	}
 
 	[Test]
-	public void WaypointHasCircularEightPhysicalPixelHitZoneAndStablePriority()
+	public void WaypointHitExtendsThreeDipsOutsideRenderedOutlineAtEveryScale()
 	{
 		FmSynthRenderedConnection horizontal = new(
 			Connection,
 			[new FmSynthRoutePoint(10, 60),
 			 new FmSynthRoutePoint(120, 60)],
 			[new FmSynthRoutePoint(50, 60)]);
-		FmSynthWaypointGeometry.HandleTolerancePixels.Should().Be(8.0);
-		Hit(58, 60, 1).Should().NotBeNull();
-		Hit(58.01, 60, 1).Should().BeNull();
-		// Use strictly interior/exterior diagonal points: decimal
-		// coordinates nominally exactly on the circle can round across
-		// the boundary in floating point. Axis-aligned radius=8 above
-		// verifies that the exact boundary itself is included.
-		Hit(54.79, 66.39, 1).Should().NotBeNull();
-		Hit(54.81, 66.41, 1).Should().BeNull();
-		Hit(54, 60, 2).Should().NotBeNull();
-		Hit(54.01, 60, 2).Should().BeNull();
-		Hit(60, 60, .75).Should().NotBeNull();
-		Hit(61, 60, .75).Should().BeNull();
-		Hit(50, 70, 1).Should().BeNull();
+
+		FmSynthWaypointGeometry.WaypointRadiusDips.Should().Be(4.5);
+		FmSynthWaypointGeometry.WaypointOutlineWidthDips.Should().Be(1.5);
+		FmSynthWaypointGeometry.WaypointBufferDips.Should().Be(3.0);
+		FmSynthWaypointGeometry.WaypointHitRadiusDips.Should().Be(8.25);
+
+		// DrawEllipse's 1.5-DIP outline straddles the 4.5-DIP radius,
+		// so the visible edge is 5.25 DIPs. The hit radius is 8.25 DIPs.
+		// At 150% scaling this is 12.375 physical pixels from center,
+		// including 4.5 physical pixels beyond the rendered edge.
+		foreach (double scaling in new[] { 0.75, 1.0, 1.5, 2.0 })
+		{
+			Hit(58.25, 60, scaling).Should().NotBeNull();
+			Hit(58.26, 60, scaling).Should().BeNull();
+			Hit(41.75, 60, scaling).Should().NotBeNull();
+			Hit(41.74, 60, scaling).Should().BeNull();
+			Hit(50, 68.25, scaling).Should().NotBeNull();
+			Hit(50, 68.26, scaling).Should().BeNull();
+			Hit(50, 51.75, scaling).Should().NotBeNull();
+			Hit(50, 51.74, scaling).Should().BeNull();
+
+			// Euclidean circle, not an axis-aligned rectangular region.
+			Hit(55, 66.5, scaling).Should().NotBeNull();
+			Hit(55.1, 66.6, scaling).Should().BeNull();
+		}
+		// 8.2 DIPs is beyond the previous 8-physical-pixel radius at
+		// 100%, but is now correctly selectable regardless of DPI.
+		Hit(58.2, 60, 1).Should().NotBeNull();
 		Hit(55, 60, 1)!.Value.Connection.Should().Be(Connection);
 
 		FmSynthWaypointHit? Hit(double x, double y, double scaling)

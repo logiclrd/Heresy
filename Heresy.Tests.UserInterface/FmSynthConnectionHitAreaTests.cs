@@ -169,7 +169,7 @@ public sealed class FmSynthConnectionHitAreaTests
     }
 
     [AvaloniaTest]
-    public void EightPixelCircleAroundWaypointSelectsAndDragsItsExistingNode()
+    public void ThreeDipBeyondWaypointOutlineSelectsAndDragsItsExistingNode()
     {
         DocumentWorkspace work = new();
         FmSynthDefinition synth =
@@ -192,9 +192,10 @@ public sealed class FmSynthConnectionHitAreaTests
         {
             window.UpdateLayout();
             Canvas graph = Field<Canvas>(canvas, "_canvas");
-            // Distance 7.5 from waypoint center: outside the 4.5-DIP
-            // visible gold disc, but inside the new eight-pixel circle.
-            FmSynthRoutePoint near = new(waypoint.X + 6, waypoint.Y + 4.5);
+            // Distance sqrt(6²+5.5²) = 8.14 DIPs from the center:
+            // beyond the previous eight-physical-pixel radius at 100%,
+            // but within 4.5-DIP fill + 0.75-DIP stroke + 3-DIP buffer.
+            FmSynthRoutePoint near = new(waypoint.X + 6, waypoint.Y + 5.5);
             Point start = graph.TranslatePoint(
                 new Point(near.X, near.Y), window)!.Value;
             Point end = start + new Vector(22, 11);

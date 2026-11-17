@@ -485,10 +485,11 @@ public sealed class FmSynthGraphCanvas : UserControl
 			{
 				context.DrawEllipse(
 					Brushes.Gold,
-					new Pen(Brushes.Black, 1.5),
+					new Pen(Brushes.Black,
+						FmSynthWaypointGeometry.WaypointOutlineWidthDips),
 					new Point(waypoint.X, waypoint.Y),
-					4.5,
-					4.5);
+					FmSynthWaypointGeometry.WaypointRadiusDips,
+					FmSynthWaypointGeometry.WaypointRadiusDips);
 			}
 		}
 	}
