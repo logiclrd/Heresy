@@ -185,9 +185,12 @@ internal static class FmSynthImportEffectivePlanner
 
         void VisitReference(FmImportObjectReference reference)
         {
-            if (!liveReferences.Add(reference.Use))
-                return;
             FmImportMapping mapping = plan.GetReferenceMapping(reference.Use);
+            // A disconnected/unassigned use is not live merely because its
+            // owning node is still present.
+            if (mapping.Kind == FmImportMappingKind.None
+                || !liveReferences.Add(reference.Use))
+                return;
             if (reference.Target is not FmImportObjectKey target
                 || !objects.ContainsKey(target)
                 || mapping.Kind == FmImportMappingKind.None)
@@ -304,7 +307,9 @@ internal static class FmSynthImportEffectivePlanner
             FmImportMapping mapping = plan.GetReferenceMapping(reference.Use);
             return new FmImportEffectiveReference(reference.Use, reference.Target,
                 mapping, active,
-                active ? null : "Owner node or object is not included in the import.");
+                active ? null : mapping.Kind == FmImportMappingKind.None
+                    ? "Reference unassigned or explicitly disconnected."
+                    : "Owner node or object is not included in the import.");
         }).ToArray();
 
         return new FmImportEffectiveGraph(
