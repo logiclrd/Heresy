@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 
 namespace Heresy.UserInterface.Documents;
@@ -131,15 +132,39 @@ public sealed class FmSynthImportPlan
     private readonly HashSet<FmImportReferenceKey> _manuallyTouchedUses = [];
     private readonly Dictionary<FmImportObjectKey, FmImportProposedName> _names = [];
     private readonly FmImportExistingName[] _existingNames;
+    private readonly Dictionary<ObjectId, FmImportFilterPortSchema> _destinationFilterPorts = [];
 
     public IReadOnlyList<FmImportObjectKey> SelectedRoots => _selectedRoots.AsReadOnly();
 
+    /// <summary>Authoritative recalculated projection, not a validation
+    /// judgment or a mutation of either song.</summary>
+    public FmImportEffectiveGraph Effective { get; private set; } = null!;
+
+    internal IReadOnlyDictionary<FmImportObjectKey, FmImportDiscoveredObject> DiscoveredObjects => _objects;
+    internal IReadOnlyDictionary<FmImportReferenceKey, FmImportObjectReference> DiscoveredReferences => _references;
+    internal IReadOnlyDictionary<FmImportGraphInputKey, FmImportGraphConnection> DiscoveredConnections => _connections;
+    internal IEnumerable<FmImportDiscoveredSynthGraph> DiscoveredSynthGraphs => _nodes.Values.Distinct();
+    internal IReadOnlyCollection<FmImportNodeKey> DiscoveredNodes => _nodes.Keys;
+    internal IReadOnlyCollection<FmImportNodeKey> PreservedDisconnectedNodes => _preservedNodes;
+    internal IReadOnlyDictionary<ObjectId, FmImportFilterPortSchema> DestinationFilterPorts => _destinationFilterPorts;
+    internal bool IsNodeExcluded(FmImportNodeKey key) => _excludedNodes.Contains(key);
+    internal bool IsInputDisconnected(FmImportGraphInputKey key) => _disconnectedInputs.Contains(key);
+
+
     public FmSynthImportPlan(
         IEnumerable<FmImportDiscoveredGraph> sources,
-        IEnumerable<FmImportExistingName>? existingNames = null)
+        IEnumerable<FmImportExistingName>? existingNames = null,
+        IEnumerable<FilterDefinition>? destinationFilters = null)
     {
         ArgumentNullException.ThrowIfNull(sources);
         _existingNames = existingNames?.ToArray() ?? [];
+        if (destinationFilters is not null)
+            foreach (FilterDefinition filter in destinationFilters)
+            {
+                FmImportFilterPortSchema captured = FmImportFilterPortSchema.Capture(filter);
+                if (!_destinationFilterPorts.TryAdd(captured.DefinitionId, captured))
+                    throw new ArgumentException("Duplicate destination Filter ID.", nameof(destinationFilters));
+            }
         HashSet<string> documentIdentities = new(StringComparer.Ordinal);
         foreach (FmImportDiscoveredGraph source in sources)
         {
@@ -206,7 +231,7 @@ public sealed class FmSynthImportPlan
                 throw new ArgumentException("Selected root is not a discovered Synth.", nameof(sources));
         }
         RefreshNames();
-        RehomeCanonicalOwners();
+        RefreshEffective();
     }
 
     public FmImportMapping GetDefinitionMapping(FmImportObjectKey key)
@@ -246,7 +271,7 @@ public sealed class FmSynthImportPlan
                 "An explicitly selected Synth always requires a fresh copy.");
         _definitionMappings[key] = Manual(kind, existingId);
         RefreshNames();
-        RehomeCanonicalOwners();
+        RefreshEffective();
     }
 
     /// <summary>Called only after a later strict-equivalence engine has
@@ -263,7 +288,7 @@ public sealed class FmSynthImportPlan
         _definitionMappings[key] = new(FmImportMappingKind.ReuseExisting,
             existingId, FmImportMappingProvenance.AutomaticExactMatch);
         RefreshNames();
-        RehomeCanonicalOwners();
+        RefreshEffective();
         return true;
     }
 
@@ -273,7 +298,7 @@ public sealed class FmSynthImportPlan
         RequireReference(use);
         _useOverrides[use] = Manual(kind, existingId);
         _manuallyTouchedUses.Add(use);
-        RehomeCanonicalOwners();
+        RefreshEffective();
     }
 
     public void ClearReferenceOverride(FmImportReferenceKey use)
@@ -281,7 +306,7 @@ public sealed class FmSynthImportPlan
         RequireReference(use);
         _useOverrides.Remove(use);
         _manuallyTouchedUses.Add(use);
-        RehomeCanonicalOwners();
+        RefreshEffective();
     }
 
     /// <summary>Suppress an authored active input use. Inactive stale Filter
@@ -296,7 +321,7 @@ public sealed class FmSynthImportPlan
             _disconnectedInputs.Remove(input);
         else
             _disconnectedInputs.Add(input);
-        RehomeCanonicalOwners();
+        RefreshEffective();
     }
 
     public void SetNodeExcluded(FmImportNodeKey node, bool excluded)
@@ -308,7 +333,7 @@ public sealed class FmSynthImportPlan
             _excludedNodes.Add(node);
         else
             _excludedNodes.Remove(node);
-        RehomeCanonicalOwners();
+        RefreshEffective();
     }
 
     public void SetPreserveDisconnectedNode(FmImportNodeKey node, bool preserve)
@@ -318,7 +343,7 @@ public sealed class FmSynthImportPlan
             _preservedNodes.Add(node);
         else
             _preservedNodes.Remove(node);
-        RehomeCanonicalOwners();
+        RefreshEffective();
     }
 
     public FmImportProposedName GetProposedName(FmImportObjectKey key)
@@ -367,7 +392,7 @@ public sealed class FmSynthImportPlan
         _names.Clear();
         _canonical.Clear();
         RefreshNames();
-        RehomeCanonicalOwners();
+        RefreshEffective();
     }
 
     private static FmImportMapping Manual(FmImportMappingKind kind, ObjectId? id)
@@ -405,43 +430,33 @@ public sealed class FmSynthImportPlan
     private bool IsActive(FmImportOccurrenceKey key) => key.Kind switch
     {
         FmImportOccurrenceKind.ObjectRoot =>
-            _rootSet.Contains(key.Entity.Object!.Value),
+            _rootSet.Contains(key.Entity.Object!.Value)
+            && Effective.ObjectByKey[key.Entity.Object.Value].IsCopied,
         FmImportOccurrenceKind.NodeRoot =>
-            !_excludedNodes.Contains(key.Entity.Node!.Value)
+            Effective.NodeByKey.TryGetValue(key.Entity.Node!.Value, out FmImportEffectiveNode? node)
+            && node.IsIncluded
             && (_outputNodes.Contains(key.Entity.Node.Value)
                 || _originalNodeRoots.Contains(key.Entity.Node.Value)
                 || _preservedNodes.Contains(key.Entity.Node.Value)),
         FmImportOccurrenceKind.ObjectReference =>
-            ObjectReferenceActive(key),
+            Effective.ReferenceByUse.TryGetValue(key.Reference!.Value,
+                out FmImportEffectiveReference? reference)
+            && reference.IsActive
+            && reference.OriginalTarget == key.Entity.Object
+            && reference.Mapping.Kind != FmImportMappingKind.None
+            && (!HasReferenceOverride(key.Reference.Value)
+                || reference.Mapping.Kind == FmImportMappingKind.ImportCopy),
         FmImportOccurrenceKind.GraphInput =>
-            GraphInputActive(key),
+            Effective.ConnectionByKey.TryGetValue(key.GraphInput!.Value,
+                out FmImportEffectiveConnection? connection)
+            && connection.IsActive,
         _ => false,
     };
 
-    private bool ObjectReferenceActive(FmImportOccurrenceKey occurrence)
+    private void RefreshEffective()
     {
-        FmImportReferenceKey use = occurrence.Reference!.Value;
-        FmImportObjectReference reference = _references[use];
-        if (reference.Target != occurrence.Entity.Object)
-            return false;
-        if (use.NodeId is int id
-            && _excludedNodes.Contains(new FmImportNodeKey(use.Owner, id)))
-            return false;
-        FmImportMapping choice = GetReferenceMapping(use);
-        // Definition-level reuse still has a live use of that *definition*;
-        // a per-use remap to another local target does not.
-        return choice.Kind != FmImportMappingKind.None
-            && (!_useOverrides.ContainsKey(use)
-                || choice.Kind == FmImportMappingKind.ImportCopy);
-    }
-
-    private bool GraphInputActive(FmImportOccurrenceKey occurrence)
-    {
-        FmImportGraphInputKey input = occurrence.GraphInput!.Value;
-        FmImportGraphConnection edge = _connections[input];
-        return edge.IsActive && !_disconnectedInputs.Contains(input)
-            && !_excludedNodes.Contains(input.Source)
-            && !_excludedNodes.Contains(input.Consumer);
+        Effective = FmSynthImportEffectivePlanner.Calculate(this);
+        RehomeCanonicalOwners();
     }
 
     private void RehomeCanonicalOwners()
