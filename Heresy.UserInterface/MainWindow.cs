@@ -34,6 +34,7 @@ using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Exporting;
 using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.PatternEditing;
+using Heresy.UserInterface.Styling;
 using Heresy.UserInterface.ViewModels;
 using Heresy.UserInterface.Views;
 
@@ -1992,10 +1993,29 @@ public sealed class MainWindow : Window
 					: FontStyle.Normal,
 			};
 
+		// The type-coloured inset belongs to the *name*, not the tree row:
+		// preserve row selection/drag affordances and uncoloured folders.
+		// Missing references retain their warning presentation.
+		Control headerContent = header;
+		if (!item.IsFolder && !item.IsMissingReference
+			&& item.ObjectId is ObjectId objectId
+			&& _workspace.Document.TryGet(objectId, out SongObject? songObject)
+			&& SongObjectTypePalette.ForObject(songObject) is Color typeColour)
+		{
+			header.Foreground = Brushes.Black;
+			headerContent = new Border
+			{
+				Background = new SolidColorBrush(typeColour),
+				Padding = new Thickness(3, 1),
+				CornerRadius = new CornerRadius(2),
+				Child = header,
+			};
+		}
+
 		TreeViewItem result =
 			new()
 			{
-				Header = header,
+				Header = headerContent,
 				IsExpanded = item.IsFolder,
 				Tag = item,
 			};
