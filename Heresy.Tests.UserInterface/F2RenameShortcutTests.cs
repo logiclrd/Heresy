@@ -111,11 +111,14 @@ public sealed class F2RenameShortcutTests
 	[AvaloniaTest]
 	public async Task TreeF2ReusesContextRenameDialogWithoutInterceptingModifiedKeys()
 	{
-		DocumentWorkspace work = new();
+		MainWindow window = new();
+		DocumentWorkspace work =
+			Field<DocumentWorkspace>(window, "_workspace");
 		SongTreeFolder folder = SongTreeEditor.CreateFolder(
 			work.Document, work.Document.GetSectionRoot(SongTreeSection.Patterns),
 			"Drums");
-		MainWindow window = new(work);
+		typeof(MainWindow).GetMethod("RefreshDocumentView", PrivateInstance)!
+			.Invoke(window, new object?[] { "Prepared folder", folder });
 		window.Show();
 		try
 		{
