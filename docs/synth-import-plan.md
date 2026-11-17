@@ -1,6 +1,6 @@
 # Synth import planning and dependency resolution
 
-**Status:** Approved design; **not yet implemented**.  
+**Status:** Approved design; implementation underway in bounded slices. The first draft slice (PR #34) supplies read-only graph/dependency discovery but does **not** yet replace the Import Synths UI or perform an import.  
 **Scope:** The existing **Import Synths** workflow, including importing Synths back into their own saved song. Independent of the later **Duplicate Object** action for every object list.  
 **Design recorded:** 12 November 2026.  
 **Priority:** Park this while PR #12 (live Synth parameter audition) continues.
