@@ -136,12 +136,27 @@ public sealed class FmSynthImportPlan
     private readonly Dictionary<FmImportObjectKey, FmImportProposedName> _names = [];
     private readonly FmImportExistingName[] _existingNames;
     private readonly Dictionary<ObjectId, FmImportFilterPortSchema> _destinationFilterPorts = [];
+    private FmImportStageAContext? _stageAContext;
 
     public IReadOnlyList<FmImportObjectKey> SelectedRoots => _selectedRoots.AsReadOnly();
 
     /// <summary>Authoritative recalculated projection, not a validation
     /// judgment or a mutation of either song.</summary>
     public FmImportEffectiveGraph Effective { get; private set; } = null!;
+
+    /// <summary>Available for normal plans constructed from the actual source
+    /// and destination documents. Discovery-only plans have no Stage-A source
+    /// or destination snapshots and must not claim validity.</summary>
+    public FmImportStageAResult? StageA { get; private set; }
+
+    internal void AttachStageAContext(FmImportStageAContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (_stageAContext is not null)
+            throw new InvalidOperationException("Stage-A context is already attached.");
+        _stageAContext = context;
+        StageA = FmSynthImportStageAValidator.Validate(this, context);
+    }
 
     internal IReadOnlyDictionary<FmImportObjectKey, FmImportDiscoveredObject> DiscoveredObjects => _objects;
     internal IReadOnlyDictionary<FmImportReferenceKey, FmImportObjectReference> DiscoveredReferences => _references;
@@ -395,6 +410,8 @@ public sealed class FmSynthImportPlan
         // running user input through the collision-avoidance heuristic.
         _names[key] = new(name, true);
         RefreshNames();
+        if (_stageAContext is not null)
+            StageA = FmSynthImportStageAValidator.Validate(this, _stageAContext);
     }
 
     public void AcceptProposedName(FmImportObjectKey key)
@@ -493,6 +510,8 @@ public sealed class FmSynthImportPlan
     {
         Effective = FmSynthImportEffectivePlanner.Calculate(this);
         RehomeCanonicalOwners();
+        if (_stageAContext is not null)
+            StageA = FmSynthImportStageAValidator.Validate(this, _stageAContext);
     }
 
     private void RehomeCanonicalOwners()
