@@ -499,7 +499,8 @@ scrollable area with an automatic scrollbar (hidden when there is no overflow).
 The scrollable region always measures an extra bottom gutter for the scrollbar,
 including when it is hidden, so narrow windows do not cover the lower halves
 of inputs and resizing does not change the header height.
-Double-clicking the displayed Pattern name overlays an editable text field
+Double-clicking the displayed Pattern name **or pressing unmodified F2
+while a tracker grid cell is focused** overlays the existing editable text field
 containing its current name. Losing focus or pressing Enter commits a nonblank
 rename through `SongTreeEditor.RenameObject` (synchronizing all document-tree
 placements without an audio revision); Esc cancels and restores the label.
