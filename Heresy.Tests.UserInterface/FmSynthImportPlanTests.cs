@@ -147,8 +147,8 @@ public sealed class FmSynthImportPlanTests
         Assert.Throws<InvalidOperationException>(() =>
             plan.SetDefinitionMapping(left, FmImportMappingKind.ReuseExisting, first.Id));
         Assert.That(plan.RecommendExactReuse(left, first.Id), Is.False);
-        plan.SetProposedName(left, "Trumpet");
         plan.AcceptProposedName(right);
+        plan.SetProposedName(left, "Trumpet");
         Assert.That(plan.GetProposedName(left),
             Is.EqualTo(new FmImportProposedName("Trumpet", true)));
         plan.SetDefinitionMapping(right, FmImportMappingKind.ImportCopy);
