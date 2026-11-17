@@ -101,11 +101,15 @@ Do not reintroduce completed-task checklists here.
   Source+Multi combination, nested Instruments/Synths, shared
   Envelopes/Filters, inactive Filter wires, missing-reference diagnostics,
   and disconnected graph roots. The old import command remains unchanged.
-  A stacked draft slice now adds pure editable import-plan decisions,
+  The consolidated PR #34 also adds pure editable import-plan decisions,
   per-use overrides, stable canonical ownership, manual/automatic provenance,
   collision-avoiding editable names and multi-document identity handling,
   with dedicated regression tests. Neither slice changes the old importer.
-  Effective-plan liveness and Filter rewiring, strict match proofs,
+  A third slice adds read-only effective dependency closure, per-use
+  active/inactive projections, originally-disconnected node preservation,
+  semantic Filter stage/parameter port matching across local swaps, and
+  explicit inactive reasons. No destination edits or UI changes occur.
+  Strong strict match proofs, complete per-stage override translation,
   TreeDataGrid, two-stage validation, Sample asset handling and atomic
   commit remain open.
 
