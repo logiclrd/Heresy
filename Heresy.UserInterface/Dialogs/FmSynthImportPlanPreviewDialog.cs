@@ -260,13 +260,16 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
     private Control CreateActionCell(FmSynthImportGridRow model)
     {
         FmImportTreeRow row = model.Snapshot;
+        FmImportTreeEdit editable = row.AvailableEdits;
         // Dock all fixed-width actions to the left; the last (name) text box
         // fills whatever width remains in the TreeDataGrid Plan cell.
         // A horizontal StackPanel measures its children at infinite width
         // and could never stretch the name field to the column's right edge.
         DockPanel actions = new()
         {
-            LastChildFill = true,
+            // Other rows end in a button or ComboBox, which should not
+            // expand into a giant right-aligned action.
+            LastChildFill = editable.HasFlag(FmImportTreeEdit.RenameCopy),
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
@@ -282,7 +285,6 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         DockPanel.SetDock(actionText, Dock.Left);
         actions.Children.Add(actionText);
 
-        FmImportTreeEdit editable = row.AvailableEdits;
         if (editable.HasFlag(FmImportTreeEdit.NavigateToCanonical))
             AddButton(actions, "Go to", () =>
                 _adapter.NavigateToCanonical(row.Key));
