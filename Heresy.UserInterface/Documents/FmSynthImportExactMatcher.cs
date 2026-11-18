@@ -105,6 +105,7 @@ public static class FmSynthImportExactMatcher
             destination.Objects.Values.OfType<FilterDefinition>());
         plan.InitializeExactMatchDefaults(matches);
         plan.CaptureSourceDocumentRevisions(inputs);
+        plan.CaptureAuthoringFingerprints(inputs, destination);
         plan.AttachStageAContext(FmImportStageAContext.Capture(inputs, destination));
         return plan;
     }
