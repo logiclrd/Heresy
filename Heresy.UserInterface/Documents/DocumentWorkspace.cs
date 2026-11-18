@@ -38,6 +38,10 @@ public sealed class DocumentWorkspace
 
 	public SongDocument Document { get; private set; }
 
+	/// <summary>Most recent atomic Synth import only; not an editor-wide
+	/// undo stack. Cleared whenever the active song is replaced.</summary>
+	public SongImportUndoHistory ImportUndo { get; } = new();
+
 	/// <summary>Fired only after a successful audio-affecting edit to a shared
 	/// Envelope or Filter. The caller owns mutation and revision increment;
 	/// this notification never modifies the song or opens an audio session.</summary>
@@ -66,6 +70,7 @@ public sealed class DocumentWorkspace
 
 	public void New()
 	{
+		ImportUndo.Clear();
 		Document = new SongDocument();
 		FilePath = null;
 		JsonPathMode = null;
@@ -85,6 +90,7 @@ public sealed class DocumentWorkspace
 		JsonAssetPathMode? mode = SongDocumentStorage.IsJsonPath(fullPath)
 			? SongDocumentStorage.DetectJsonPathMode(fullPath)
 			: null;
+		ImportUndo.Clear();
 		Document = document;
 		FilePath = fullPath;
 		JsonPathMode = mode;
@@ -114,6 +120,7 @@ public sealed class DocumentWorkspace
 		bool recovered = document.Objects.Values
 			.OfType<SampleDefinition>()
 			.Any(sample => sample.PendingAsset is not null);
+		ImportUndo.Clear();
 		Document = document;
 		FilePath = fullPath;
 		JsonPathMode = mode;
