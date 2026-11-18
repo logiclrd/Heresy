@@ -273,7 +273,7 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
             TextBox name = new()
             {
                 Text = _plan.GetProposedName(named).Name,
-                Watermark = "Copy name",
+                PlaceholderText = "Copy name",
                 MinWidth = 100,
                 Width = 140,
             };
