@@ -69,6 +69,7 @@ public sealed class FmSynthImportTreeProjectionTests
         Assert.That(operandRows.Count(x => x.IsAlias), Is.EqualTo(1));
         FmImportTreeRow initialOwner = operandRows.Single(x => x.IsCanonical);
         FmImportTreeRow alias = operandRows.Single(x => x.IsAlias);
+        Assert.That(alias.Label, Does.Contain("another use"));
 
         projection.SetExpanded(projection.Roots.Single().Key, true);
         projection.Select(alias.Key);
