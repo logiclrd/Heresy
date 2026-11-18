@@ -152,10 +152,18 @@ Do not reintroduce completed-task checklists here.
   acceptance is included, but the preview/legacy Import selected commands
   have NOT been replaced. There is no general document-wide UI undo manager
   yet; the receipt is ready for later integration.
-  Remaining: bind actual Import acceptance and Stage-B errors into the dialog,
-  replace the old Import selected implementation without changing its text,
-  remove the extra preview button, connect the undo receipt to the selected
-  document's undo workflow, resolve cross-Filter-stage override translation
+  The twelfth slice adds an opt-in, commit-capable mode to the same visual
+  plan editor: Stage-A controls Import availability, Stage-B/commit errors are
+  modal and return to the unchanged plan for retry, and successful acceptance
+  returns the new root IDs and one-unit receipt. Four headless regressions
+  cover preview isolation, invalid-to-repaired Stage A, same-song Source+Multi
+  acceptance and stale Stage-B retry with preserved expansion and user name.
+  The selector still launches only safe preview and Import selected still
+  calls the old importer; no document-wide UI Undo has been connected.
+  Remaining: switch the original Import selected button (keep its exact text)
+  to the accepted graph-aware dialog, remove the separate preview button,
+  select/open the new explicit roots, integrate the undo receipt with the
+  actual document workflow, resolve cross-Filter-stage override translation
   and scripted-reference limitations, and complete interactive acceptance.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
