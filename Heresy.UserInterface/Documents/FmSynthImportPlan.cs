@@ -186,6 +186,8 @@ public sealed class FmSynthImportPlan
     internal IReadOnlyDictionary<FmImportGraphInputKey, FmImportGraphConnection> DiscoveredConnections => _connections;
     internal IEnumerable<FmImportDiscoveredSynthGraph> DiscoveredSynthGraphs => _nodes.Values.Distinct();
     internal IReadOnlyCollection<FmImportNodeKey> DiscoveredNodes => _nodes.Keys;
+    internal string? GetDiscoveredNodeType(FmImportNodeKey key) =>
+        _stageAContext?.NodeTypes.GetValueOrDefault(key);
     internal IReadOnlyCollection<FmImportNodeKey> PreservedDisconnectedNodes => _preservedNodes;
     internal IReadOnlyDictionary<ObjectId, FmImportFilterPortSchema> DestinationFilterPorts => _destinationFilterPorts;
     internal bool IsNodeExcluded(FmImportNodeKey key) => _excludedNodes.Contains(key);
