@@ -240,6 +240,126 @@ public sealed class FmSynthImportPlanPreviewDialogTests
             Equals(button.Content, "Cancel")), Is.True);
     }
 
+
+    [AvaloniaTest]
+    public void PreviewModeRefusesCommitEvenWithAValidEditablePlan()
+    {
+        SongDocument source = new(), destination = new();
+        FmSynthDefinition root = Add(source, "Preview only",
+            new FmSynthGraph([new FmConstantNode(0, .5)], 0));
+        FmSynthImportPlanPreviewDialog dialog = new(
+            Input(source, root), [root.Id], destination);
+        Assert.That(dialog.Plan.StageA!.IsInternallyValid, Is.True);
+        Assert.That(dialog.CanCommit, Is.False);
+        Assert.That(dialog.AttemptCommit(), Is.Null);
+        Assert.That(dialog.CommittedResult, Is.Null);
+        Assert.That(destination.Objects, Is.Empty);
+    }
+
+    [AvaloniaTest]
+    public void CommitModeDisablesInvalidStageAAndEnablesAfterRepair()
+    {
+        SongDocument source = new(), destination = new();
+        FmSynthDefinition root = Add(source, "Needs remapping",
+            new FmSynthGraph([
+                new FmSoundSourceNode(0, (ObjectId)999U, 440),
+            ], 0));
+        FmSynthDefinition local = Add(destination, "Local",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        FmSynthImportPlanPreviewDialog dialog = new(
+            Input(source, root), [root.Id], destination, enableCommit: true);
+        Assert.That(dialog.Plan.StageA!.IsInternallyValid, Is.False);
+        Assert.That(dialog.CanCommit, Is.False);
+        Assert.That(dialog.AttemptCommit(), Is.Null);
+        Assert.That(destination.Objects, Has.Count.EqualTo(1));
+
+        FmImportReferenceKey use = dialog.Plan.DiscoveredReferences.Keys.Single();
+        dialog.Projection.ApplyUse(use, FmImportMappingKind.ReuseExisting, local.Id);
+        Assert.That(dialog.Plan.StageA!.IsInternallyValid, Is.True);
+        Assert.That(dialog.CanCommit, Is.True);
+        FmImportCommitResult? committed = dialog.AttemptCommit();
+        Assert.That(committed?.IsCommitted, Is.True, committed?.Error);
+        Assert.That(committed!.SelectedRootIds, Has.Count.EqualTo(1));
+        Assert.That(dialog.CanCommit, Is.False,
+            "an accepted plan cannot be committed a second time");
+    }
+
+    [AvaloniaTest]
+    public void CommitModeAppliesEditedSameSongSourceMultiAndOneUndoableReceipt()
+    {
+        SongDocument song = new();
+        FmSynthDefinition child = Add(song, "Shared",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        FmSynthDefinition root = Add(song, "Original",
+            new FmSynthGraph([
+                new FmSoundSourceNode(1, child.Id, 440),
+                new FmMultiNode(2, 1),
+            ], 2));
+        FmSynthImportPlanPreviewDialog dialog = new(
+            Input(song, root), [root.Id], song, enableCommit: true);
+        FmImportObjectKey rootKey = dialog.Plan.SelectedRoots.Single();
+        dialog.Projection.SetName(rootKey, "Original"); // intentional duplicate
+        int before = song.Objects.Count;
+        Assert.That(dialog.CanCommit, Is.True);
+        FmImportCommitResult? result = dialog.AttemptCommit();
+        Assert.That(result?.IsCommitted, Is.True, result?.Error);
+        Assert.That(song.Objects, Has.Count.EqualTo(before + 2));
+        Assert.That(result!.SelectedRootIds, Has.Count.EqualTo(1));
+        FmSynthDefinition copy = (FmSynthDefinition)song.Objects[
+            result.SelectedRootIds.Single()];
+        Assert.That(copy.Name, Is.EqualTo(root.Name));
+        Assert.That(copy.Id, Is.Not.EqualTo(root.Id));
+        Assert.That(copy.Graph.Nodes.OfType<FmMultiNode>(), Has.Exactly(1).Items);
+        Assert.That(copy.Graph.Nodes.OfType<FmSoundSourceNode>().Single().SourceId,
+            Is.Not.EqualTo(child.Id));
+        Assert.That(dialog.CommittedResult, Is.SameAs(result));
+        Assert.That(dialog.AttemptCommit(), Is.Null);
+        result.Edit!.Undo();
+        Assert.That(song.Objects, Has.Count.EqualTo(before));
+        result.Edit.Redo();
+        Assert.That(song.Objects, Has.Count.EqualTo(before + 2));
+    }
+
+    [AvaloniaTest]
+    public void FailedStageBPreservesNamesExpansionAndPlanForSafeRetry()
+    {
+        SongDocument source = new(), destination = new();
+        FmSynthDefinition root = Add(source, "Root",
+            new FmSynthGraph([new FmConstantNode(0, .5)], 0));
+        FmSynthGraph original = root.Graph;
+        FmSynthImportPlanPreviewDialog dialog = new(
+            Input(source, root), [root.Id], destination, enableCommit: true);
+        FmImportObjectKey rootKey = dialog.Plan.SelectedRoots.Single();
+        dialog.Projection.SetName(rootKey, "Chosen name");
+        FmImportTreeRowKey rowKey = dialog.Projection.Roots.Single().Key;
+        dialog.GridAdapter.Source.Expand(dialog.GridAdapter.Paths[rowKey]);
+
+        // Unmarked edits still invalidate the frozen source snapshot at Stage B.
+        root.Graph = new FmSynthGraph([new FmConstantNode(0, 17)], 0);
+        FmImportCommitResult? failure = dialog.AttemptCommit();
+        Assert.That(failure?.IsCommitted, Is.False);
+        Assert.That(failure?.Error, Does.Contain("changed"));
+        Assert.That(destination.Objects, Is.Empty);
+        Assert.That(dialog.CommittedResult, Is.Null);
+        Assert.That(dialog.CanCommit, Is.True,
+            "a preflight error must not disable a recoverable plan");
+        Assert.That(dialog.Plan.GetProposedName(rootKey).Name,
+            Is.EqualTo("Chosen name"));
+        Assert.That(dialog.GridAdapter.Paths.ContainsKey(rowKey), Is.True);
+        Assert.That(dialog.GridAdapter.Source.TryGetModelAt(
+            dialog.GridAdapter.Paths[rowKey], out FmSynthImportGridRow? expanded),
+            Is.True);
+        Assert.That(expanded!.IsExpanded, Is.True);
+
+        // Restoring exactly the old authored snapshot permits retry without
+        // rebuilding the dialog or losing the user's edited copy name.
+        root.Graph = original;
+        FmImportCommitResult? retry = dialog.AttemptCommit();
+        Assert.That(retry?.IsCommitted, Is.True, retry?.Error);
+        Assert.That(((FmSynthDefinition)destination.Objects[
+            retry!.SelectedRootIds.Single()]).Name, Is.EqualTo("Chosen name"));
+    }
+
     private static FmSynthDefinition Add(SongDocument song, string name,
         FmSynthGraph graph)
     {
