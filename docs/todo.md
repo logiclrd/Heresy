@@ -160,11 +160,21 @@ Do not reintroduce completed-task checklists here.
   acceptance and stale Stage-B retry with preserved expansion and user name.
   The selector still launches only safe preview and Import selected still
   calls the old importer; no document-wide UI Undo has been connected.
-  Remaining: switch the original Import selected button (keep its exact text)
-  to the accepted graph-aware dialog, remove the separate preview button,
-  select/open the new explicit roots, integrate the undo receipt with the
-  actual document workflow, resolve cross-Filter-stage override translation
-  and scripted-reference limitations, and complete interactive acceptance.
+  The thirteenth slice completes the visible command handoff: original
+  "Import selected" opens the commit-enabled graph-aware plan without renaming
+  the button, and the separate preview button is removed. Cancel returns to
+  the unchanged root selection or exits without mutation; the accepted
+  transaction returns new explicit Synth root IDs and the final copy/reuse
+  counts. MainWindow no longer invokes the legacy importer, selects the first
+  newly imported Synth and opens its editor when one root was requested.
+  Shared dependencies are counted as copies, not extra selected roots.
+  Headless regressions cover cancellation, same-song acceptance, two roots
+  sharing a dependency, and the exact entry-point control labels.
+  Remaining: integrate the guarded one-unit undo receipt with a safe
+  document-wide Undo/Redo workflow (there is currently no general window
+  history), resolve cross-Filter-stage override translation and opaque
+  scripted-reference limitations, then perform physical GUI, save/reopen,
+  Sample asset and sound/playback acceptance. Do not merge without approval.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
