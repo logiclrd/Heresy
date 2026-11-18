@@ -117,6 +117,7 @@ public sealed class FmSynthImportPlan
     private readonly Dictionary<FmImportObjectKey, FmImportDiscoveredObject> _objects = [];
     private readonly Dictionary<FmImportNodeKey, FmImportDiscoveredSynthGraph> _nodes = [];
     private readonly Dictionary<FmImportReferenceKey, FmImportObjectReference> _references = [];
+    private readonly List<FmImportDiscoveryIssue> _discoveryIssues = [];
     private readonly Dictionary<FmImportGraphInputKey, FmImportGraphConnection> _connections = [];
     private readonly Dictionary<FmImportEntityKey, List<FmImportOccurrenceKey>> _occurrences = [];
     private readonly Dictionary<FmImportEntityKey, FmImportOccurrenceKey> _canonical = [];
@@ -160,6 +161,7 @@ public sealed class FmSynthImportPlan
 
     internal IReadOnlyDictionary<FmImportObjectKey, FmImportDiscoveredObject> DiscoveredObjects => _objects;
     internal IReadOnlyDictionary<FmImportReferenceKey, FmImportObjectReference> DiscoveredReferences => _references;
+    internal IReadOnlyList<FmImportDiscoveryIssue> DiscoveryIssues => _discoveryIssues;
     internal IReadOnlyDictionary<FmImportGraphInputKey, FmImportGraphConnection> DiscoveredConnections => _connections;
     internal IEnumerable<FmImportDiscoveredSynthGraph> DiscoveredSynthGraphs => _nodes.Values.Distinct();
     internal IReadOnlyCollection<FmImportNodeKey> DiscoveredNodes => _nodes.Keys;
@@ -223,6 +225,7 @@ public sealed class FmSynthImportPlan
                         _originalNodeRoots.Add(root);
                 }
             }
+            _discoveryIssues.AddRange(source.Issues);
             foreach (FmImportObjectReference reference in source.ObjectReferences)
             {
                 if (!_references.TryAdd(reference.Use, reference))
