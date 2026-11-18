@@ -155,6 +155,12 @@ public sealed class FmSynthImportTreeProjectionTests
         uint sourceRev = source.DocumentRevision, destRev = destination.DocumentRevision;
 
         projection.ApplyUse(uses[0], FmImportMappingKind.ReuseExisting, local.Id);
+        FmImportTreeRow remapped = All(projection).Single(x => x.Reference == uses[0]);
+        Assert.That(remapped.IsActive, Is.True);
+        Assert.That(remapped.IsAlias, Is.False,
+            "a valid manual local mapping is not an inactive link to the source");
+        Assert.That(remapped.Action, Does.Contain("Map to local"));
+        Assert.That(projection.Summary.ManualMappings, Has.Some.Contains("local #"));
         Assert.That(projection.Summary.NewObjectCount, Is.EqualTo(2));
         Assert.That(projection.Summary.ReusedUseCount, Is.EqualTo(1));
         Assert.That(projection.Summary.ExplicitlyRemappedUseCount, Is.EqualTo(1));
