@@ -134,7 +134,7 @@ public sealed class FmSynthImportGridAdapter : IDisposable
                     "Dependency",
                     new FuncDataTemplate<FmSynthImportGridRow>(
                         (row, _) => _createDependency(row!)),
-                    width: new GridLength(3, GridUnitType.Star)),
+                    width: new GridLength(1, GridUnitType.Star)),
                 row => row.Children,
                 row => row.HasChildren,
                 row => row.IsExpanded));
@@ -142,7 +142,7 @@ public sealed class FmSynthImportGridAdapter : IDisposable
                 "Plan",
                 new FuncDataTemplate<FmSynthImportGridRow>(
                     (row, _) => _createAction(row!)),
-                width: new GridLength(4, GridUnitType.Star)));
+                width: new GridLength(1, GridUnitType.Star)));
             // TextColumn's Generic template likewise leaves its TextBlock
             // foreground unspecified. Use the same explicit theme-aware text
             // binding as the Dependency and Plan template cells.
