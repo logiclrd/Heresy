@@ -198,7 +198,7 @@ public sealed class FmSynthImportStageAValidatorTests
             new FmSynthGraph([new FmConstantNode(0, .5)], 0));
         FmSynthImportPlan plan = MakePlan(source, root, destination);
         FmImportReferenceKey use = plan.Effective.References.Single(
-            x => x.Use.ToneIndex == 0).Use;
+            x => x.Use.ToneIndex == 0 && x.Use.Slot == "Source").Use;
 
         Assert.That(plan.StageA!.Issues.Any(x =>
             x.Kind == FmImportStageAIssueKind.DependencyCycle), Is.True,
