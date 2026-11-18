@@ -129,9 +129,17 @@ Do not reintroduce completed-task checklists here.
   preview accessible from the existing import selection dialog. The
   legacy Import selected command still uses the old importer; preview
   choices cannot be committed yet and that limitation is explicit in UI.
-  Remaining: full non-audio song-wide validation, destination ID/asset
-  transaction and rollback, stronger source-content freshness checks,
-  cross-filter stage translation, wiring accepted preview decisions into
+  The ninth slice improves live final-click safety: read-only source and
+  destination authoring fingerprints reject parameter edits that do not
+  increment DocumentRevision, and the destination-wide explicit
+  Pattern/Sequence/Instrument/tree/reference/tombstone audit catches invalid
+  local links; opaque scripts remain labeled as a validation warning.
+  Preview layout defaults to maximized, 1*/2*/1* columns, and stretching
+  name fields. On final completion, REMOVE the extra "Review graph-aware
+  plan (preview)" button and transfer its function to the existing
+  "Import selected" button WITHOUT renaming that button.
+  Remaining: destination ID/asset transaction and rollback, cross-filter
+  stage translation decisions, wiring accepted preview decisions into
   one atomic undoable Import command, and same-file Source+Multi acceptance.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
