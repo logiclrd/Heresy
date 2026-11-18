@@ -170,11 +170,20 @@ Do not reintroduce completed-task checklists here.
   Shared dependencies are counted as copies, not extra selected roots.
   Headless regressions cover cancellation, same-song acceptance, two roots
   sharing a dependency, and the exact entry-point control labels.
-  Remaining: integrate the guarded one-unit undo receipt with a safe
-  document-wide Undo/Redo workflow (there is currently no general window
-  history), resolve cross-Filter-stage override translation and opaque
-  scripted-reference limitations, then perform physical GUI, save/reopen,
-  Sample asset and sound/playback acceptance. Do not merge without approval.
+  Slice 14 adds an explicit document-scoped **last Synth import** history:
+  one guarded batch receipt, whole-batch Undo/Redo with no tombstones,
+  immediate refusal on later authored changes, and clear-on-New/Open. In the
+  main window's document trees only, Edit menu commands and Ctrl+Z /
+  Ctrl+Y / Ctrl+Shift+Z operate on the latest Synth import; individual
+  editors retain their own undo stacks and are never intercepted.
+  A second import replaces the one-level receipt (not a general multi-level
+  song undo history). Headless regressions cover history identity, rollback,
+  stale changes, document replacement and keyboard/menu scope.
+  Remaining: physical GUI testing of Slices 13–14, including .hm/.hm.json
+  assets, save/reopen, mixed graph, audio and stale-undo behavior; resolve
+  cross-Filter-stage override translation and opaque scripted-reference
+  limitations. An eventual general document undo history is separate.
+  Do not merge without approval.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
