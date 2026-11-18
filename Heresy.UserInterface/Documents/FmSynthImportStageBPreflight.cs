@@ -10,6 +10,8 @@ using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
+using Heresy.Core.Patterns;
+using Heresy.Core.Sequences;
 using Heresy.Core.Samples;
 
 namespace Heresy.UserInterface.Documents;
@@ -28,6 +30,11 @@ public enum FmImportStageBIssueKind
     SampleAssetMissing,
     SampleAssetChanged,
     SampleAssetInvalid,
+    DestinationChanged,
+    DestinationReferenceMissing,
+    DestinationReferenceTombstone,
+    DestinationReferenceWrongType,
+    DestinationOpaqueScriptReferences,
 }
 
 public sealed record FmImportStageBIssue(
@@ -70,13 +77,18 @@ public sealed class FmImportStageBResult
 {
     internal FmImportStageBResult(
         IReadOnlyList<FmImportStageBIssue> issues,
-        IReadOnlyList<FmImportPreparedSample> samples)
+        IReadOnlyList<FmImportPreparedSample> samples,
+        IReadOnlyList<FmImportStageBIssue>? warnings = null)
     {
         Issues = issues;
+        Warnings = warnings ?? Array.Empty<FmImportStageBIssue>();
         PreparedSamples = issues.Count == 0 ? samples : [];
     }
 
     public IReadOnlyList<FmImportStageBIssue> Issues { get; }
+    /// <summary>Non-blocking limits of validation, e.g. opaque script tokens.
+    /// They are not falsely reported as complete reference validation.</summary>
+    public IReadOnlyList<FmImportStageBIssue> Warnings { get; }
     public IReadOnlyList<FmImportPreparedSample> PreparedSamples { get; }
     public bool IsPreflightValid => Issues.Count == 0;
 }
@@ -111,6 +123,7 @@ public static class FmSynthImportStageBPreflight
         ArgumentNullException.ThrowIfNull(destination);
 
         List<FmImportStageBIssue> issues = [];
+        List<FmImportStageBIssue> warnings = [];
         List<FmImportPreparedSample> prepared = [];
 
         void Add(FmImportStageBIssueKind kind, string message,
@@ -133,6 +146,15 @@ public static class FmSynthImportStageBPreflight
                 continue;
             }
             string identity = item.Discovery.SourceDocumentIdentity;
+            // A direct authoring-property edit may leave DocumentRevision and
+            // the graph's discovery shape untouched. Compare complete persisted
+            // content, without calling the ordinary pruning song serializer.
+            if (!plan.SourceDocumentFingerprints.TryGetValue(identity,
+                    out string? originalFingerprint)
+                || !MatchesFingerprint(item.Source.Document, originalFingerprint))
+                Add(FmImportStageBIssueKind.SourceChanged,
+                    $"Import source '{identity}' has changed authored content after the plan was created.",
+                    new FmImportObjectKey(identity, ObjectId.None));
             // Never trust a different loaded source with the same numeric IDs.
             // The root/discovery structure and saved revision must still match.
             if (!plan.SourceDocumentRevisions.TryGetValue(identity,
@@ -162,6 +184,22 @@ public static class FmSynthImportStageBPreflight
                 !sourceDocuments.ContainsKey(identity)))
             Add(FmImportStageBIssueKind.SourceChanged,
                 "The import-source documents do not match this plan.");
+
+        // Final-click checks must also catch direct edits to existing local
+        // object parameters, names, tree placements and tombstones. Checking
+        // the whole snapshot is deliberately conservative: a changed local
+        // song requires refreshed mapping choices before import.
+        if (plan.DestinationDocumentFingerprint is not string targetFingerprint
+            || !MatchesFingerprint(destination, targetFingerprint))
+            Add(FmImportStageBIssueKind.DestinationChanged,
+                "The destination song changed after the import plan was opened; refresh it before importing.");
+
+        // Audio cycles are handled below. Non-audio Pattern/Sequence, tree,
+        // Instrument and Filter reference integrity requires its own sweep.
+        // Do not claim ScriptPattern/ScriptSequence references are audited
+        // when only their opaque script source is available.
+        AuditDestinationReferences(destination, Add,
+            issue => warnings.Add(issue));
 
         // Stage A is rechecked against the actual destination at click time.
         // The cached StageA property is intentionally not used as authority.
@@ -404,7 +442,104 @@ public static class FmSynthImportStageBPreflight
 
         return new FmImportStageBResult(
             Array.AsReadOnly(issues.ToArray()),
-            Array.AsReadOnly(prepared.ToArray()));
+            Array.AsReadOnly(prepared.ToArray()),
+            Array.AsReadOnly(warnings.ToArray()));
+    }
+
+    private static bool MatchesFingerprint(SongDocument song, string expected)
+    {
+        try
+        {
+            return string.Equals(FmSynthImportAuthoringFingerprint.Capture(song),
+                expected, StringComparison.Ordinal);
+        }
+        catch (Exception failure) when (failure is ArgumentException
+            or InvalidOperationException or NotSupportedException
+            or System.Text.Json.JsonException)
+        {
+            // Invalid authored state is never a reason to bypass preflight.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Read-only whole-destination explicit reference audit. Opaque source
+    /// scripts cannot be safely resolved by Core without a script analyzer;
+    /// report that limitation as a warning rather than claiming proof.
+    /// </summary>
+    private static void AuditDestinationReferences(
+        SongDocument destination,
+        Action<FmImportStageBIssueKind, string, FmImportObjectKey?,
+            FmImportReferenceKey?, ObjectId?> error,
+        Action<FmImportStageBIssue> warn)
+    {
+        SongReferenceAnalysis analysis = SongReferenceAnalyzer.Analyze(destination);
+        foreach (SongReference reference in analysis.References)
+        {
+            ObjectId id = reference.TargetId;
+            if (!destination.TryGet(id, out SongObject? target) || target is null)
+            {
+                if (destination.Tombstones.ContainsKey(id))
+                    error(FmImportStageBIssueKind.DestinationReferenceTombstone,
+                        $"Existing {reference.Kind} reference #{id.Value} points to a tombstoned object.",
+                        null, null, reference.SourceObjectId ?? id);
+                else
+                    error(FmImportStageBIssueKind.DestinationReferenceMissing,
+                        $"Existing {reference.Kind} reference #{id.Value} has no destination object.",
+                        null, null, reference.SourceObjectId ?? id);
+                continue;
+            }
+
+            bool compatible = reference.Kind switch
+            {
+                SongReferenceKind.RootSequence =>
+                    target is DataSequenceDefinition or ScriptSequenceDefinition,
+                SongReferenceKind.SequencePattern =>
+                    target is DataPatternDefinition or ScriptPatternDefinition,
+                SongReferenceKind.PatternNoteSource
+                    or SongReferenceKind.InstrumentSource
+                    or SongReferenceKind.FmSynthSoundSource =>
+                    IsSoundSource(target),
+                SongReferenceKind.PatternNoteFilter
+                    or SongReferenceKind.InstrumentToneFilter =>
+                    target is FilterDefinition,
+                SongReferenceKind.InstrumentVolumeEnvelope
+                    or SongReferenceKind.InstrumentPitchEnvelope
+                    or SongReferenceKind.InstrumentPanningEnvelope
+                    or SongReferenceKind.InstrumentFilterEnvelope
+                    or SongReferenceKind.FmSynthEnvelope =>
+                    target is NodeEnvelopeDefinition or ScriptEnvelopeDefinition,
+                SongReferenceKind.Tree or SongReferenceKind.ScriptObject => true,
+                _ => false,
+            };
+            if (!compatible)
+                error(FmImportStageBIssueKind.DestinationReferenceWrongType,
+                    $"Existing {reference.Kind} reference #{id.Value} targets {target.GetType().Name}, which has the wrong kind.",
+                    null, null, reference.SourceObjectId ?? id);
+        }
+
+        // SongReferenceAnalyzer has no FM Filter slot kind; these per-node
+        // configurations must still target present Filter definitions.
+        foreach (FmSynthDefinition synth in destination.Objects.Values
+            .OfType<FmSynthDefinition>())
+            foreach (FmFilterNode filter in synth.Graph.Nodes.OfType<FmFilterNode>())
+            {
+                if (filter.Configuration is not FilterInstance instance)
+                    continue;
+                ObjectId id = instance.DefinitionId;
+                if (!destination.TryGet(id, out SongObject? target)
+                    || target is not FilterDefinition)
+                    error(destination.Tombstones.ContainsKey(id)
+                            ? FmImportStageBIssueKind.DestinationReferenceTombstone
+                            : FmImportStageBIssueKind.DestinationReferenceWrongType,
+                        $"Existing Synth #{synth.Id.Value}, Filter node #{filter.Id}, uses unavailable Filter definition #{id.Value}.",
+                        null, null, synth.Id);
+            }
+
+        if (analysis.HasOpaqueScriptReferences)
+            warn(new FmImportStageBIssue(
+                FmImportStageBIssueKind.DestinationOpaqueScriptReferences,
+                "The destination contains scripted Pattern/Sequence references that the Core reference analyzer cannot resolve; non-script explicit references were audited."));
     }
 
     private static bool SameDecodedPcm(SamplePcmData actual, SamplePcmData original)
