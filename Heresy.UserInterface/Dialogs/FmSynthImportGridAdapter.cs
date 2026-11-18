@@ -89,7 +89,7 @@ public sealed class FmSynthImportGridAdapter : IDisposable
     }
 
     private void OnSelectionChanged(object? sender,
-        Avalonia.Controls.Selection.TreeDataGridSelectionChangedEventArgs<FmSynthImportGridRow> args)
+        TreeDataGridSelectionChangedEventArgs<FmSynthImportGridRow> args)
     {
         if (!_rebinding)
             _selected = _source?.RowSelection?.SelectedItem?.Key;
