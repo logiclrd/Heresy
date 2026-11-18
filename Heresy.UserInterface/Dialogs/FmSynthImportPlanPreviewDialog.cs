@@ -270,9 +270,10 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         if (editable.HasFlag(FmImportTreeEdit.RenameCopy) &&
             row.Object is FmImportObjectKey named)
         {
+            string initialName = _plan.GetProposedName(named).Name;
             TextBox name = new()
             {
-                Text = _plan.GetProposedName(named).Name,
+                Text = initialName,
                 PlaceholderText = "Copy name",
                 MinWidth = 100,
                 Width = 140,
@@ -280,8 +281,14 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
             void CommitName()
             {
                 string next = name.Text ?? "";
-                if (next != _plan.GetProposedName(named).Name)
+                // A template recycled because some *other* decision was
+                // edited must not write a stale unchanged name back into the
+                // authoritative import plan on LostFocus.
+                if (next != initialName)
+                {
+                    initialName = next;
                     _projection.SetName(named, next);
+                }
             }
             name.LostFocus += (_, _) => CommitName();
             name.KeyDown += (_, args) =>
