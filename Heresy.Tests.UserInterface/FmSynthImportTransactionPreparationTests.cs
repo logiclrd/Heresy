@@ -52,11 +52,11 @@ public sealed class FmSynthImportTransactionPreparationTests
         FmSynthDefinition copied = (FmSynthDefinition)prepared.PreparedObjects
             .Single(obj => obj.Source == rootKey).Object;
         Assert.That(copied.Id, Is.EqualTo(prepared.ProvisionalIds[rootKey]));
-        Assert.That(prepared.SelectedRootIds, Is.EqualTo([copied.Id]));
+        Assert.That(prepared.SelectedRootIds, Is.EqualTo(new[] { copied.Id }));
         Assert.That(copied.Id, Is.Not.EqualTo(root.Id));
         Assert.That(copied.Graph.Nodes.OfType<FmSoundSourceNode>()
             .Select(node => node.SourceId).Distinct(),
-            Is.EqualTo([prepared.ProvisionalIds[childKey]]));
+            Is.EqualTo(new[] { prepared.ProvisionalIds[childKey] }));
         Assert.That(copied.Graph.Nodes.OfType<FmMultiNode>().Single().InputNodeId,
             Is.EqualTo(1));
         Assert.That(copied.Graph.Nodes.Any(node =>
@@ -215,7 +215,7 @@ public sealed class FmSynthImportTransactionPreparationTests
         Assert.That(prepared.IsPrepared, Is.True, Message(prepared));
         FmSynthDefinition copied = (FmSynthDefinition)prepared.PreparedObjects.Single().Object;
         Assert.That(copied.Graph.Nodes.OfType<FmOperatorNode>()
-            .Single().InputNodeIds, Is.EqualTo([1]));
+            .Single().InputNodeIds, Is.EqualTo(new[] { 1 }));
         Assert.That(copied.Graph.Nodes.Any(x => x.Id == 4), Is.False);
         Assert.That(copied.ConnectionRoutingHints, Is.Empty);
     }
@@ -286,7 +286,7 @@ public sealed class FmSynthImportTransactionPreparationTests
         Assert.That(prepared.ProvisionalIds, Has.Count.EqualTo(2));
         Assert.That(prepared.SelectedRootIds.Distinct().Count(), Is.EqualTo(2));
         Assert.That(prepared.PreparedObjects.Select(x => x.Object.Name).OrderBy(x => x),
-            Is.EqualTo(["Left", "Right"]));
+            Is.EqualTo(new[] { "Left", "Right" }));
     }
 
     private static FmSynthDefinition Add(SongDocument song, string name,
