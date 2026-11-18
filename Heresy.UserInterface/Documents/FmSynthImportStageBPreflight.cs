@@ -212,11 +212,16 @@ public static class FmSynthImportStageBPreflight
                     && c.Key.Consumer.NodeId == reference.Use.NodeId
                     && c.Key.PortIdentity != "audio"))
             {
-                if (!ports.Ports.Any(port =>
+                FmImportFilterPort? currentPort = ports.Ports.FirstOrDefault(port =>
                     string.Equals(port.Identity, connection.DestinationPortIdentity,
-                        StringComparison.OrdinalIgnoreCase)))
+                        StringComparison.OrdinalIgnoreCase));
+                if (currentPort is null)
                     Add(FmImportStageBIssueKind.FilterPortChanged,
                         $"Destination Filter #{localId.Value} no longer has modulation port '{connection.Key.PortIdentity}'.",
+                        use: reference.Use, local: localId);
+                else if (connection.DestinationPortIndex != currentPort.Index)
+                    Add(FmImportStageBIssueKind.FilterPortChanged,
+                        $"Destination Filter #{localId.Value} moved modulation port '{connection.Key.PortIdentity}' from planned index {connection.DestinationPortIndex} to {currentPort.Index}; refresh the import plan before applying it.",
                         use: reference.Use, local: localId);
             }
         }
