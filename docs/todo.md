@@ -122,9 +122,16 @@ Do not reintroduce completed-task checklists here.
   live Filter port/override checks and encoded Sample preflight. It reads
   .hm archive and .hm.json asset paths, verifies hashes and decodability,
   and retains fully detached encoded bytes for a future transaction.
+  A seventh slice adds a framework-independent TreeDataGrid-facing
+  hierarchy: stable object/node/use/port row keys, canonical aliases,
+  per-row action bindings, sticky expansion/selection/focus and a
+  continuously recalculated Stage-A summary. The actual Avalonia grid
+  control and dialog are not yet wired (Avalonia 12 TreeDataGrid is
+  Pro-licensed; no dependency is added without agreement).
   Complete whole-song non-audio validation, safe destination ID/commit
   reservation and rollback, source-graph parameter fingerprinting,
-  cross-filter stage translation and TreeDataGrid remain open.
+  cross-filter stage translation, visual grid/dialog integration and the
+  final commit remain open.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
