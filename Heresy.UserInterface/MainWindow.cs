@@ -1493,6 +1493,8 @@ public sealed class MainWindow : Window
 			return;
 
 		int imported = 0;
+		int copiedObjects = 0;
+		int reusedDefinitions = 0;
 		SongTreeNode? selectNode = null;
 		FmSynthDefinition? firstSynth = null;
 		foreach (IStorageFile file in files)
@@ -1516,30 +1518,29 @@ public sealed class MainWindow : Window
 
 				FmSynthImportSelectionDialog dialog =
 					new(source, _workspace.Document);
-				ObjectId[]? selected =
-					await dialog.ShowDialog<ObjectId[]?>(
-						this);
-				if (selected is null
-					|| selected.Length == 0)
-				{
-					continue;
-				}
+				FmSynthImportSelectionResult? accepted =
+					await dialog.ShowDialog<FmSynthImportSelectionResult?>(this);
+				if (accepted is null)
+					continue; // selection/plan cancellation does not mutate the song
 
-				IReadOnlyList<FmSynthDefinition> synths =
-					FmSynthDocumentEditor.ImportFromSong(
-						_workspace,
-						source,
-						selected);
-				foreach (FmSynthDefinition synth in synths)
+				// The accepted transaction contains the *new* explicitly
+				// selected root IDs. Its other copies are shared dependencies,
+				// not additional Synths chosen by the user.
+				foreach (ObjectId rootId in accepted.Commit.SelectedRootIds)
 				{
+					if (!_workspace.Document.TryGet(rootId, out SongObject? added)
+						|| added is not FmSynthDefinition synth)
+						throw new InvalidOperationException(
+							$"Committed import root #{rootId.Value} is not a Synth.");
 					firstSynth ??= synth;
-					selectNode ??=
-						FindTreeObject(
-							_workspace.Document.GetSectionRoot(
-								SongTreeSection.Samples),
-							synth.Id);
+					selectNode ??= FindTreeObject(
+						_workspace.Document.GetSectionRoot(
+							SongTreeSection.Samples), rootId);
 					imported++;
 				}
+				copiedObjects += accepted.Commit.Preparation.PreparedObjects.Count;
+				reusedDefinitions += accepted.Summary.AutomaticallyReusedObjectCount
+					+ accepted.Summary.ManuallyReusedObjectCount;
 			}
 			catch (Exception ex)
 			{
@@ -1549,16 +1550,15 @@ public sealed class MainWindow : Window
 		}
 
 		if (imported == 0)
-		{
-			SetStatus("No synths were imported.");
-			return;
-		}
+			return; // cancel/close is not a failed import
 
-		RefreshDocumentView(
-			imported == 1
-				? "Imported 1 synth"
-				: $"Imported {imported} synths",
-			selectNode);
+		string importStatus = $"Imported {imported} synth" +
+			(imported == 1 ? "" : "s") +
+			$" · {copiedObjects} new object" +
+			(copiedObjects == 1 ? "" : "s") +
+			$" · {reusedDefinitions} reused definition" +
+			(reusedDefinitions == 1 ? "" : "s");
+		RefreshDocumentView(importStatus, selectNode);
 
 		if (imported == 1
 			&& firstSynth is not null)
