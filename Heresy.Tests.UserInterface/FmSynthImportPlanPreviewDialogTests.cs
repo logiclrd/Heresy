@@ -273,7 +273,7 @@ public sealed class FmSynthImportPlanPreviewDialogTests
         Assert.That(dialog.AttemptCommit(), Is.Null);
         Assert.That(destination.Objects, Has.Count.EqualTo(1));
 
-        FmImportReferenceKey use = dialog.Plan.DiscoveredReferences.Keys.Single();
+        FmImportReferenceKey use = dialog.Plan.Effective.References.Single().Use;
         dialog.Projection.ApplyUse(use, FmImportMappingKind.ReuseExisting, local.Id);
         Assert.That(dialog.Plan.StageA!.IsInternallyValid, Is.True);
         Assert.That(dialog.CanCommit, Is.True);
