@@ -135,12 +135,21 @@ public sealed class FmSynthImportStageBPreflightTests
             x.Kind == FmImportStageBIssueKind.AutomaticMatchChanged), Is.True,
             Message(stale));
 
-        // The user may deliberately choose a musically different local
-        // Envelope. Manual provenance has no exact-equality requirement.
+        // Manually choosing a musically different local Envelope is fine,
+        // but does NOT make a stale destination snapshot safe to commit.
         FmImportObjectKey key = new(from.Discovery.SourceDocumentIdentity, saved.Id);
         plan.SetDefinitionMapping(key, FmImportMappingKind.ReuseExisting, identical.Id);
-        FmImportStageBResult manual =
+        FmImportStageBResult manualOnStaleSong =
             FmSynthImportStageBPreflight.Check(plan, [from], destination);
+        Assert.That(manualOnStaleSong.Issues.Any(issue =>
+            issue.Kind == FmImportStageBIssueKind.DestinationChanged), Is.True);
+
+        // Reopening the plan against the now-current destination permits a
+        // deliberate manual reuse even if it is no longer strictly equal.
+        FmSynthImportPlan fresh = Plan(destination, from);
+        fresh.SetDefinitionMapping(key, FmImportMappingKind.ReuseExisting, identical.Id);
+        FmImportStageBResult manual =
+            FmSynthImportStageBPreflight.Check(fresh, [from], destination);
         Assert.That(manual.IsPreflightValid, Is.True, Message(manual));
     }
 
@@ -168,6 +177,114 @@ public sealed class FmSynthImportStageBPreflightTests
             FmSynthImportStageBPreflight.Check(plan, [from], destination);
         Assert.That(stale.Issues.Any(x =>
             x.Kind == FmImportStageBIssueKind.SourceChanged), Is.True);
+    }
+
+    [Test]
+    public void SourceParameterEditWithoutRevisionOrTopologyChangeInvalidatesFingerprint()
+    {
+        SongDocument source = new();
+        FmSynthDefinition root = Synth(source, "Original",
+            new FmSynthGraph([new FmConstantNode(0, 0.2)], 0));
+        SongDocument destination = new();
+        FmImportExactMatchSource from = Discover(source, root);
+        FmSynthImportPlan plan = Plan(destination, from);
+        uint revision = source.DocumentRevision;
+        Assert.That(FmSynthImportStageBPreflight.Check(plan,
+            [from], destination).IsPreflightValid, Is.True);
+
+        // Same node ID, same type, same wires and output: rediscovery alone
+        // cannot distinguish these two authored instruments.
+        root.Graph = new FmSynthGraph([new FmConstantNode(0, 0.9)], 0);
+        Assert.That(source.DocumentRevision, Is.EqualTo(revision));
+        FmImportStageBResult result = FmSynthImportStageBPreflight.Check(plan,
+            [from], destination);
+        Assert.That(result.Issues.Any(issue =>
+            issue.Kind == FmImportStageBIssueKind.SourceChanged
+            && issue.Message.Contains("authored content")), Is.True, Message(result));
+        Assert.That(result.PreparedSamples, Is.Empty);
+    }
+
+    [Test]
+    public void DestinationParameterEditWithoutRevisionInvalidatesExistingPlan()
+    {
+        SongDocument source = new();
+        FmSynthDefinition root = Synth(source, "Root",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        SongDocument destination = new();
+        FmSynthDefinition local = Synth(destination, "Local",
+            new FmSynthGraph([new FmConstantNode(0, 0.2)], 0));
+        FmImportExactMatchSource from = Discover(source, root);
+        FmSynthImportPlan plan = Plan(destination, from);
+        uint revision = destination.DocumentRevision;
+        local.Graph = new FmSynthGraph([new FmConstantNode(0, 0.4)], 0);
+        Assert.That(destination.DocumentRevision, Is.EqualTo(revision));
+        FmImportStageBResult result = FmSynthImportStageBPreflight.Check(
+            plan, [from], destination);
+        Assert.That(result.Issues.Any(issue =>
+            issue.Kind == FmImportStageBIssueKind.DestinationChanged), Is.True,
+            Message(result));
+        Assert.That(result.PreparedSamples, Is.Empty);
+    }
+
+    [Test]
+    public void DestinationRootSequenceMissingTombstonedOrWrongKindFailsLiveAudit()
+    {
+        SongDocument source = new();
+        FmSynthDefinition root = Synth(source, "Imported",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        FmImportExactMatchSource from = Discover(source, root);
+
+        SongDocument missing = new();
+        missing.RootSequenceId = (ObjectId)9999U;
+        FmImportStageBResult absent = FmSynthImportStageBPreflight.Check(
+            Plan(missing, from), [from], missing);
+        Assert.That(absent.Issues.Any(issue =>
+            issue.Kind == FmImportStageBIssueKind.DestinationReferenceMissing),
+            Is.True, Message(absent));
+
+        SongDocument wrong = new();
+        FmSynthDefinition wrongType = Synth(wrong, "Not sequence",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        wrong.RootSequenceId = wrongType.Id;
+        FmImportStageBResult incompatible = FmSynthImportStageBPreflight.Check(
+            Plan(wrong, from), [from], wrong);
+        Assert.That(incompatible.Issues.Any(issue =>
+            issue.Kind == FmImportStageBIssueKind.DestinationReferenceWrongType),
+            Is.True, Message(incompatible));
+
+        SongDocument tombstone = new();
+        FmSynthDefinition gone = Synth(tombstone, "Gone",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        tombstone.Remove(gone.Id);
+        tombstone.RootSequenceId = gone.Id;
+        Assert.That(tombstone.Tombstones.ContainsKey(gone.Id), Is.True);
+        uint revision = tombstone.DocumentRevision;
+        FmImportStageBResult deleted = FmSynthImportStageBPreflight.Check(
+            Plan(tombstone, from), [from], tombstone);
+        Assert.That(deleted.Issues.Any(issue =>
+            issue.Kind == FmImportStageBIssueKind.DestinationReferenceTombstone),
+            Is.True, Message(deleted));
+        Assert.That(tombstone.Tombstones.ContainsKey(gone.Id), Is.True,
+            "fingerprint and whole-song audit must not run serializer tombstone pruning");
+        Assert.That(tombstone.DocumentRevision, Is.EqualTo(revision));
+    }
+
+    [Test]
+    public void OpaquePatternScriptsAreWarnedWithoutBlockingValidExplicitReferences()
+    {
+        SongDocument source = new();
+        FmSynthDefinition root = Synth(source, "Root",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        SongDocument destination = new();
+        destination.Add(new Heresy.Core.Patterns.ScriptPatternDefinition(
+            destination.AllocateObjectId(), "Script"));
+        FmImportExactMatchSource from = Discover(source, root);
+        FmImportStageBResult result = FmSynthImportStageBPreflight.Check(
+            Plan(destination, from), [from], destination);
+        Assert.That(result.IsPreflightValid, Is.True, Message(result));
+        Assert.That(result.Warnings.Any(issue =>
+            issue.Kind == FmImportStageBIssueKind.DestinationOpaqueScriptReferences),
+            Is.True);
     }
 
     [Test]
