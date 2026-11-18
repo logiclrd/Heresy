@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 
 using Heresy.Core.Envelopes;
@@ -73,6 +74,11 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
             ShowColumnHeaders = true,
             MinHeight = 220,
         };
+        // The fork's Generic text-cell template does not specify Foreground,
+        // and the grid's nested template presenter need not inherit Window's
+        // foreground. Give all regular cell templates a theme-aware default.
+        _grid.Bind(TemplatedControl.ForegroundProperty,
+            new DynamicResourceExtension("SystemControlForegroundBaseHighBrush"));
         _adapter = new FmSynthImportGridAdapter(_projection, _grid,
             CreateDependencyCell, CreateActionCell);
 
@@ -221,9 +227,9 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
             Text = row.Label,
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
-            Foreground = row.Snapshot.IsDimmed ? Brushes.Gray : null,
             Margin = new Thickness(3, 2),
         };
+        BindGridTextForeground(text, row.Snapshot.IsDimmed);
         if (!row.Snapshot.IsAutomaticExactMatch)
             return text;
         // Orange conveys provenance, never validation. The label explicitly
@@ -245,14 +251,15 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
             Spacing = 5,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        actions.Children.Add(new TextBlock
+        TextBlock actionText = new()
         {
             Text = row.Action,
             VerticalAlignment = VerticalAlignment.Center,
-            Foreground = row.IsDimmed ? Brushes.Gray : null,
             MaxWidth = 185,
             TextWrapping = TextWrapping.Wrap,
-        });
+        };
+        BindGridTextForeground(actionText, row.IsDimmed);
+        actions.Children.Add(actionText);
 
         FmImportTreeEdit editable = row.AvailableEdits;
         if (editable.HasFlag(FmImportTreeEdit.NavigateToCanonical))
@@ -329,6 +336,20 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         }
 
         return actions;
+    }
+
+    /// <summary>
+    /// The fork's template-column content does not reliably inherit the
+    /// host Window's Foreground (in Dark Mode it was black on black).
+    /// Bind a Fluent theme resource, not a fixed color: light/dark switches
+    /// and inactive aliases remain legible in either mode.
+    /// </summary>
+    internal static void BindGridTextForeground(TextBlock label, bool isDimmed)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+        label.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension(
+            isDimmed ? "SystemControlForegroundBaseMediumBrush"
+                     : "SystemControlForegroundBaseHighBrush"));
     }
 
     private static void AddButton(StackPanel panel, string caption, Action click)
