@@ -104,6 +104,7 @@ public static class FmSynthImportExactMatcher
                 new FmImportExistingName(obj.Kind, obj.Name)),
             destination.Objects.Values.OfType<FilterDefinition>());
         plan.InitializeExactMatchDefaults(matches);
+        plan.CaptureSourceDocumentRevisions(inputs);
         plan.AttachStageAContext(FmImportStageAContext.Capture(inputs, destination));
         return plan;
     }
