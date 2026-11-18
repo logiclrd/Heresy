@@ -308,6 +308,36 @@ public sealed class FmSynthImportStageBPreflightTests
     }
 
     [Test]
+    public void UnhashedLegacyAssetMustStillMatchLoadedPcmSamples()
+    {
+        using TemporaryDirectory dir = new();
+        string path = Path.Combine(dir.Path, "unhashed.wav");
+        byte[] original = Wave(5000);
+        File.WriteAllBytes(path, original);
+        SongDocument source = new();
+        SampleDefinition sample = new(source.AllocateObjectId(), "Legacy",
+            new ExternalAssetReference(path)); // intentionally no SHA-256
+        sample.ReloadPersistedEncoding(sample.Asset!, original);
+        source.Add(sample);
+        FmSynthDefinition root = Synth(source, "Root",
+            new FmSynthGraph([new FmSoundSourceNode(0, sample.Id, 440)], 0));
+        FmImportExactMatchSource from = Discover(source, root);
+        SongDocument destination = new();
+        FmSynthImportPlan plan = Plan(destination, from);
+        Assert.That(FmSynthImportStageBPreflight.Check(plan, [from],
+            destination).IsPreflightValid, Is.True);
+
+        // Same file size, same sample rate and channels, but different PCM.
+        File.WriteAllBytes(path, Wave(-5000));
+        FmImportStageBResult changed =
+            FmSynthImportStageBPreflight.Check(plan, [from], destination);
+        Assert.That(changed.Issues.Any(x =>
+            x.Kind == FmImportStageBIssueKind.SampleAssetInvalid), Is.True,
+            Message(changed));
+        Assert.That(changed.PreparedSamples, Is.Empty);
+    }
+
+    [Test]
     public void ExplicitLocalMappingExcludesUnusedMissingSampleFromAssetReads()
     {
         SongDocument source = new();
