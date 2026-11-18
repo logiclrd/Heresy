@@ -100,13 +100,13 @@ public sealed class FmSynthImportStageAValidatorTests
         FmSynthDefinition local = Add(destination, "Local",
             new FmSynthGraph([new FmNoiseNode(0)], 0));
         FmSynthImportPlan plan = MakePlan(source, root, destination);
-        FmImportReferenceKey tone = plan.DiscoveredReferences.Values
+        FmImportReferenceKey tone = plan.Effective.References
             .Single(x => x.Use.ToneIndex == 0 &&
-                x.Kind == FmImportReferenceKind.SoundSource).Use;
-        FmImportReferenceKey synthSource = plan.DiscoveredReferences.Values
+                x.Use.Slot == "Source").Use;
+        FmImportReferenceKey synthSource = plan.Effective.References
             .Single(x => x.Use.NodeId == 0 &&
                 x.Use.Owner.SourceObjectId == root.Id &&
-                x.Kind == FmImportReferenceKind.SoundSource).Use;
+                x.Use.Slot == "Source").Use;
 
         Assert.That(plan.StageA!.IsInternallyValid, Is.True, Dump(plan));
         plan.SetReferenceOverride(tone, FmImportMappingKind.None);
@@ -156,12 +156,12 @@ public sealed class FmSynthImportStageAValidatorTests
             ], 4));
         SongDocument destination = new();
         FmSynthImportPlan plan = MakePlan(source, root, destination);
-        FmImportGraphInputKey[] operands = plan.DiscoveredConnections.Values
-            .Where(x => x.Target.NodeId == 3)
-            .Select(FmImportGraphInputKey.From).ToArray();
-        FmImportGraphInputKey audio = plan.DiscoveredConnections.Values
-            .Where(x => x.Target.NodeId == 4)
-            .Select(FmImportGraphInputKey.From).Single();
+        FmImportGraphInputKey[] operands = plan.Effective.Connections
+            .Where(x => x.Key.Consumer.NodeId == 3)
+            .Select(x => x.Key).ToArray();
+        FmImportGraphInputKey audio = plan.Effective.Connections
+            .Where(x => x.Key.Consumer.NodeId == 4)
+            .Select(x => x.Key).Single();
 
         Assert.That(plan.StageA!.IsInternallyValid, Is.True, Dump(plan));
         plan.SetGraphInputConnected(operands[0], false);
@@ -197,7 +197,7 @@ public sealed class FmSynthImportStageAValidatorTests
         FmSynthDefinition local = Add(destination, "Non-cyclic",
             new FmSynthGraph([new FmConstantNode(0, .5)], 0));
         FmSynthImportPlan plan = MakePlan(source, root, destination);
-        FmImportReferenceKey use = plan.DiscoveredReferences.Values.Single(
+        FmImportReferenceKey use = plan.Effective.References.Single(
             x => x.Use.ToneIndex == 0).Use;
 
         Assert.That(plan.StageA!.Issues.Any(x =>
@@ -299,7 +299,13 @@ public sealed class FmSynthImportStageAValidatorTests
 
     private static FmImportReferenceKey SingleReference(FmSynthImportPlan plan,
         FmImportReferenceKind kind)
-        => plan.DiscoveredReferences.Values.Single(x => x.Kind == kind).Use;
+        => plan.Effective.References.Single(x => kind switch
+        {
+            FmImportReferenceKind.SoundSource => x.Use.Slot == "Source",
+            FmImportReferenceKind.Filter => x.Use.Slot == "Filter",
+            FmImportReferenceKind.Envelope => x.Use.Slot == "Envelope",
+            _ => false,
+        }).Use;
 
     private static string Dump(FmSynthImportPlan plan)
         => string.Join(" | ", plan.StageA?.Issues.Select(x => x.Message)
