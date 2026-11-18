@@ -41,6 +41,10 @@ public sealed class SongImportBatchEdit
     }
 
     public bool IsApplied { get; private set; }
+    /// <summary>Identity guard for document-scoped UI undo registration.</summary>
+    public bool BelongsTo(SongDocument document) =>
+        ReferenceEquals(_document, document);
+
     public IReadOnlyList<ObjectId> ImportedObjectIds =>
         _placements.Select(placement => placement.Object.Id).ToArray();
 
