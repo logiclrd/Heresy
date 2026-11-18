@@ -201,6 +201,41 @@ public sealed class FmSynthImportStageBPreflightTests
     }
 
     [Test]
+    public void ReorderedLiveFilterStagesInvalidateStalePlannedPortOrdinal()
+    {
+        SongDocument source = new();
+        FilterDefinition saved = new(source.AllocateObjectId(), "Saved", [
+            new FilterStageDefinition(1, "first", FilterKind.OnePole),
+            new FilterStageDefinition(2, "second", FilterKind.SvfLowPass)]);
+        source.Add(saved);
+        FmSynthDefinition root = Synth(source, "Root",
+            new FmSynthGraph([
+                new FmConstantNode(1, .5),
+                new FmFilterNode(2, null, new FilterInstance(saved),
+                    [new FmFilterParameterConnection(1, FilterKind.OnePole, 0,
+                        "CutoffHz", 1)]),
+            ], 2));
+
+        SongDocument destination = new();
+        FilterDefinition local = new(destination.AllocateObjectId(), "Different", [
+            new FilterStageDefinition(1, "first", FilterKind.OnePole),
+            new FilterStageDefinition(2, "second", FilterKind.SvfLowPass)]);
+        destination.Add(local);
+        FmImportExactMatchSource from = Discover(source, root);
+        FmSynthImportPlan plan = Plan(destination, from);
+        Assert.That(FmSynthImportStageBPreflight.Check(plan, [from],
+            destination).IsPreflightValid, Is.True);
+
+        // Same stage identity and parameter name, different runtime ordinal.
+        local.MoveStage(1, 1);
+        FmImportStageBResult stale =
+            FmSynthImportStageBPreflight.Check(plan, [from], destination);
+        Assert.That(stale.Issues.Any(x =>
+            x.Kind == FmImportStageBIssueKind.FilterPortChanged &&
+            x.Message.Contains("index")), Is.True, Message(stale));
+    }
+
+    [Test]
     public void PendingSampleIsDecodedHashedAndFullyOwnedByTheResult()
     {
         SongDocument source = new();
