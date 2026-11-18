@@ -317,6 +317,8 @@ public sealed class FmSynthImportTreeProjection
             string label = isRoot ? Name(key)
                 : location.Reference is FmImportReferenceKey referenced
                   ? $"{referenced.Slot}: {Name(key)}" : Name(key);
+            if (alias)
+                label += " — linked to canonical use";
             string? reason = !active ? "Use inactive or remapped." : null;
             List<FmImportTreeRow> children = [];
             // Expand the definition exactly once, at its canonical imported
@@ -413,6 +415,8 @@ public sealed class FmSynthImportTreeProjection
             string nodeType = _plan.GetDiscoveredNodeType(node) ?? "Node";
             string name = $"#{node.NodeId} {nodeType.Replace("Fm", "")
                 .Replace("Node", "")}";
+            if (alias)
+                name += " (another use)";
             FmImportTreeEdit edits = FmImportTreeEdit.PreserveDisconnected;
             if (_plan.DiscoveredSynthGraphs.Any(graph =>
                 graph.OutputNode == node))
