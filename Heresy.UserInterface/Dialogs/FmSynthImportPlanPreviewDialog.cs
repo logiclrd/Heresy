@@ -147,12 +147,15 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
             IsEnabled = false,
             MinWidth = 178,
         };
+        // Import is the acceptance action, not the legacy importer.
+        // Escape always cancels/returns; Enter applies only when Stage A
+        // enables Import. Name editors consume Enter for name acceptance.
+        DialogActionLayout.ConfigureButtons(_importButton, close);
         if (enableCommit)
             _importButton.Click += async (_, _) => await AcceptImportAsync();
         else
             ToolTip.SetTip(_importButton,
-                "This preview cannot apply changes. The existing Import selected " +
-                "command still uses the legacy importer.");
+                "This preview does not apply any changes.");
 
         StackPanel actions = new()
         {
