@@ -292,7 +292,7 @@ public sealed class FmSynthImportTreeProjectionTests
         FmSynthDefinition right = Add(two, "Right",
             new FmSynthGraph([new FmConstantNode(0, 2)], 0));
         Assert.That(left.Id, Is.EqualTo(right.Id));
-        FmImportTreeProjection projection = new(Plan(new SongDocument(),
+        FmSynthImportTreeProjection projection = new(Plan(new SongDocument(),
             Discover("left.hm", one, left), Discover("right.hm", two, right)));
         Assert.That(projection.Roots, Has.Count.EqualTo(2));
         Assert.That(projection.Roots[0].Key,
