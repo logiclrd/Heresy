@@ -279,7 +279,10 @@ public sealed class SongDocument
 			}
 			else
 			{
-				for (int index = changed - 1; index >= 0; index--)
+				// Undo removes in original order, so restoring in original
+				// order is essential: reversed restoration would silently
+				// reorder two sibling tree placements after a failed undo.
+				for (int index = 0; index < changed; index++)
 				{
 					SongImportBatchEdit.Placement placement = edit.Placements[index];
 					_objects.Add(placement.Object.Id, placement.Object);
