@@ -58,6 +58,7 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         MinWidth = 690;
         MinHeight = 470;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        WindowState = WindowState.Maximized;
 
         TextBlock introduction = new()
         {
@@ -259,11 +260,15 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
     private Control CreateActionCell(FmSynthImportGridRow model)
     {
         FmImportTreeRow row = model.Snapshot;
-        StackPanel actions = new()
+        // Dock all fixed-width actions to the left; the last (name) text box
+        // fills whatever width remains in the TreeDataGrid Plan cell.
+        // A horizontal StackPanel measures its children at infinite width
+        // and could never stretch the name field to the column's right edge.
+        DockPanel actions = new()
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 5,
+            LastChildFill = true,
             VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         TextBlock actionText = new()
         {
@@ -273,6 +278,8 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
             TextWrapping = TextWrapping.Wrap,
         };
         BindGridTextForeground(actionText, row.IsDimmed);
+        actionText.Margin = new Thickness(0, 0, 6, 0);
+        DockPanel.SetDock(actionText, Dock.Left);
         actions.Children.Add(actionText);
 
         FmImportTreeEdit editable = row.AvailableEdits;
@@ -297,7 +304,7 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
                 Text = initialName,
                 PlaceholderText = "Copy name",
                 MinWidth = 100,
-                Width = 140,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
             };
             void CommitName()
             {
@@ -366,15 +373,17 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
                      : "SystemControlForegroundBaseHighBrush"));
     }
 
-    private static void AddButton(StackPanel panel, string caption, Action click)
+    private static void AddButton(DockPanel panel, string caption, Action click)
     {
         Button button = new()
         {
             Content = caption,
             MinWidth = 65,
             Padding = new Thickness(6, 3),
+            Margin = new Thickness(0, 0, 6, 0),
         };
         button.Click += (_, _) => click();
+        DockPanel.SetDock(button, Dock.Left);
         panel.Children.Add(button);
     }
 
@@ -385,7 +394,7 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         public override string ToString() => Label;
     }
 
-    private void AddMappingPicker(StackPanel parent,
+    private void AddMappingPicker(DockPanel parent,
         FmImportObjectKey? objectKey, FmImportReferenceKey? use)
     {
         if (objectKey is null && use is null)
@@ -443,6 +452,7 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
             MinWidth = 145,
             MaxWidth = 265,
             HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 6, 0),
         };
         ToolTip.SetTip(picker, use is null ?
             "Change this shared definition for all uses" :
@@ -463,6 +473,7 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
                 _projection.ApplyDefinition(selectedObject,
                     chosen.Kind, chosen.ExistingId);
         };
+        DockPanel.SetDock(picker, Dock.Left);
         parent.Children.Add(picker);
     }
 
