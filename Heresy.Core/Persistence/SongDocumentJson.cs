@@ -163,6 +163,24 @@ public static class SongDocumentJson
 			scriptReferenceAnalyzer);
 	}
 
+	/// <summary>
+	/// Capture the complete current authoring state as deterministic JSON for
+	/// read-only content comparisons (such as final-click import validation).
+	/// Unlike ordinary save serialization, this must NOT prune tombstones,
+	/// allocate IDs, normalize tree placements, or advance document revisions.
+	/// Asset paths are represented in memory; this does not load encoded bytes.
+	/// Use asset preflight separately when importing a Sample.
+	/// </summary>
+	public static string SerializeAuthoringSnapshot(SongDocument document)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		return Serialize(document,
+			sample => sample.Asset?.FullPath
+				?? (sample.PendingAsset is PendingSampleAsset pending
+					? "pending:" + pending.FileName : "missing-asset"),
+			pruneUnreferencedTombstones: false);
+	}
+
 	internal static string Serialize(
 		SongDocument document,
 		Func<SampleDefinition, string> assetPathSelector,
