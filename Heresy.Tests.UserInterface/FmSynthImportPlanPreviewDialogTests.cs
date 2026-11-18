@@ -4,6 +4,9 @@ using System.Linq;
 
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
+using Avalonia.Media;
+using Avalonia.Styling;
+using Avalonia.VisualTree;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
@@ -112,6 +115,71 @@ public sealed class FmSynthImportPlanPreviewDialogTests
             Assert.That(dialog.GridControl.Rows, Is.Not.Null);
             Assert.That(dialog.GridAdapter.Paths.Count, Is.GreaterThan(1));
             Assert.That(destination.Objects, Is.Empty);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public void GridDependencyAndPlanLabelsFollowLightAndDarkThemeForegrounds()
+    {
+        // Regression: the fork's template-cell contents could render black on
+        // black in Dark Mode even though the tree chevrons and inputs rendered.
+        SongDocument source = new();
+        FmSynthDefinition root = Add(source, "ForegroundProbe",
+            new FmSynthGraph([
+                new FmConstantNode(1, .5),
+                new FmMultiNode(2, 1),
+            ], 2));
+        FmSynthImportPlanPreviewDialog dialog = new(
+            Input(source, root), [root.Id], new SongDocument())
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            RequestedThemeVariant = ThemeVariant.Dark,
+        };
+        dialog.Show();
+        try
+        {
+            dialog.UpdateLayout();
+            TextBlock Dependency() => dialog.GridControl.GetVisualDescendants()
+                .OfType<TextBlock>()
+                .First(label => label.Text?.Contains("ForegroundProbe",
+                    StringComparison.Ordinal) == true);
+            TextBlock PlanText() => dialog.GridControl.GetVisualDescendants()
+                .OfType<TextBlock>()
+                .First(label => label.Text?.StartsWith("Import copy",
+                    StringComparison.Ordinal) == true);
+
+            static void AssertTextBrightness(TextBlock label, bool dark)
+            {
+                Assert.That(label.Foreground, Is.AssignableTo<ISolidColorBrush>(),
+                    "A templated grid label needs a resolved theme brush");
+                Color color = ((ISolidColorBrush)label.Foreground!).Color;
+                int brightness = color.R + color.G + color.B;
+                if (dark)
+                    Assert.That(brightness, Is.GreaterThan(480),
+                        "Dark Mode text must not be black on black");
+                else
+                    Assert.That(brightness, Is.LessThan(300),
+                        "Light Mode text must not be white on white");
+            }
+
+            AssertTextBrightness(Dependency(), dark: true);
+            AssertTextBrightness(PlanText(), dark: true);
+
+            // DynamicResource is essential: this is the same live window,
+            // with no rebuild or hardcoded light/dark color substitution.
+            dialog.RequestedThemeVariant = ThemeVariant.Light;
+            dialog.UpdateLayout();
+            AssertTextBrightness(Dependency(), dark: false);
+            AssertTextBrightness(PlanText(), dark: false);
+
+            dialog.RequestedThemeVariant = ThemeVariant.Dark;
+            dialog.UpdateLayout();
+            AssertTextBrightness(Dependency(), dark: true);
+            AssertTextBrightness(PlanText(), dark: true);
         }
         finally
         {
