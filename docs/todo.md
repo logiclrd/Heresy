@@ -138,9 +138,16 @@ Do not reintroduce completed-task checklists here.
   name fields. On final completion, REMOVE the extra "Review graph-aware
   plan (preview)" button and transfer its function to the existing
   "Import selected" button WITHOUT renaming that button.
-  Remaining: destination ID/asset transaction and rollback, cross-filter
-  stage translation decisions, wiring accepted preview decisions into
-  one atomic undoable Import command, and same-file Source+Multi acceptance.
+  The tenth slice adds a nonmutating transaction preparer: it reads
+  the destination's next-ID cursor without allocation, computes provisional
+  IDs scoped to each source document, and constructs detached graph,
+  Instrument, Sample, Filter and Envelope copies with per-use remaps,
+  semantic graph-input selection and pending encoded Sample assets.
+  No prepared batch is exposed if any clone fails. Its IDs are not reserved.
+  Remaining: single atomic destination publication, rollback and undo,
+  commit-boundary freshness/ID recheck, possible cross-Filter stage override
+  translation, final command handoff, and same-file Source+Multi/save/reopen
+  interactive acceptance.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
