@@ -248,9 +248,17 @@ internal static class FmSynthImportStageAValidator
             {
                 if (original.Target is not null && !explicitlyUnassigned)
                 {
-                    Error(FmImportStageAIssueKind.MissingSource,
-                        $"Reference {use.Slot} targets missing source object #{original.Target.Value.SourceObjectId.Value}; map it or explicitly disconnect it.",
-                        use: use);
+                    FmImportDiscoveryIssue? incompatible = plan.DiscoveryIssues
+                        .FirstOrDefault(issue => issue.Use == use
+                            && issue.Kind == FmImportDiscoveryIssueKind.IncompatibleObject);
+                    if (incompatible is not null)
+                        Error(FmImportStageAIssueKind.IncompatibleTarget,
+                            incompatible.Message + " Choose a compatible target or explicitly disconnect.",
+                            use: use);
+                    else
+                        Error(FmImportStageAIssueKind.MissingSource,
+                            $"Reference {use.Slot} targets missing source object #{original.Target.Value.SourceObjectId.Value}; map it or explicitly disconnect it.",
+                            use: use);
                 }
                 else if (original.Kind == FmImportReferenceKind.SoundSource
                     && use.ToneIndex is not null)
