@@ -144,6 +144,29 @@ public sealed class FmSynthImportStageAValidatorTests
     }
 
     [Test]
+    public void IncompatibleSavedSourceIsDiagnosedAsWrongTypeNotMissing()
+    {
+        SongDocument source = new();
+        FilterDefinition notSound = new(source.AllocateObjectId(), "Filter");
+        source.Add(notSound);
+        FmSynthDefinition root = Add(source, "Root",
+            new FmSynthGraph([new FmSoundSourceNode(0, notSound.Id, C4)], 0));
+        SongDocument destination = new();
+        FmSynthDefinition local = Add(destination, "Replacement",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+
+        FmSynthImportPlan plan = MakePlan(source, root, destination);
+        FmImportReferenceKey use = SingleReference(plan, FmImportReferenceKind.SoundSource);
+        Assert.That(plan.StageA!.IsInternallyValid, Is.False);
+        Assert.That(plan.StageA.Issues.Any(x =>
+            x.Kind == FmImportStageAIssueKind.IncompatibleTarget
+            && x.Reference == use && x.Message.Contains("FilterDefinition")),
+            Is.True, Dump(plan));
+        plan.SetReferenceOverride(use, FmImportMappingKind.ReuseExisting, local.Id);
+        Assert.That(plan.StageA.IsInternallyValid, Is.True, Dump(plan));
+    }
+
+    [Test]
     public void OperatorMustRetainAnOperandWhileOptionalFilterInputsCanDisconnect()
     {
         SongDocument source = new();
