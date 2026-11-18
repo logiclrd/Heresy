@@ -47,6 +47,7 @@ public sealed class FmSynthImportGridAdapter : IDisposable
     private readonly TreeDataGrid _grid;
     private readonly Func<FmSynthImportGridRow, Control> _createDependency;
     private readonly Func<FmSynthImportGridRow, Control> _createAction;
+    private readonly Func<FmSynthImportGridRow, Control> _createNotes;
     private readonly Dictionary<FmImportTreeRowKey, IndexPath> _paths = [];
     private readonly HashSet<FmImportTreeRowKey> _expanded = [];
     private FmImportTreeRowKey? _selected;
@@ -58,12 +59,14 @@ public sealed class FmSynthImportGridAdapter : IDisposable
         FmSynthImportTreeProjection projection,
         TreeDataGrid grid,
         Func<FmSynthImportGridRow, Control> createDependency,
-        Func<FmSynthImportGridRow, Control> createAction)
+        Func<FmSynthImportGridRow, Control> createAction,
+        Func<FmSynthImportGridRow, Control> createNotes)
     {
         _projection = projection ?? throw new ArgumentNullException(nameof(projection));
         _grid = grid ?? throw new ArgumentNullException(nameof(grid));
         _createDependency = createDependency ?? throw new ArgumentNullException(nameof(createDependency));
         _createAction = createAction ?? throw new ArgumentNullException(nameof(createAction));
+        _createNotes = createNotes ?? throw new ArgumentNullException(nameof(createNotes));
         _projection.Changed += OnProjectionChanged;
         Rebind();
     }
@@ -140,9 +143,14 @@ public sealed class FmSynthImportGridAdapter : IDisposable
                 new FuncDataTemplate<FmSynthImportGridRow>(
                     (row, _) => _createAction(row!)),
                 width: new GridLength(4, GridUnitType.Star)));
-            next.Columns.Add(new TextColumn<FmSynthImportGridRow, string>(
-                "Notes", row => row.Notes,
-                new GridLength(2, GridUnitType.Star)));
+            // TextColumn's Generic template likewise leaves its TextBlock
+            // foreground unspecified. Use the same explicit theme-aware text
+            // binding as the Dependency and Plan template cells.
+            next.Columns.Add(new TemplateColumn<FmSynthImportGridRow>(
+                "Notes",
+                new FuncDataTemplate<FmSynthImportGridRow>(
+                    (row, _) => _createNotes(row!)),
+                width: new GridLength(2, GridUnitType.Star)));
 
             _source = next;
             next.RowExpanded += OnRowExpanded;
