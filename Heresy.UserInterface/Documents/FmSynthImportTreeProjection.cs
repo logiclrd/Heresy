@@ -347,8 +347,8 @@ public sealed class FmSynthImportTreeProjection
                         }
                         else
                         {
-                            foreach (FmImportObjectReference use in group)
-                                children.Add(ReferenceRow(use, ancestry));
+                            foreach (FmImportObjectReference toneReference in group)
+                                children.Add(ReferenceRow(toneReference, ancestry));
                         }
                     }
                 }
