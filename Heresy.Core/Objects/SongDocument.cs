@@ -118,6 +118,182 @@ public sealed class SongDocument
 	}
 
 	/// <summary>
+	/// Publish fully prepared imported objects as one document edit. No object,
+	/// tree placement, ID allocation, or Changed notification is exposed until
+	/// every candidate has been verified. An exception rolls back the original
+	/// cursor, revisions, placements and object collection.
+	///
+	/// The caller must run complete import preflight, then supply a freshness
+	/// callback which is evaluated at the mutation boundary. This document's
+	/// standard editing model is single-threaded; this operation does not make
+	/// arbitrary mutable SongObject fields safe for concurrent writers.
+	/// </summary>
+	public SongImportBatchEdit CommitImportedObjects(
+		IReadOnlyList<SongObject> candidates, ObjectId expectedNextId,
+		Func<SongDocument, bool> isCurrent)
+	{
+		ArgumentNullException.ThrowIfNull(candidates);
+		ArgumentNullException.ThrowIfNull(isCurrent);
+		if (candidates.Count == 0)
+			throw new ArgumentException(
+				"Import requires at least one copied object.", nameof(candidates));
+		if (_nextObjectId != expectedNextId.Value || _nextObjectId == 0)
+			throw new InvalidOperationException(
+				"The destination ID cursor changed after import preparation.");
+		if (!isCurrent(this))
+			throw new InvalidOperationException(
+				"A source or destination song changed after import preparation.");
+
+		SongObject[] objects = candidates.ToArray();
+		SongImportBatchEdit.Placement[] placements =
+			new SongImportBatchEdit.Placement[objects.Length];
+		if ((ulong)_nextObjectId + (ulong)objects.Length - 1 > uint.MaxValue)
+			throw new InvalidOperationException("Import exceeds the destination ID range.");
+		HashSet<ObjectId> unique = [];
+		for (int index = 0; index < objects.Length; index++)
+		{
+			SongObject candidate = objects[index]
+				?? throw new ArgumentException("Import includes a null object.", nameof(candidates));
+			ObjectId desired = new((uint)((ulong)_nextObjectId + (ulong)index));
+			if (candidate.Id != desired || !unique.Add(candidate.Id)
+				|| _objects.ContainsKey(candidate.Id)
+				|| _tombstones.ContainsKey(candidate.Id))
+				throw new InvalidOperationException(
+					$"Import ID #{candidate.Id.Value} is not an unused contiguous destination ID.");
+			SongTreeFolder folder = GetSectionRoot(
+				SongTreeSections.ForKind(candidate.Kind));
+			placements[index] = new SongImportBatchEdit.Placement(
+				candidate, folder, new SongTreeObject(candidate.Name, candidate.Id));
+		}
+
+		uint previousNext = _nextObjectId;
+		uint previousDocumentRevision = DocumentRevision;
+		uint previousAudioRevision = AudioRevision;
+		string originalSnapshot =
+			Heresy.Core.Persistence.SongDocumentJson.SerializeAuthoringSnapshot(this);
+		int installed = 0;
+		try
+		{
+			foreach (SongImportBatchEdit.Placement placement in placements)
+			{
+				_objects.Add(placement.Object.Id, placement.Object);
+				installed++;
+				placement.Section.Children.Add(placement.TreeNode);
+			}
+			ulong next = (ulong)previousNext + (ulong)placements.Length;
+			_nextObjectId = next > uint.MaxValue ? 0 : (uint)next;
+			MarkChanged(affectsAudio: true);
+			string committedSnapshot =
+				Heresy.Core.Persistence.SongDocumentJson.SerializeAuthoringSnapshot(this);
+			return new SongImportBatchEdit(this, placements,
+				previousNext, previousDocumentRevision, previousAudioRevision,
+				originalSnapshot, committedSnapshot,
+				DocumentRevision, AudioRevision);
+		}
+		catch
+		{
+			for (int index = installed - 1; index >= 0; index--)
+			{
+				SongImportBatchEdit.Placement placement = placements[index];
+				placement.Section.Children.Remove(placement.TreeNode);
+				_objects.Remove(placement.Object.Id);
+			}
+			_nextObjectId = previousNext;
+			DocumentRevision = previousDocumentRevision;
+			AudioRevision = previousAudioRevision;
+			throw;
+		}
+	}
+
+	/// <summary>Import undo and redo use the same no-intermediate-publish path,
+	/// with a fresh Changed notification and one audio/document revision each.
+	/// They refuse to erase unrelated intervening edits.</summary>
+	internal void ReplayImportBatch(SongImportBatchEdit edit, bool apply)
+	{
+		if (!ReferenceEquals(edit.Document, this))
+			throw new InvalidOperationException("Import edit belongs to another song.");
+		if (_nextObjectId != edit.ExpectedNextId
+			|| DocumentRevision != edit.ExpectedDocumentRevision
+			|| AudioRevision != edit.ExpectedAudioRevision
+			|| !string.Equals(
+				Heresy.Core.Persistence.SongDocumentJson.SerializeAuthoringSnapshot(this),
+				edit.ExpectedSnapshot, StringComparison.Ordinal))
+			throw new InvalidOperationException(
+				"The song changed since this import undo/redo state was recorded.");
+
+		uint priorNext = _nextObjectId;
+		uint priorDocumentRevision = DocumentRevision;
+		uint priorAudioRevision = AudioRevision;
+		int changed = 0;
+		try
+		{
+			if (apply)
+			{
+				foreach (SongImportBatchEdit.Placement placement in edit.Placements)
+				{
+					if (_objects.ContainsKey(placement.Object.Id)
+						|| _tombstones.ContainsKey(placement.Object.Id))
+						throw new InvalidOperationException("An import ID is occupied.");
+				}
+				foreach (SongImportBatchEdit.Placement placement in edit.Placements)
+				{
+					_objects.Add(placement.Object.Id, placement.Object);
+					changed++;
+					placement.Section.Children.Add(placement.TreeNode);
+				}
+				ulong next = (ulong)edit.InitialNextId + (ulong)edit.Placements.Count;
+				_nextObjectId = next > uint.MaxValue ? 0 : (uint)next;
+			}
+			else
+			{
+				foreach (SongImportBatchEdit.Placement placement in edit.Placements)
+				{
+					if (!_objects.TryGetValue(placement.Object.Id, out SongObject? current)
+						|| !ReferenceEquals(current, placement.Object)
+						|| !placement.Section.Children.Contains(placement.TreeNode))
+						throw new InvalidOperationException(
+							"An imported object or its tree placement was replaced.");
+				}
+				foreach (SongImportBatchEdit.Placement placement in edit.Placements)
+				{
+					placement.Section.Children.Remove(placement.TreeNode);
+					_objects.Remove(placement.Object.Id);
+					changed++;
+				}
+				_nextObjectId = edit.InitialNextId;
+			}
+			MarkChanged(affectsAudio: true);
+			edit.Advance(!apply, _nextObjectId, DocumentRevision, AudioRevision,
+				Heresy.Core.Persistence.SongDocumentJson.SerializeAuthoringSnapshot(this));
+		}
+		catch
+		{
+			if (apply)
+			{
+				for (int index = changed - 1; index >= 0; index--)
+				{
+					SongImportBatchEdit.Placement placement = edit.Placements[index];
+					placement.Section.Children.Remove(placement.TreeNode);
+					_objects.Remove(placement.Object.Id);
+				}
+			}
+			else
+			{
+				for (int index = changed - 1; index >= 0; index--)
+				{
+					SongImportBatchEdit.Placement placement = edit.Placements[index];
+					_objects.Add(placement.Object.Id, placement.Object);
+					placement.Section.Children.Add(placement.TreeNode);
+				}
+			}
+			_nextObjectId = priorNext;
+			DocumentRevision = priorDocumentRevision;
+			AudioRevision = priorAudioRevision;
+			throw;
+		}
+	}
+
+	/// <summary>
 	/// Drops tombstones which no longer have references. The caller supplies
 	/// the set because reference discovery belongs to the serializer/compiler.
 	/// </summary>
