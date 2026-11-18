@@ -56,6 +56,39 @@ public sealed class FmSynthImportPlanPreviewDialogTests
     }
 
     [AvaloniaTest]
+    public void PreviewDefaultsMaximizedWithOneTwoOneColumnsAndStretchingCopyName()
+    {
+        SongDocument source = new();
+        FmSynthDefinition root = Add(source, "Stretch test",
+            new FmSynthGraph([new FmConstantNode(0, .5)], 0));
+        FmSynthImportPlanPreviewDialog dialog = new(
+            Input(source, root), [root.Id], new SongDocument());
+        Assert.That(dialog.WindowState, Is.EqualTo(WindowState.Maximized));
+        var columns = dialog.GridAdapter.Source.Columns;
+        Assert.That(columns, Has.Count.EqualTo(3));
+        Assert.That(columns[0].Width.Value, Is.EqualTo(1));
+        Assert.That(columns[1].Width.Value, Is.EqualTo(2));
+        Assert.That(columns[2].Width.Value, Is.EqualTo(1));
+
+        // Real template renderer: the name must be the final child of a
+        // stretching DockPanel (not a fixed-width StackPanel child).
+        FmSynthImportGridRow model = dialog.GridAdapter.Source.Items.Single();
+        var cell = typeof(FmSynthImportPlanPreviewDialog)
+            .GetMethod("CreateActionCell", System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(dialog, [model]);
+        DockPanel panel = (DockPanel)cell!;
+        Assert.That(panel.LastChildFill, Is.True);
+        Assert.That(panel.HorizontalAlignment,
+            Is.EqualTo(Avalonia.Layout.HorizontalAlignment.Stretch));
+        TextBox name = panel.Children.OfType<TextBox>().Single();
+        Assert.That(name.Width, Is.NaN);
+        Assert.That(name.HorizontalAlignment,
+            Is.EqualTo(Avalonia.Layout.HorizontalAlignment.Stretch));
+        Assert.That(panel.Children.Last(), Is.SameAs(name));
+    }
+
+    [AvaloniaTest]
     public void GridExpansionsSurviveEditsViaStableKeysAndAliasesNavigateToCurrentOwner()
     {
         SongDocument source = new();
