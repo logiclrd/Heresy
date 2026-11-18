@@ -34,7 +34,7 @@ public sealed class FmSynthImportPlanPreviewDialogTests
         SongFmSynthImportSource imported = Input(source, root);
         uint srcRevision = source.DocumentRevision;
         uint dstRevision = destination.DocumentRevision;
-        using FmSynthImportPlanPreviewDialog dialog = new(imported, [root.Id],
+        FmSynthImportPlanPreviewDialog dialog = new(imported, [root.Id],
             destination);
 
         Assert.That(dialog.GridControl, Is.InstanceOf<TreeDataGrid>());
@@ -62,7 +62,7 @@ public sealed class FmSynthImportPlanPreviewDialogTests
                 new FmOperatorNode(2, FmOperatorKind.Add, [1, 1]),
             ], 2));
         SongFmSynthImportSource imported = Input(source, root);
-        using FmSynthImportPlanPreviewDialog dialog =
+        FmSynthImportPlanPreviewDialog dialog =
             new(imported, [root.Id], new SongDocument());
         FmSynthImportGridAdapter adapter = dialog.GridAdapter;
         FmImportTreeRowKey rootKey = dialog.Projection.Roots.Single().Key;
