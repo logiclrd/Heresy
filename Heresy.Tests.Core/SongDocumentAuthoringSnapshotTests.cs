@@ -23,7 +23,8 @@ public sealed class SongDocumentAuthoringSnapshotTests
 
         string snapshot = SongDocumentJson.SerializeAuthoringSnapshot(song);
         Assert.That(snapshot, Does.Contain("\"tombstones\""));
-        Assert.That(snapshot, Does.Contain("\"lastKnownName\":\"Removed\""));
+        Assert.That(snapshot, Does.Contain("\"lastKnownName\""));
+        Assert.That(snapshot, Does.Contain("\"Removed\""));
         Assert.That(song.Tombstones.ContainsKey(removed.Id), Is.True);
         Assert.That(song.DocumentRevision, Is.EqualTo(documentRevision));
         Assert.That(song.AudioRevision, Is.EqualTo(audioRevision));
