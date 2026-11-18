@@ -5,6 +5,7 @@ using System.Text;
 
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
@@ -80,7 +81,7 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         _grid.Bind(TemplatedControl.ForegroundProperty,
             new DynamicResourceExtension("SystemControlForegroundBaseHighBrush"));
         _adapter = new FmSynthImportGridAdapter(_projection, _grid,
-            CreateDependencyCell, CreateActionCell);
+            CreateDependencyCell, CreateActionCell, CreateNotesCell);
 
         _summary = new TextBlock
         {
@@ -240,6 +241,19 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
             CornerRadius = new CornerRadius(3),
             Child = text,
         };
+    }
+
+    private Control CreateNotesCell(FmSynthImportGridRow row)
+    {
+        TextBlock text = new()
+        {
+            Text = row.Notes,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(3, 2),
+        };
+        BindGridTextForeground(text, row.Snapshot.IsDimmed);
+        return text;
     }
 
     private Control CreateActionCell(FmSynthImportGridRow model)
