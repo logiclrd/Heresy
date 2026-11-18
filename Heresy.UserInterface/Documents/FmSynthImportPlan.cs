@@ -142,6 +142,9 @@ public sealed class FmSynthImportPlan
     // authoring snapshot rather than importing changed data silently.
     private readonly Dictionary<string, uint> _sourceDocumentRevisions =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _sourceDocumentFingerprints =
+        new(StringComparer.Ordinal);
+    private string? _destinationDocumentFingerprint;
 
     public IReadOnlyList<FmImportObjectKey> SelectedRoots => _selectedRoots.AsReadOnly();
 
@@ -165,6 +168,34 @@ public sealed class FmSynthImportPlan
 
     internal IReadOnlyDictionary<string, uint> SourceDocumentRevisions =>
         _sourceDocumentRevisions;
+
+    internal IReadOnlyDictionary<string, string> SourceDocumentFingerprints =>
+        _sourceDocumentFingerprints;
+
+    internal string? DestinationDocumentFingerprint =>
+        _destinationDocumentFingerprint;
+
+    internal void CaptureAuthoringFingerprints(
+        IReadOnlyList<FmImportExactMatchSource> sources,
+        SongDocument destination)
+    {
+        if (_destinationDocumentFingerprint is not null ||
+            _sourceDocumentFingerprints.Count != 0)
+            throw new InvalidOperationException("Import fingerprints already captured.");
+
+        Dictionary<string, string> sourceHashes = new(StringComparer.Ordinal);
+        foreach (FmImportExactMatchSource source in sources)
+        {
+            string identity = source.Discovery.SourceDocumentIdentity;
+            if (!sourceHashes.TryAdd(identity,
+                FmSynthImportAuthoringFingerprint.Capture(source.Source.Document)))
+                throw new ArgumentException("Duplicate source fingerprint.");
+        }
+        _destinationDocumentFingerprint =
+            FmSynthImportAuthoringFingerprint.Capture(destination);
+        foreach ((string identity, string value) in sourceHashes)
+            _sourceDocumentFingerprints.Add(identity, value);
+    }
 
     internal void CaptureSourceDocumentRevisions(
         IReadOnlyList<FmImportExactMatchSource> sources)
