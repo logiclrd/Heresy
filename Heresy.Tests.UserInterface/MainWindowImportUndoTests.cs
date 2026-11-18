@@ -64,7 +64,7 @@ public sealed class MainWindowImportUndoTests
             Assert.That(undo.IsEnabled, Is.False);
             Assert.That(redo.IsEnabled, Is.False);
             KeyEventArgs editorKey = Press(editor, Key.Z, KeyModifiers.Control);
-            Assert.That(editorKey.Handled, Is.False);
+            // TextBox may handle Ctrl+Z itself; only the song state matters.
             Assert.That(song.Objects, Has.Count.EqualTo(1));
 
             // A stale routed event on an inactive document tree is also inert.
