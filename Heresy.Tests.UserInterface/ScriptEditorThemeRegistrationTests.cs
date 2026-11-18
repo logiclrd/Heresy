@@ -30,5 +30,10 @@ public sealed class ScriptEditorThemeRegistrationTests
 				"avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml"));
 		Assert.That(editorStyles, Is.Not.Null,
 			"The real desktop startup must include AvaloniaEdit's Fluent styles.");
+		StyleInclude? gridStyles = styles.OfType<StyleInclude>()
+			.SingleOrDefault(style => style.Source == new Uri(
+				"avares://TreeDataGrid.Avalonia/Themes/Fluent.axaml"));
+		Assert.That(gridStyles, Is.Not.Null,
+			"The real desktop startup must also load the MIT TreeDataGrid theme.");
 	}
 }
