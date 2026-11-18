@@ -263,7 +263,7 @@ public sealed class SongDocument
 				_nextObjectId = edit.InitialNextId;
 			}
 			MarkChanged(affectsAudio: true);
-			edit.Advance(!apply, _nextObjectId, DocumentRevision, AudioRevision,
+			edit.Advance(apply, _nextObjectId, DocumentRevision, AudioRevision,
 				Heresy.Core.Persistence.SongDocumentJson.SerializeAuthoringSnapshot(this));
 		}
 		catch
