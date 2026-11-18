@@ -18,7 +18,7 @@ public sealed class FmSynthImportSelectionDialog : Window
 	private readonly List<(FmSynthDefinition Synth, CheckBox CheckBox)> _choices = [];
 
 	public FmSynthImportSelectionDialog(
-		SongFmSynthImportSource source)
+		SongFmSynthImportSource source, SongDocument? destination = null)
 	{
 		ArgumentNullException.ThrowIfNull(source);
 
@@ -34,7 +34,9 @@ public sealed class FmSynthImportSelectionDialog : Window
 			new()
 			{
 				Text =
-					$"Choose synths to import from {System.IO.Path.GetFileName(source.Path)}. Referenced source Synths, Instruments, Samples, Filters and envelopes are imported with new object IDs; encoded Sample assets are copied into the destination song.",
+					$"Choose synths to import from {System.IO.Path.GetFileName(source.Path)}. " +
+					"Import selected uses the existing importer. Review graph-aware plan opens " +
+					"an editable preview only; its changes are not applied by Import selected.",
 				TextWrapping =
 					Avalonia.Media.TextWrapping.Wrap,
 			};
@@ -117,6 +119,37 @@ public sealed class FmSynthImportSelectionDialog : Window
 
 		DialogActionLayout.ConfigureButtons(import, cancel);
 
+		// The graph-aware editor is an explicit, read-only preview of the
+		// proposed transaction until the commit implementation is available.
+		// Keep the existing Import selected operation unchanged.
+		Button previewPlan = new()
+		{
+			Content = "Review graph-aware plan (preview)",
+			IsEnabled = destination is not null,
+		};
+		previewPlan.Click += async (_, _) =>
+		{
+			ObjectId[] selected = _choices
+				.Where(choice => choice.CheckBox.IsChecked == true)
+				.Select(choice => choice.Synth.Id)
+				.ToArray();
+			if (destination is null || selected.Length == 0)
+				return;
+			try
+			{
+				FmSynthImportPlanPreviewDialog preview = new(source,
+					selected, destination);
+				await preview.ShowDialog(this);
+			}
+			catch (Exception error)
+			{
+				// Preserve the selection dialog and its checked Synths on an
+				// invalid source snapshot or an unavailable preview.
+				sourceLabel.Text = $"Graph plan preview failed: {error.Message} " +
+					"The existing Import selected action is unchanged.";
+			}
+		};
+
 		StackPanel selectionActions =
 			new()
 			{
@@ -128,6 +161,7 @@ public sealed class FmSynthImportSelectionDialog : Window
 			selectAll);
 		selectionActions.Children.Add(
 			selectNone);
+		selectionActions.Children.Add(previewPlan);
 
 		StackPanel dialogActions =
 			new()
