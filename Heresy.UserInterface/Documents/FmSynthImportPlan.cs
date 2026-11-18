@@ -138,6 +138,10 @@ public sealed class FmSynthImportPlan
     private readonly FmImportExistingName[] _existingNames;
     private readonly Dictionary<ObjectId, FmImportFilterPortSchema> _destinationFilterPorts = [];
     private FmImportStageAContext? _stageAContext;
+    // Retain source revision at plan creation. Stage B rejects a stale
+    // authoring snapshot rather than importing changed data silently.
+    private readonly Dictionary<string, uint> _sourceDocumentRevisions =
+        new(StringComparer.Ordinal);
 
     public IReadOnlyList<FmImportObjectKey> SelectedRoots => _selectedRoots.AsReadOnly();
 
@@ -157,6 +161,23 @@ public sealed class FmSynthImportPlan
             throw new InvalidOperationException("Stage-A context is already attached.");
         _stageAContext = context;
         StageA = FmSynthImportStageAValidator.Validate(this, context);
+    }
+
+    internal IReadOnlyDictionary<string, uint> SourceDocumentRevisions =>
+        _sourceDocumentRevisions;
+
+    internal void CaptureSourceDocumentRevisions(
+        IReadOnlyList<FmImportExactMatchSource> sources)
+    {
+        if (_sourceDocumentRevisions.Count != 0)
+            throw new InvalidOperationException("Source revisions already captured.");
+        foreach (FmImportExactMatchSource source in sources)
+        {
+            string identity = source.Discovery.SourceDocumentIdentity;
+            if (!_sourceDocumentRevisions.TryAdd(identity,
+                source.Source.Document.DocumentRevision))
+                throw new ArgumentException("Duplicate import-source revision.");
+        }
     }
 
     internal IReadOnlyDictionary<FmImportObjectKey, FmImportDiscoveredObject> DiscoveredObjects => _objects;
