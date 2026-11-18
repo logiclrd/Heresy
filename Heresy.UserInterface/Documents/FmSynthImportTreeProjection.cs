@@ -88,12 +88,15 @@ public sealed record FmImportTreeSummary(
     int ReusedUseCount,
     int ExplicitlyRemappedUseCount,
     int DisconnectedInputCount,
-    int ExcludedNodeCount,
+    int NotImportedNodeCount,
+    int ExplicitlyExcludedNodeCount,
     int ErrorCount,
     int WarningCount,
     bool? CanImport,
     IReadOnlyList<string> NewObjects,
     IReadOnlyList<string> ReusedObjects,
+    IReadOnlyList<string> ManualMappings,
+    IReadOnlyList<string> DisconnectedInputs,
     IReadOnlyList<FmImportStageAIssue> Issues);
 
 /// <summary>
@@ -281,13 +284,19 @@ public sealed class FmSynthImportTreeProjection
                 return null;
             FmImportOccurrenceState? state = Occurrence(location);
             bool canonical = state?.IsCanonical == true;
-            bool active = state?.IsActive == true;
             FmImportMapping definition = _plan.GetDefinitionMapping(key);
             FmImportMapping mapping = location.Reference is FmImportReferenceKey use
                 ? _plan.GetReferenceMapping(use) : definition;
             bool copied = effective.ObjectByKey[key].IsCopied;
             bool isRoot = location.Kind == FmImportOccurrenceKind.ObjectRoot;
-            bool alias = !canonical;
+            bool redirected = location.Reference is FmImportReferenceKey redirect
+                && _plan.HasReferenceOverride(redirect)
+                && mapping.Kind == FmImportMappingKind.ReuseExisting;
+            bool active = location.Reference is FmImportReferenceKey referenceUse
+                ? effective.ReferenceByUse[referenceUse].IsActive : state?.IsActive == true;
+            // A manual substitution is an active use of another local object,
+            // not a gray link to the original source definition.
+            bool alias = !canonical && !redirected;
             bool isAuto = canonical &&
                 mapping.Kind == FmImportMappingKind.ReuseExisting &&
                 mapping.Provenance == FmImportMappingProvenance.AutomaticExactMatch;
@@ -513,10 +522,22 @@ public sealed class FmSynthImportTreeProjection
             FmImportDiscoveredObject source = _plan.DiscoveredObjects[x.Key];
             return $"{source.Kind}: {_plan.GetProposedName(x.Key).Name}";
         }).ToArray();
-        string[] reuseNames = reusedDefinitions.Select(x => {
-            FmImportDiscoveredObject source = _plan.DiscoveredObjects[x.Key];
-            return $"{source.Kind}: {source.Name} → local #{x.Mapping.ExistingId?.Value}";
-        }).ToArray();
+        string[] reuseNames = reused
+            .Where(x => x.Mapping.ExistingId is not null)
+            .GroupBy(x => x.Mapping.ExistingId!.Value)
+            .Select(g => $"Local #{g.Key.Value}: {g.Count()} active use(s)")
+            .ToArray();
+        string[] manualMappings = graph.References
+            .Where(x => x.Mapping.Provenance == FmImportMappingProvenance.Manual)
+            .Select(x => $"{x.Use.Slot} in source #{x.Use.Owner.SourceObjectId.Value}"
+                + $" → {x.Mapping.Kind}"
+                + (x.Mapping.ExistingId is ObjectId existing
+                    ? $" local #{existing.Value}" : ""))
+            .ToArray();
+        string[] inputChanges = disconnected.Select(x =>
+            $"{_plan.DiscoveredConnections[x.Key].PortLabel} on node"
+            + $" #{x.Key.Consumer.NodeId}: {x.InactiveReason ?? "Not imported"}")
+            .ToArray();
         return new(copied.Length,
             reusedDefinitions.Count(x =>
                 x.Mapping.Provenance == FmImportMappingProvenance.AutomaticExactMatch),
@@ -526,10 +547,12 @@ public sealed class FmSynthImportTreeProjection
             remappedUses.Length,
             disconnected.Length,
             graph.Nodes.Count(x => !x.IsIncluded),
+            graph.Nodes.Count(x => _plan.IsNodeExcluded(x.Key)),
             diagnostics.Count(x => x.Severity == FmImportStageAIssueSeverity.Error),
             diagnostics.Count(x => x.Severity == FmImportStageAIssueSeverity.Warning),
             _plan.StageA?.IsInternallyValid,
             Array.AsReadOnly(copiedNames), Array.AsReadOnly(reuseNames),
+            Array.AsReadOnly(manualMappings), Array.AsReadOnly(inputChanges),
             Array.AsReadOnly(diagnostics));
     }
 
