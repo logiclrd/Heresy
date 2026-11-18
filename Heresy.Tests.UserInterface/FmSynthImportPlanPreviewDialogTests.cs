@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
@@ -221,7 +222,7 @@ public sealed class FmSynthImportPlanPreviewDialogTests
     }
 
     [AvaloniaTest]
-    public void SelectionDialogExposesPreviewWithoutReplacingLegacyImportButton()
+    public void SelectionDialogRetainsImportSelectedLabelAndRemovesPreviewButton()
     {
         SongDocument source = new();
         FmSynthDefinition root = Add(source, "Root",
@@ -231,13 +232,126 @@ public sealed class FmSynthImportPlanPreviewDialogTests
         Grid rootGrid = (Grid)selector.Content!;
         StackPanel selectActions = (StackPanel)rootGrid.Children[1];
         StackPanel footer = (StackPanel)rootGrid.Children[3];
-        Assert.That(selectActions.Children.OfType<Button>().Any(button =>
-            (button.Content as string)?.Contains("preview") == true
-            && button.IsEnabled), Is.True);
-        Assert.That(footer.Children.OfType<Button>().Any(button =>
-            Equals(button.Content, "Import selected")), Is.True);
-        Assert.That(footer.Children.OfType<Button>().Any(button =>
-            Equals(button.Content, "Cancel")), Is.True);
+        Assert.That(selectActions.Children.OfType<Button>().Select(x => x.Content),
+            Is.EquivalentTo(new[] { "Select all", "Select none" }));
+        Assert.That(footer.Children.OfType<Button>().Select(x => x.Content),
+            Is.EquivalentTo(new[] { "Import selected", "Cancel" }));
+        Assert.That(footer.Children.OfType<Button>().Single(button =>
+            Equals(button.Content, "Import selected")).IsEnabled, Is.True);
+        Assert.That(((TextBlock)rootGrid.Children[0]).Text,
+            Does.Contain("graph-aware dependency plan"));
+        Assert.That(((TextBlock)rootGrid.Children[0]).Text,
+            Does.Not.Contain("existing importer"));
+    }
+
+    [AvaloniaTest]
+    public async Task SelectionWorkflowCommitsEditedSameSongGraphAndReturnsOnlySelectedRoot()
+    {
+        SongDocument song = new();
+        FmSynthDefinition dependency = Add(song, "Child",
+            new FmSynthGraph([new FmConstantNode(0, .8)], 0));
+        FmSynthDefinition root = Add(song, "Root",
+            new FmSynthGraph([
+                new FmSoundSourceNode(1, dependency.Id, 440),
+                new FmMultiNode(2, 1),
+            ], 2));
+        FmSynthImportSelectionDialog selector = new(Input(song, root), song);
+        int before = song.Objects.Count;
+
+        FmSynthImportSelectionResult? accepted = await selector.ReviewAndCommitAsync(
+            [root.Id], plan =>
+            {
+                Assert.That(plan.CanCommit, Is.True);
+                Assert.That(plan.Title, Does.Not.Contain("preview"));
+                plan.Projection.SetName(plan.Plan.SelectedRoots.Single(),
+                    "Root"); // user deliberately keeps duplicate name
+                return Task.FromResult(plan.AttemptCommit());
+            });
+        Assert.That(accepted, Is.Not.Null);
+        Assert.That(accepted!.Commit.IsCommitted, Is.True,
+            accepted.Commit.Error);
+        Assert.That(accepted.Commit.SelectedRootIds, Has.Count.EqualTo(1),
+            "dependencies must not be treated as explicitly selected roots");
+        Assert.That(accepted.Summary.NewObjectCount, Is.EqualTo(2));
+        Assert.That(song.Objects, Has.Count.EqualTo(before + 2));
+        ObjectId selectedId = accepted.Commit.SelectedRootIds.Single();
+        FmSynthDefinition copy = (FmSynthDefinition)song.Objects[selectedId];
+        Assert.That(copy.Id, Is.Not.EqualTo(root.Id));
+        Assert.That(copy.Name, Is.EqualTo(root.Name));
+        FmSoundSourceNode sourceNode =
+            copy.Graph.Nodes.OfType<FmSoundSourceNode>().Single();
+        Assert.That(sourceNode.SourceId, Is.Not.EqualTo(dependency.Id));
+        Assert.That(song.Objects[sourceNode.SourceId],
+            Is.InstanceOf<FmSynthDefinition>());
+        accepted.Commit.Edit!.Undo();
+        Assert.That(song.Objects, Has.Count.EqualTo(before));
+    }
+
+    [AvaloniaTest]
+    public async Task CancelingPlanKeepsCheckedRootsAndDoesNotAllocateObjects()
+    {
+        SongDocument source = new(), destination = new();
+        FmSynthDefinition root = Add(source, "Root",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        FmSynthImportSelectionDialog selector = new(Input(source, root),
+            destination);
+        ObjectId next = destination.NextUnallocatedObjectId;
+        uint revision = destination.DocumentRevision;
+
+        FmSynthImportSelectionResult? cancelled = await selector.ReviewAndCommitAsync(
+            [root.Id], plan =>
+            {
+                plan.Projection.SetName(plan.Plan.SelectedRoots.Single(), "Edited");
+                return Task.FromResult<FmImportCommitResult?>(null);
+            });
+        Assert.That(cancelled, Is.Null);
+        Assert.That(destination.Objects, Is.Empty);
+        Assert.That(destination.NextUnallocatedObjectId, Is.EqualTo(next));
+        Assert.That(destination.DocumentRevision, Is.EqualTo(revision));
+        Grid layout = (Grid)selector.Content!;
+        ScrollViewer scroll = (ScrollViewer)layout.Children[2];
+        StackPanel choices = (StackPanel)scroll.Content!;
+        Assert.That(choices.Children.OfType<CheckBox>().Single().IsChecked,
+            Is.True, "canceling the inner plan must retain the root selection");
+
+        bool invoked = false;
+        FmSynthImportSelectionResult? none = await selector.ReviewAndCommitAsync(
+            [], _ =>
+            {
+                invoked = true;
+                return Task.FromResult<FmImportCommitResult?>(null);
+            });
+        Assert.That(none, Is.Null);
+        Assert.That(invoked, Is.False);
+    }
+
+    [AvaloniaTest]
+    public async Task TwoSelectedRootsShareOneCopiedDependencyButReturnTwoRoots()
+    {
+        SongDocument source = new(), destination = new();
+        FmSynthDefinition shared = Add(source, "Shared",
+            new FmSynthGraph([new FmConstantNode(0, .4)], 0));
+        FmSynthDefinition first = Add(source, "First",
+            new FmSynthGraph([new FmSoundSourceNode(0, shared.Id, 440)], 0));
+        FmSynthDefinition second = Add(source, "Second",
+            new FmSynthGraph([new FmSoundSourceNode(0, shared.Id, 440)], 0));
+        SongFmSynthImportSource input = new(Path.GetFullPath("multiple.hm"),
+            source, [first, second]);
+        FmSynthImportSelectionDialog selector = new(input, destination);
+        FmSynthImportSelectionResult? accepted = await selector.ReviewAndCommitAsync(
+            [first.Id, second.Id], plan => Task.FromResult(plan.AttemptCommit()));
+        Assert.That(accepted?.Commit.IsCommitted, Is.True,
+            accepted?.Commit.Error);
+        Assert.That(accepted!.Commit.SelectedRootIds, Has.Count.EqualTo(2));
+        Assert.That(destination.Objects, Has.Count.EqualTo(3));
+        Assert.That(accepted.Summary.NewObjectCount, Is.EqualTo(3));
+        ObjectId[] references = accepted.Commit.SelectedRootIds
+            .Select(id => ((FmSynthDefinition)destination.Objects[id])
+                .Graph.Nodes.OfType<FmSoundSourceNode>().Single().SourceId)
+            .ToArray();
+        Assert.That(references[0], Is.EqualTo(references[1]),
+            "both roots must share the same copied dependency");
+        Assert.That(accepted.Commit.SelectedRootIds, Has.None.EqualTo(references[0]));
     }
 
 
