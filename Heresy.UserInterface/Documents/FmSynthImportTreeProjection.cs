@@ -91,14 +91,10 @@ public sealed record FmImportTreeSummary(
     int ExcludedNodeCount,
     int ErrorCount,
     int WarningCount,
+    bool? CanImport,
     IReadOnlyList<string> NewObjects,
     IReadOnlyList<string> ReusedObjects,
-    IReadOnlyList<FmImportStageAIssue> Issues)
-{
-    public bool? CanImport => Issues.Count == 0 && ErrorCount == 0
-        ? null // A discovery-only plan has not had Stage A validation.
-        : ErrorCount == 0;
-}
+    IReadOnlyList<FmImportStageAIssue> Issues);
 
 /// <summary>
 /// Framework-independent TreeDataGrid row/summary controller. It owns only
@@ -532,6 +528,7 @@ public sealed class FmSynthImportTreeProjection
             graph.Nodes.Count(x => !x.IsIncluded),
             diagnostics.Count(x => x.Severity == FmImportStageAIssueSeverity.Error),
             diagnostics.Count(x => x.Severity == FmImportStageAIssueSeverity.Warning),
+            _plan.StageA?.IsInternallyValid,
             Array.AsReadOnly(copiedNames), Array.AsReadOnly(reuseNames),
             Array.AsReadOnly(diagnostics));
     }
