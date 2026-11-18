@@ -378,12 +378,10 @@ public static class FmSynthImportStageBPreflight
                     }
                     SamplePcmData decoded = SampleAudioCodec.Decode(bytes, fileName);
                     if (sample.PcmData is not SamplePcmData pcm
-                        || decoded.SampleRate != pcm.SampleRate
-                        || decoded.ChannelCount != pcm.ChannelCount
-                        || decoded.FrameCount != pcm.FrameCount)
+                        || !SameDecodedPcm(decoded, pcm))
                     {
                         Add(FmImportStageBIssueKind.SampleAssetInvalid,
-                            $"Sample #{obj.Key.SourceObjectId.Value} encoding does not match its loaded PCM format.",
+                            $"Sample #{obj.Key.SourceObjectId.Value} encoded PCM does not match the loaded audio (content, channels, rate or frames).",
                             obj.Key);
                         continue;
                     }
@@ -402,6 +400,22 @@ public static class FmSynthImportStageBPreflight
         return new FmImportStageBResult(
             Array.AsReadOnly(issues.ToArray()),
             Array.AsReadOnly(prepared.ToArray()));
+    }
+
+    private static bool SameDecodedPcm(SamplePcmData actual, SamplePcmData original)
+    {
+        if (actual.SampleRate != original.SampleRate
+            || actual.ChannelCount != original.ChannelCount
+            || actual.FrameCount != original.FrameCount)
+            return false;
+        // An unhashed legacy reference can still point to different but
+        // perfectly decodable audio. Header equality is not enough.
+        for (long frame = 0; frame < actual.FrameCount; frame++)
+            for (int channel = 0; channel < actual.ChannelCount; channel++)
+                if (actual.GetSample(frame, channel) !=
+                    original.GetSample(frame, channel))
+                    return false;
+        return true;
     }
 
     private static bool SameDiscovery(FmImportDiscoveredGraph actual,
