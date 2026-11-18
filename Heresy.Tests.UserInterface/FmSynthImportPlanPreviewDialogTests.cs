@@ -88,6 +88,38 @@ public sealed class FmSynthImportPlanPreviewDialogTests
     }
 
     [AvaloniaTest]
+    public void TreeDataGridActuallyAppliesItsFluentTemplateWhenPreviewIsShown()
+    {
+        SongDocument source = new();
+        FmSynthDefinition root = Add(source, "Visible",
+            new FmSynthGraph([
+                new FmConstantNode(1, 1),
+                new FmMultiNode(2, 1),
+            ], 2));
+        SongDocument destination = new();
+        FmSynthImportPlanPreviewDialog dialog = new(
+            Input(source, root), [root.Id], destination)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual,
+        };
+        dialog.Show();
+        try
+        {
+            dialog.UpdateLayout();
+            Assert.That(dialog.GridControl.Source, Is.Not.Null);
+            Assert.That(dialog.GridControl.RowsPresenter, Is.Not.Null,
+                "TreeDataGrid must load its control template; a source without a template renders blank");
+            Assert.That(dialog.GridControl.Rows, Is.Not.Null);
+            Assert.That(dialog.GridAdapter.Paths.Count, Is.GreaterThan(1));
+            Assert.That(destination.Objects, Is.Empty);
+        }
+        finally
+        {
+            dialog.Close();
+        }
+    }
+
+    [AvaloniaTest]
     public void SelectionDialogExposesPreviewWithoutReplacingLegacyImportButton()
     {
         SongDocument source = new();
