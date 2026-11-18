@@ -223,7 +223,7 @@ public sealed class FmSynthImportSelectionDialog : Window
 	/// dialog alive with the same checked roots. Only a result actually
 	/// committed by this very plan is allowed to leave the selector.
 	/// </summary>
-	internal async Task<FmSynthImportSelectionResult?> ReviewAndCommitAsync(
+	public async Task<FmSynthImportSelectionResult?> ReviewAndCommitAsync(
 		IReadOnlyList<ObjectId> selected,
 		Func<FmSynthImportPlanPreviewDialog, Task<FmImportCommitResult?>> present)
 	{
