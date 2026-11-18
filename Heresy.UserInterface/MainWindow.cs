@@ -1515,7 +1515,7 @@ public sealed class MainWindow : Window
 				}
 
 				FmSynthImportSelectionDialog dialog =
-					new(source);
+					new(source, _workspace.Document);
 				ObjectId[]? selected =
 					await dialog.ShowDialog<ObjectId[]?>(
 						this);
