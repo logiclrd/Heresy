@@ -22,8 +22,10 @@ public sealed class MainWindowImportUndoTests
     [AvaloniaTest]
     public void DocumentTreeShortcutsUndoAndRedoImportWithoutStealingEditorsKeys()
     {
-        DocumentWorkspace workspace = new();
-        MainWindow window = new(workspace);
+        MainWindow window = new();
+        DocumentWorkspace workspace = (DocumentWorkspace)typeof(MainWindow)
+            .GetField("_workspace", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(window)!;
         window.Show();
         try
         {
@@ -82,8 +84,10 @@ public sealed class MainWindowImportUndoTests
     [AvaloniaTest]
     public void StaleImportUndoRefusesWithoutChangingSongOrChangingMenuDirection()
     {
-        DocumentWorkspace workspace = new();
-        MainWindow window = new(workspace);
+        MainWindow window = new();
+        DocumentWorkspace workspace = (DocumentWorkspace)typeof(MainWindow)
+            .GetField("_workspace", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(window)!;
         window.Show();
         try
         {
