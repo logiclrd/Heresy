@@ -55,6 +55,12 @@ public sealed class SongDocument
 
 	internal uint NextObjectIdForPersistence => _nextObjectId;
 
+	/// <summary>The next ID that AllocateObjectId would return, without
+	/// allocating it or changing the document. Import preparation may build a
+	/// provisional assignment from this value, but must check freshness again
+	/// before any commit: this is NOT an ID reservation.</summary>
+	public ObjectId NextUnallocatedObjectId => new(_nextObjectId);
+
 	public SongTreeFolder GetSectionRoot(SongTreeSection section)
 		=> _sectionRoots.TryGetValue(section, out SongTreeFolder? root)
 			? root
