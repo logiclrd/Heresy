@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 
 using Avalonia;
 using Avalonia.Controls;
@@ -22,37 +23,44 @@ using Heresy.UserInterface.Documents;
 namespace Heresy.UserInterface.Dialogs;
 
 /// <summary>
-/// Hands-on visual preview of the new import plan. It intentionally has no
-/// accepted/import result: the separate atomic commit engine is not written
-/// yet, and no decision here can be applied by the legacy import operation.
+/// Editable graph-aware import plan. The normal selection-dialog preview is
+/// still strictly noncommitting; a separately enabled commit mode connects
+/// this same plan to the atomic transaction for acceptance testing before
+/// the legacy command is replaced.
 /// </summary>
 public sealed class FmSynthImportPlanPreviewDialog : Window
 {
     private readonly SongDocument _destination;
+    private readonly IReadOnlyList<FmImportExactMatchSource> _sources;
+    private readonly bool _commitEnabled;
+    private bool _committed;
     private readonly FmSynthImportPlan _plan;
     private readonly FmSynthImportTreeProjection _projection;
     private readonly TreeDataGrid _grid;
     private readonly FmSynthImportGridAdapter _adapter;
     private readonly TextBlock _summary;
     private readonly TextBlock _validation;
-    private readonly Button _unavailableImport;
+    private readonly Button _importButton;
 
     public FmSynthImportPlanPreviewDialog(SongFmSynthImportSource source,
-        IReadOnlyList<ObjectId> selectedSynths, SongDocument destination)
+        IReadOnlyList<ObjectId> selectedSynths, SongDocument destination,
+        bool enableCommit = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(selectedSynths);
         _destination = destination ?? throw new ArgumentNullException(nameof(destination));
+        _commitEnabled = enableCommit;
         if (selectedSynths.Count == 0)
             throw new ArgumentException("Select at least one Synth.", nameof(selectedSynths));
 
         FmImportDiscoveredGraph discovery =
             FmSynthImportGraphDiscovery.Discover(source, selectedSynths);
-        _plan = FmSynthImportExactMatcher.CreatePlan(
-            [new FmImportExactMatchSource(source, discovery)], destination);
+        _sources = [new FmImportExactMatchSource(source, discovery)];
+        _plan = FmSynthImportExactMatcher.CreatePlan(_sources, destination);
         _projection = new FmSynthImportTreeProjection(_plan);
 
-        Title = "Import Synths — graph-aware plan preview";
+        Title = enableCommit ? "Import Synths — graph-aware plan" :
+            "Import Synths — graph-aware plan preview";
         Width = 1170;
         Height = 790;
         MinWidth = 690;
@@ -62,9 +70,12 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
 
         TextBlock introduction = new()
         {
-            Text = "Preview only — edit the proposed dependency plan below. " +
-                "No changes in this window are imported or applied to the song. " +
-                "The new atomic import command will be connected in a later slice.",
+            Text = enableCommit
+                ? "Review and edit the dependency plan. Import applies all selected " +
+                    "copies as one atomic transaction; errors return to this plan."
+                : "Preview only — edit the proposed dependency plan below. " +
+                    "No changes in this window are imported or applied to the song. " +
+                    "The new atomic import command will be connected in a later slice.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = Brushes.DarkOrange,
         };
@@ -125,20 +136,23 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
 
         Button close = new()
         {
-            Content = "Close preview",
+            Content = enableCommit ? "Cancel" : "Close preview",
             MinWidth = 112,
         };
         close.Click += (_, _) => Close();
 
-        _unavailableImport = new Button
+        _importButton = new Button
         {
-            Content = "Import (not available yet)",
+            Content = enableCommit ? "Import" : "Import (not available yet)",
             IsEnabled = false,
             MinWidth = 178,
         };
-        ToolTip.SetTip(_unavailableImport,
-            "Import requires the Stage-B transaction, final destination ID " +
-            "allocation, undo and rollback implementation.");
+        if (enableCommit)
+            _importButton.Click += async (_, _) => await AcceptImportAsync();
+        else
+            ToolTip.SetTip(_importButton,
+                "This preview cannot apply changes. The existing Import selected " +
+                "command still uses the legacy importer.");
 
         StackPanel actions = new()
         {
@@ -148,7 +162,7 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         };
         actions.Children.Add(reset);
         actions.Children.Add(close);
-        actions.Children.Add(_unavailableImport);
+        actions.Children.Add(_importButton);
 
         Grid layout = new()
         {
@@ -180,6 +194,94 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
     public TreeDataGrid GridControl => _grid;
     public FmSynthImportGridAdapter GridAdapter => _adapter;
     public string SummaryText => _summary.Text ?? string.Empty;
+    public bool CanCommit => _commitEnabled && !_committed
+        && _projection.Summary.CanImport == true;
+    public FmImportCommitResult? CommittedResult { get; private set; }
+    public FmImportCommitResult? LastCommitAttempt { get; private set; }
+
+    /// <summary>
+    /// The very same guarded transaction invoked by the Import button. A
+    /// preview, invalid Stage-A plan, or already accepted plan cannot commit.
+    /// A failure leaves this plan, grid, and all decisions available for retry.
+    /// </summary>
+    public FmImportCommitResult? AttemptCommit()
+    {
+        if (!CanCommit)
+            return null;
+        FmImportCommitResult result =
+            FmSynthImportTransactionCommitter.Commit(_plan, _sources, _destination);
+        LastCommitAttempt = result;
+        if (result.IsCommitted)
+        {
+            _committed = true;
+            CommittedResult = result;
+        }
+        _importButton.IsEnabled = CanCommit;
+        return result;
+    }
+
+    private async Task AcceptImportAsync()
+    {
+        if (!CanCommit)
+            return;
+        // Synchronous Stage B and publication are on the editor thread, so
+        // there is no gap during which the user can accept twice.
+        FmImportCommitResult? result;
+        try
+        {
+            result = AttemptCommit();
+        }
+        catch (Exception error)
+        {
+            await ShowImportErrorAsync($"The import was not applied: {error.Message}");
+            return;
+        }
+        if (result?.IsCommitted == true)
+        {
+            Close(result);
+            return;
+        }
+        if (result is not null)
+            await ShowImportErrorAsync(result.Error ??
+                "The import could not be applied. Review the plan and try again.");
+    }
+
+    private async Task ShowImportErrorAsync(string message)
+    {
+        // A modal child does not destroy or recreate the plan: checked
+        // choices, stable grid rows, expansion, selection and scroll survive.
+        Window failure = new()
+        {
+            Title = "Synth import could not be applied",
+            Width = 650,
+            Height = 330,
+            MinWidth = 440,
+            MinHeight = 220,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        Button back = new() { Content = "Return to plan", MinWidth = 115 };
+        back.Click += (_, _) => failure.Close();
+        StackPanel actions = new()
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        actions.Children.Add(back);
+        failure.Content = DialogActionLayout.Create(
+            new ScrollViewer
+            {
+                Content = new TextBlock
+                {
+                    Text = message,
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            },
+            actions,
+            new Thickness(16), spacing: 12);
+        await failure.ShowDialog(this);
+        RefreshSummary();
+    }
 
     private void OnProjectionChanged(object? sender, EventArgs args)
         => RefreshSummary();
@@ -210,7 +312,8 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         _validation.Text = summary.CanImport switch
         {
             true => $"Stage A valid · {summary.WarningCount} warning(s). " +
-                "Stage B will run on the future Import action.",
+                (_commitEnabled ? "Stage B runs when you click Import." :
+                    "Stage B will run on the future Import action."),
             false => $"Stage A invalid · {summary.ErrorCount} error(s), " +
                 $"{summary.WarningCount} warning(s):\n" +
                 string.Join("\n", summary.Issues
@@ -220,6 +323,7 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         };
         _validation.Foreground = summary.CanImport == false ?
             Brushes.IndianRed : Brushes.Gray;
+        _importButton.IsEnabled = CanCommit;
     }
 
     private Control CreateDependencyCell(FmSynthImportGridRow row)
