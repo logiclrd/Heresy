@@ -144,10 +144,19 @@ Do not reintroduce completed-task checklists here.
   Instrument, Sample, Filter and Envelope copies with per-use remaps,
   semantic graph-input selection and pending encoded Sample assets.
   No prepared batch is exposed if any clone fails. Its IDs are not reserved.
-  Remaining: single atomic destination publication, rollback and undo,
-  commit-boundary freshness/ID recheck, possible cross-Filter stage override
-  translation, final command handoff, and same-file Source+Multi/save/reopen
-  interactive acceptance.
+  The eleventh slice implements the headless atomic transaction boundary:
+  exact last-moment source/destination freshness and ID-cursor checks,
+  all-object/all-tree publication with one Changed event, failure rollback
+  restoring cursor/revisions/tree order, and a guarded single-unit import
+  Undo/Redo receipt. Automated Source+Multi and Sample package save/reopen
+  acceptance is included, but the preview/legacy Import selected commands
+  have NOT been replaced. There is no general document-wide UI undo manager
+  yet; the receipt is ready for later integration.
+  Remaining: bind actual Import acceptance and Stage-B errors into the dialog,
+  replace the old Import selected implementation without changing its text,
+  remove the extra preview button, connect the undo receipt to the selected
+  document's undo workflow, resolve cross-Filter-stage override translation
+  and scripted-reference limitations, and complete interactive acceptance.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
