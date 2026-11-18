@@ -157,6 +157,8 @@ public sealed class MainWindow : Window
 	private readonly ContentControl _mainContent = new();
 	private readonly OutputScopeDockHost _scopeHost;
 	private MenuItem? _scopeMenuItem;
+	private MenuItem? _undoImportMenuItem;
+	private MenuItem? _redoImportMenuItem;
 	private Control? _documentView;
 
 	private SongTreeItemViewModel? _selectedItem;
@@ -331,6 +333,9 @@ public sealed class MainWindow : Window
 		root.Children.Add(statusBar);
 
 		_documentView = BuildDocumentView();
+		// Restrict import shortcuts to the document trees. Pattern/Synth
+		// editors retain complete ownership of their own Ctrl+Z histories.
+		_documentView.KeyDown += OnDocumentImportUndoKeyDown;
 		_mainContent.Content = _documentView;
 		root.Children.Add(_scopeHost);
 		return root;
@@ -555,6 +560,32 @@ public sealed class MainWindow : Window
 				},
 			};
 
+		MenuItem undoImport = new()
+		{
+			Header = "_Undo last Synth import",
+			IsEnabled = false,
+		};
+		undoImport.Click += (_, _) => ReplayLastSynthImport(redo: false);
+		ToolTip.SetTip(undoImport,
+			"Ctrl+Z when the song document trees have focus");
+		_undoImportMenuItem = undoImport;
+		MenuItem redoImport = new()
+		{
+			Header = "_Redo last Synth import",
+			IsEnabled = false,
+		};
+		redoImport.Click += (_, _) => ReplayLastSynthImport(redo: true);
+		ToolTip.SetTip(redoImport,
+			"Ctrl+Y or Ctrl+Shift+Z when the song document trees have focus");
+		_redoImportMenuItem = redoImport;
+		// These menu items have no InputGesture: an application-global
+		// gesture would steal Ctrl+Z from the individual editors.
+		MenuItem edit = new()
+		{
+			Header = "_Edit",
+			ItemsSource = new object[] { undoImport, redoImport },
+		};
+
 		MenuItem audioOutputItem =
 			new() { Header = "_Audio Output..." };
 		audioOutputItem.Click += async (_, _) =>
@@ -606,7 +637,7 @@ public sealed class MainWindow : Window
 		};
 		return new Menu
 		{
-			ItemsSource = new object[] { file, view, options },
+			ItemsSource = new object[] { file, edit, view, options },
 		};
 	}
 
@@ -1119,6 +1150,7 @@ public sealed class MainWindow : Window
 		if (!TryCommitPendingEnvelopeFields() || !TryLeaveSynthEditor())
 			return false;
 		_mainContent.Content = editor;
+		UpdateImportUndoActions();
 		return true;
 	}
 
@@ -1522,6 +1554,10 @@ public sealed class MainWindow : Window
 					await dialog.ShowDialog<FmSynthImportSelectionResult?>(this);
 				if (accepted is null)
 					continue; // selection/plan cancellation does not mutate the song
+
+				_workspace.ImportUndo.Record(_workspace.Document,
+					accepted.Commit.Edit!, accepted.Commit.SelectedRootIds);
+				UpdateImportUndoActions();
 
 				// The accepted transaction contains the *new* explicitly
 				// selected root IDs. Its other copies are shared dependencies,
@@ -1972,6 +2008,7 @@ public sealed class MainWindow : Window
 		}
 
 		SetStatus(status);
+		UpdateImportUndoActions();
 	}
 
 	private TreeViewItem BuildTreeItem(
@@ -2930,6 +2967,80 @@ public sealed class MainWindow : Window
 			_workspace.IsModified
 				? $"{_workspace.DisplayName} * — Heresy"
 				: $"{_workspace.DisplayName} — Heresy";
+	}
+
+	/// <summary>
+	/// A single import transaction is one Undo unit. No general document
+	/// history is implied: editors retain their independent undo semantics.
+	/// The scope check prevents a menu action from removing an import while
+	/// its editor is open, possibly holding references to its objects.
+	/// </summary>
+	private void UpdateImportUndoActions()
+	{
+		bool inDocumentTrees = _documentView is not null &&
+			ReferenceEquals(_mainContent.Content, _documentView);
+		if (_undoImportMenuItem is not null)
+			_undoImportMenuItem.IsEnabled = inDocumentTrees &&
+				_workspace.ImportUndo.CanUndo(_workspace.Document);
+		if (_redoImportMenuItem is not null)
+			_redoImportMenuItem.IsEnabled = inDocumentTrees &&
+				_workspace.ImportUndo.CanRedo(_workspace.Document);
+	}
+
+	private void OnDocumentImportUndoKeyDown(object? sender, KeyEventArgs e)
+	{
+		if (e.Handled || !ReferenceEquals(_mainContent.Content, _documentView))
+			return;
+		bool undo = e.Key == Key.Z &&
+			e.KeyModifiers == KeyModifiers.Control;
+		bool redo = (e.Key == Key.Y &&
+			e.KeyModifiers == KeyModifiers.Control) ||
+			(e.Key == Key.Z && e.KeyModifiers ==
+				(KeyModifiers.Control | KeyModifiers.Shift));
+		if (undo && _workspace.ImportUndo.CanUndo(_workspace.Document) ||
+			redo && _workspace.ImportUndo.CanRedo(_workspace.Document))
+		{
+			e.Handled = true;
+			ReplayLastSynthImport(redo);
+		}
+	}
+
+	private void ReplayLastSynthImport(bool redo)
+	{
+		if (_documentView is null ||
+			!ReferenceEquals(_mainContent.Content, _documentView))
+			return;
+		try
+		{
+			if (redo)
+				_workspace.ImportUndo.Redo(_workspace.Document);
+			else
+				_workspace.ImportUndo.Undo(_workspace.Document);
+
+			SongTreeNode? selectNode = null;
+			if (redo)
+			{
+				ObjectId? first = _workspace.ImportUndo
+					.SelectedRoots(_workspace.Document).FirstOrDefault();
+				if (first is ObjectId id && !id.IsNone)
+					selectNode = FindTreeObject(
+						_workspace.Document.GetSectionRoot(
+							SongTreeSection.Samples), id);
+			}
+			RefreshDocumentView(redo
+				? "Redid last Synth import as one batch"
+				: "Undid last Synth import as one batch", selectNode);
+		}
+		catch (InvalidOperationException error)
+		{
+			// This includes revision, cursor and full authored-snapshot
+			// refusals. The receipt remains intact for a possible safe retry.
+			SetStatus($"Cannot {(redo ? "redo" : "undo")} Synth import: {error.Message}");
+		}
+		finally
+		{
+			UpdateImportUndoActions();
+		}
 	}
 
 	protected override void OnKeyDown(
