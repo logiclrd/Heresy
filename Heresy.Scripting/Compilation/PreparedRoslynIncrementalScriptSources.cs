@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.ExceptionServices;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -19,8 +20,10 @@ namespace Heresy.Scripting.Compilation;
 /// Preparation takes a private copy of the supplied snapshot. Neither
 /// subsequent authoring edits nor mutations to the caller's snapshot can
 /// affect the prepared source graph or the compiled Pattern dimensions.
-/// Compilation errors in any scripted object fail preparation immediately,
-/// before a playback timeline is created.
+/// Scripts are compiled eagerly, before the playback timeline is created,
+/// but a failure is retained against its own source ID. An unreferenced
+/// broken script cannot prevent unrelated audition/preview; requesting the
+/// broken source rethrows its original diagnostic before that source runs.
 /// </remarks>
 public sealed class PreparedRoslynIncrementalScriptSources :
 	IIncrementalInvocationResolver, IIncrementalScriptSourceCompiler
@@ -30,6 +33,10 @@ public sealed class PreparedRoslynIncrementalScriptSources :
 		_patterns = [];
 	private readonly Dictionary<ObjectId, ISequenceEntrySourceFactory>
 		_sequences = [];
+	private readonly Dictionary<ObjectId, ExceptionDispatchInfo>
+		_failedPatterns = [];
+	private readonly Dictionary<ObjectId, ExceptionDispatchInfo>
+		_failedSequences = [];
 
 	public PreparedRoslynIncrementalScriptSources(SongDocumentSnapshot snapshot)
 	{
@@ -45,10 +52,24 @@ public sealed class PreparedRoslynIncrementalScriptSources :
 			switch (source)
 			{
 				case ScriptPatternDefinition pattern:
-					_patterns.Add(pattern.Id, compiler.CompilePattern(pattern));
+					try
+					{
+						_patterns.Add(pattern.Id, compiler.CompilePattern(pattern));
+					}
+					catch (NotSupportedException error)
+					{
+						_failedPatterns.Add(pattern.Id, ExceptionDispatchInfo.Capture(error));
+					}
 					break;
 				case ScriptSequenceDefinition sequence:
-					_sequences.Add(sequence.Id, compiler.CompileSequence(sequence));
+					try
+					{
+						_sequences.Add(sequence.Id, compiler.CompileSequence(sequence));
+					}
+					catch (NotSupportedException error)
+					{
+						_failedSequences.Add(sequence.Id, ExceptionDispatchInfo.Capture(error));
+					}
 					break;
 			}
 		}
@@ -61,6 +82,8 @@ public sealed class PreparedRoslynIncrementalScriptSources :
 		ScriptPatternDefinition source)
 	{
 		RequirePreparedSource(source);
+		if (_failedPatterns.TryGetValue(source.Id, out ExceptionDispatchInfo? failure))
+			failure.Throw();
 		return _patterns[source.Id];
 	}
 
@@ -68,6 +91,8 @@ public sealed class PreparedRoslynIncrementalScriptSources :
 		ScriptSequenceDefinition source)
 	{
 		RequirePreparedSource(source);
+		if (_failedSequences.TryGetValue(source.Id, out ExceptionDispatchInfo? failure))
+			failure.Throw();
 		return _sequences[source.Id];
 	}
 
