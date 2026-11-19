@@ -366,77 +366,85 @@ public static class FmSynthImportStageBPreflight
         foreach (PlannedSource key in adjacency.Keys)
             Walk(key);
 
-        // Final acceptance must verify encoded files for *both* copied and
-        // automatically reused Sample dependencies. Otherwise an on-disk
-        // source/destination asset could be replaced after the song was loaded
-        // and its cached PCM hash would still describe the old buffer.
+        // Only source Samples selected by the effective import require a
+        // fresh asset read. The destination's already-loaded immutable PCM
+        // and its construction-time hash are authoritative for local reuse.
         // Unreferenced samples, including explicitly overridden source uses,
-        // are never read. No partial prepared-byte bundle escapes on failure.
+        // are not read. No partial prepared-byte bundle escapes on failure.
         if (issues.Count == 0)
         {
-            HashSet<ObjectId> verifiedLocalSamples = [];
-
-            void VerifyAsset(SampleDefinition sample, string role,
-                FmImportObjectKey? obj, ObjectId? localId, bool copy)
+            void VerifySourceSample(SampleDefinition sample,
+                FmImportObjectKey source, bool copy)
             {
                 try
                 {
                     byte[] bytes;
                     string fileName;
                     string? expectedHash;
+                    string hash;
                     if (sample.PendingAsset is PendingSampleAsset pending)
                     {
                         bytes = pending.Bytes.ToArray();
                         fileName = pending.FileName;
                         expectedHash = pending.Sha256;
+                        hash = Convert.ToHexString(SHA256.HashData(bytes))
+                            .ToLowerInvariant();
                     }
                     else if (sample.Asset is ExternalAssetReference asset)
                     {
+                        // Hash the actual incoming encoded bytes while reading
+                        // them, and retain that exact read for decoding/copying.
+                        // There is no second asset read or second encoded hash.
                         using Stream stream = ExternalAssetIntegrity.OpenRead(asset.FullPath);
                         using MemoryStream buffer = new();
-                        stream.CopyTo(buffer);
+                        using IncrementalHash digest =
+                            IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                        byte[] chunk = new byte[81920];
+                        int read;
+                        while ((read = stream.Read(chunk, 0, chunk.Length)) != 0)
+                        {
+                            digest.AppendData(chunk.AsSpan(0, read));
+                            buffer.Write(chunk, 0, read);
+                        }
                         bytes = buffer.ToArray();
+                        hash = Convert.ToHexString(digest.GetHashAndReset())
+                            .ToLowerInvariant();
                         fileName = Path.GetFileName(asset.FullPath);
                         expectedHash = asset.Sha256;
                     }
                     else
                     {
                         Add(FmImportStageBIssueKind.SampleAssetMissing,
-                            $"{role} has no encoded representation.",
-                            obj, local: localId);
+                            $"Source Sample #{source.SourceObjectId.Value} has no encoded representation.",
+                            source);
                         return;
                     }
 
-                    // Recompute the *encoded file's* digest from bytes freshly
-                    // read at Import-click time. Do not confuse this with
-                    // SamplePcmData.Sha256 (immutable decoded audio).
-                    string hash = Convert.ToHexString(SHA256.HashData(bytes))
-                        .ToLowerInvariant();
                     if (expectedHash is not null
                         && !string.Equals(hash, expectedHash,
                             StringComparison.OrdinalIgnoreCase))
                     {
                         Add(FmImportStageBIssueKind.SampleAssetChanged,
-                            $"{role} encoded SHA-256 has changed.",
-                            obj, local: localId);
+                            $"Source Sample #{source.SourceObjectId.Value} encoded SHA-256 has changed.",
+                            source);
                         return;
                     }
 
-                    // Decode creates new immutable PCM with a newly computed
-                    // hash from the *current* file. Check the digest first,
-                    // then every PCM bit if hashes match. A matching digest
-                    // by itself never authorizes an import or Sample reuse.
+                    // Fresh decoding calculates a new immutable PCM hash from
+                    // the selected source asset. Its cached value must agree
+                    // with the originally loaded source PCM, then all PCM bits
+                    // must agree. Existing destination PCM is never rehashed.
                     SamplePcmData decoded = SampleAudioCodec.Decode(bytes, fileName);
                     if (sample.PcmData is not SamplePcmData original
                         || !decoded.HasSameAudio(original))
                     {
                         Add(FmImportStageBIssueKind.SampleAssetInvalid,
-                            $"{role} encoded PCM does not match the loaded audio (content, channels, rate or frames).",
-                            obj, local: localId);
+                            $"Source Sample #{source.SourceObjectId.Value} encoded PCM does not match the loaded audio (content, channels, rate or frames).",
+                            source);
                         return;
                     }
-                    if (copy && obj is FmImportObjectKey sourceKey)
-                        prepared.Add(new(sourceKey, fileName, bytes, hash));
+                    if (copy)
+                        prepared.Add(new(source, fileName, bytes, hash));
                 }
                 catch (Exception error) when (error is IOException
                     or UnauthorizedAccessException or ArgumentException
@@ -444,8 +452,8 @@ public static class FmSynthImportStageBPreflight
                     or OverflowException)
                 {
                     Add(FmImportStageBIssueKind.SampleAssetInvalid,
-                        $"{role} cannot be verified: {error.Message}",
-                        obj, local: localId);
+                        $"Source Sample #{source.SourceObjectId.Value} cannot be verified: {error.Message}",
+                        source);
                 }
             }
 
@@ -463,26 +471,8 @@ public static class FmSynthImportStageBPreflight
                         obj.Key);
                     continue;
                 }
-                VerifyAsset(sample,
-                    $"Source Sample #{obj.Key.SourceObjectId.Value}",
-                    obj.Key, null, obj.IsCopied);
 
-                if (obj.Mapping.Kind == FmImportMappingKind.ReuseExisting
-                    && obj.Mapping.Provenance ==
-                        FmImportMappingProvenance.AutomaticExactMatch
-                    && obj.Mapping.ExistingId is ObjectId localId
-                    && verifiedLocalSamples.Add(localId))
-                {
-                    if (!destination.TryGet(localId, out SongObject? existing)
-                        || existing is not SampleDefinition localSample)
-                        Add(FmImportStageBIssueKind.MissingDestination,
-                            $"Automatically reused destination Sample #{localId.Value} is missing.",
-                            obj.Key, local: localId);
-                    else
-                        VerifyAsset(localSample,
-                            $"Destination Sample #{localId.Value}",
-                            obj.Key, localId, copy: false);
-                }
+                VerifySourceSample(sample, obj.Key, obj.IsCopied);
             }
         }
 
