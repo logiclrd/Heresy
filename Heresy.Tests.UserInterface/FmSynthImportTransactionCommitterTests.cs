@@ -305,6 +305,70 @@ public sealed class FmSynthImportTransactionCommitterTests
             Has.Count.EqualTo(1));
     }
 
+    [TestCase(".hm")]
+    [TestCase(".hm.json")]
+    public void LoadedSamplesAlsoDeduplicateAfterARealSaveAndReopen(
+        string extension)
+    {
+        string directory = Path.Combine(Path.GetTempPath(),
+            "heresy-sample-reuse-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            SongDocument original = new();
+            SampleDefinition sample = SampleDefinition.CreateImported(
+                original.AllocateObjectId(), "Sample", "audio.wav", Wave(1477));
+            original.Add(sample);
+            FmSynthDefinition root = Add(original, "New Synth 3",
+                new FmSynthGraph([new FmSoundSourceNode(0, sample.Id, 440)], 0));
+
+            string sourcePath = Path.Combine(directory, "source" + extension);
+            SongDocumentStorage.Save(sourcePath, original);
+            SongDocument source = SongDocumentStorage.Load(sourcePath);
+            FmSynthDefinition reloadedRoot =
+                (FmSynthDefinition)source.Objects[root.Id];
+            FmImportExactMatchSource from =
+                Discover(source, sourcePath, reloadedRoot);
+            SongDocument destination = new();
+
+            FmImportCommitResult first = FmSynthImportTransactionCommitter.Commit(
+                Plan(destination, from), [from], destination);
+            Assert.That(first.IsCommitted, Is.True, first.Error);
+            ObjectId copiedSample = destination.Objects.Values
+                .OfType<SampleDefinition>().Single().Id;
+
+            string destinationPath = Path.Combine(directory,
+                "destination" + extension);
+            SongDocumentStorage.Save(destinationPath, destination);
+            SongDocument reopened = SongDocumentStorage.Load(destinationPath);
+            FmSynthImportPlan secondPlan = Plan(reopened, from);
+            FmImportObjectKey sampleKey = new(
+                from.Discovery.SourceDocumentIdentity, sample.Id);
+            Assert.That(secondPlan.GetDefinitionMapping(sampleKey).ExistingId,
+                Is.EqualTo(copiedSample),
+                "persisted Sample PCM should match after both files are loaded");
+            Assert.That(secondPlan.GetProposedName(
+                from.Discovery.SelectedSynthRoots.Single()).Name,
+                Is.EqualTo("New Synth 4"));
+
+            FmImportCommitResult again =
+                FmSynthImportTransactionCommitter.Commit(secondPlan,
+                    [from], reopened);
+            Assert.That(again.IsCommitted, Is.True, again.Error);
+            Assert.That(again.Edit!.ImportedObjectIds, Has.Count.EqualTo(1));
+            Assert.That(reopened.Objects.Values.OfType<SampleDefinition>().Count(),
+                Is.EqualTo(1));
+            FmSynthDefinition newRoot = (FmSynthDefinition)reopened.Objects[
+                again.SelectedRootIds.Single()];
+            Assert.That(newRoot.Graph.Nodes.OfType<FmSoundSourceNode>()
+                .Single().SourceId, Is.EqualTo(copiedSample));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static FmSynthDefinition Add(SongDocument song, string name,
         FmSynthGraph graph)
     {
