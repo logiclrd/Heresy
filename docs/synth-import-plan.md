@@ -1,9 +1,9 @@
 # Synth import planning and dependency resolution
 
-**Status:** Approved design; implementation underway in bounded slices. Draft PR #34 includes graph/dependency discovery, editable plan decisions and sticky canonical ownership, an effective liveness projection, strict automatic match detection, Stage-A structural/type validation, headless Stage-B destination/asset preflight, the framework-independent TreeDataGrid row/summary projection, and an explicitly labeled, editable **preview dialog** using Wiesław Šoltés's MIT TreeDataGrid. **The existing import operation remains unchanged; preview edits are not applied yet.**  
+**Status:** Implemented in PR #34 (14 bounded slices plus owner refinements); full owner desktop acceptance complete on 19 November 2026. The original **Import selected** entry point now uses the graph-aware, editable TreeDataGrid plan and atomic commit. The separate preview button was removed. The single-level guarded last-import undo/redo is scoped to the song-document tree; no general-purpose history was introduced. Cross-Filter-stage override translation and opaque scripted-reference validation remain explicitly limited and are tracked as separate follow-ups, not additional PR #34 slices. 
 **Scope:** The existing **Import Synths** workflow, including importing Synths back into their own saved song. Independent of the later **Duplicate Object** action for every object list.  
 **Design recorded:** 12 November 2026.  
-**Priority:** Park this while PR #12 (live Synth parameter audition) continues.
+**Completion:** Owner approved merging PR #34 after independently testing saved .hm/.hm.json Sample playback and recurrent document Open/New workflows. A Linux multi-monitor file-picker focus defect is tracked separately as issue #36.
 
 ## 1. Goal and operating principle
 
@@ -383,4 +383,22 @@ Regressions include constructor hash agreement with canonical SHA-256, input-arr
 Only selected **source** Sample dependencies (copied or automatically reused) are refreshed at final Import acceptance: if backed by an external asset, Stage B opens that file once, **incrementally computes the SHA-256 of the actual encoded bytes as they are read**, and buffers those exact bytes for decoding/optional detached copying. If backed by pending encoded bytes, it hashes a defensive copy of those bytes instead. The computed encoded hash is compared with the source's persisted hash when provided; then fresh decoding constructs a new immutable `SamplePcmData`, computes its new PCM hash, compares against the source's previously loaded immutable PCM hash and checks every sample bit on a match. This catches external source-file modifications even for unhashed legacy assets. For reused Samples the verified source bytes are discarded after validation, and the preexisting destination `SamplePcmData` is reused without being touched. Unreferenced source Samples remain outside preflight file I/O. Only copied Samples retain prepared, validated encoded bytes.
 
 Regression tests cover changed source encoded assets (hashed/unhashed) refusing commit, changed destination encoded assets (hashed/unhashed) **not** refusing automatic local reuse, and a deleted destination encoded asset remaining eligible for reuse by the already-loaded PCM. These requirements refine, not waive, final-click source authoring freshness checks, local reference integrity, and atomic commit. Physical `.hm`/`.hm.json` playback acceptance remains outstanding; PR #34 remains draft until explicit owner approval.
+
+
+## 29. Owner physical acceptance and closeout — 19 November 2026
+
+All 14 implementation slices and the subsequent name/immutable Sample hash/source-only final-click verification refinements are complete. The owner manually completed acceptance **item #5**, reporting:
+
+1. Imported a Synth with dependencies on **two Samples** into a fresh document.
+2. Saved that document independently as both **`.hm` and `.hm.json`**.
+3. Restarted Heresy, opened the saved `.hm`, and performed successful sound test plays inside the Synth editor.
+4. Restarted Heresy again, opened the saved `.hm.json`, and performed successful sound test plays inside the Synth editor.
+5. Restarted Heresy again, imported Synth(s) from the saved `.hm.json`.
+6. Within one persistent Heresy session, repeatedly opened the different documents, both over an existing open document and following **File → New**.
+
+The owner considers item #5 **PASS**, this final PR #34 slice **closed**, and, with no remaining implementation slices required, **approves merging PR #34**. The earlier owner checks of items #1–4 were also reported successful with subsequent numeric-name and PCM-hash refinements incorporated and exact-head automated regression coverage.
+
+**Conservative boundaries accepted as documented:** cross-Filter-stage override translation is limited to safe matches, and opaque scripted Pattern/Sequence references are warned about without asserting complete reference proof; both are follow-up capabilities rather than blocking unfinished PR #34 slices. Global multi-level document Undo remains a separate design.
+
+**Independent Linux GUI defect:** File Open/Save dialogs appear on the right monitor even when Heresy is maximized on the left and the cursor is on the left under the owner's monitor-following WM policy; on accept *or* cancel, keyboard focus can shift to another application's foreground window on the right. Windows behaviour is untested (one-monitor Windows machine). Tracked separately in [GitHub issue #36](https://github.com/logiclrd/Heresy/issues/36); this issue does **not** invalidate the Synth import save/reopen/audio acceptance, and should not be addressed within PR #34.
 
