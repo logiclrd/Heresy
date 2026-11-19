@@ -323,8 +323,8 @@ public sealed class FmSynthImportExactMatcherTests
             commit.SelectedRootIds.Single()];
         Assert.That(added.Graph.Nodes.OfType<FmSoundSourceNode>().Single().SourceId,
             Is.EqualTo(exact.Id));
-        Assert.That(destination.Objects.Values.OfType<SampleDefinition>().ToArray(),
-            Has.Count.EqualTo(2));
+        Assert.That(destination.Objects.Values.OfType<SampleDefinition>().Count(),
+            Is.EqualTo(2));
     }
 
     [Test]
