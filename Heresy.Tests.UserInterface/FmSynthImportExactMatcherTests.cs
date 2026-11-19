@@ -2,11 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Numerics;
+using System.Text;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
+using Heresy.Core.Samples;
 using Heresy.UserInterface.Documents;
 
 using NUnit.Framework;
@@ -273,6 +276,140 @@ public sealed class FmSynthImportExactMatcherTests
             "only the two selected Synth roots need copying");
         Assert.Throws<ArgumentException>(() =>
             FmSynthImportExactMatcher.Find([fromLeft, fromLeft], destination));
+    }
+
+    [Test]
+    public void SampleAutomaticReuseHashesDecodedPcmThenChecksActualDataAndMetadata()
+    {
+        SongDocument source = new();
+        SampleDefinition original = SampleDefinition.CreateImported(
+            source.AllocateObjectId(), "Source clip", "tone.wav", Wave(1234));
+        source.Add(original);
+        FmSynthDefinition root = AddSampleRoot(source, original.Id);
+        SongDocument destination = new();
+        SampleDefinition wrong = SampleDefinition.CreateImported(
+            destination.AllocateObjectId(), "Source clip", "other.wav", Wave(4321));
+        destination.Add(wrong);
+        SampleDefinition exact = SampleDefinition.CreateImported(
+            destination.AllocateObjectId(), "Other title", "renamed.wav", Wave(1234));
+        destination.Add(exact);
+        Assert.That(original.SourceColourArgb, Is.Not.Null);
+        Assert.That(FmSynthImportExactMatcher.StrictlyEqual(original, wrong),
+            Is.False);
+        Assert.That(FmSynthImportExactMatcher.StrictlyEqual(original, exact),
+            Is.True, "sample equality is based on PCM content, not name or UI tint");
+
+        FmImportExactMatchSource input = Source("sample-dedup.hm", source, root);
+        FmSynthImportPlan plan =
+            FmSynthImportExactMatcher.CreatePlan([input], destination);
+        FmImportObjectKey key =
+            new(input.Discovery.SourceDocumentIdentity, original.Id);
+        Assert.That(plan.GetDefinitionMapping(key), Is.EqualTo(
+            new FmImportMapping(FmImportMappingKind.ReuseExisting, exact.Id,
+                FmImportMappingProvenance.AutomaticExactMatch)));
+        Assert.That(plan.Effective.ObjectByKey[key].IsCopied, Is.False);
+        FmImportStageBResult checkedPlan =
+            FmSynthImportStageBPreflight.Check(plan, [input], destination);
+        Assert.That(checkedPlan.IsPreflightValid, Is.True,
+            string.Join(" | ", checkedPlan.Issues.Select(x => x.Message)));
+        Assert.That(checkedPlan.PreparedSamples, Is.Empty,
+            "reused Sample must not read or stage another encoded copy");
+        FmImportCommitResult commit =
+            FmSynthImportTransactionCommitter.Commit(plan, [input], destination);
+        Assert.That(commit.IsCommitted, Is.True, commit.Error);
+        Assert.That(commit.Edit!.ImportedObjectIds, Has.Count.EqualTo(1),
+            "the selected root copies, but the matching Sample is reused");
+        FmSynthDefinition added = (FmSynthDefinition)destination.Objects[
+            commit.SelectedRootIds.Single()];
+        Assert.That(added.Graph.Nodes.OfType<FmSoundSourceNode>().Single().SourceId,
+            Is.EqualTo(exact.Id));
+        Assert.That(destination.Objects.Values.OfType<SampleDefinition>(),
+            Has.Count.EqualTo(2));
+    }
+
+    [Test]
+    public void IdenticalPcmWithDifferentLoopOrSpatialPositionsMustNotReuse()
+    {
+        SongDocument source = new();
+        SampleDefinition original = SampleDefinition.CreateImported(
+            source.AllocateObjectId(), "Clip", "tone.wav", Wave(1234));
+        source.Add(original);
+        FmSynthDefinition root = AddSampleRoot(source, original.Id);
+        SongDocument destination = new();
+
+        SampleDefinition changedLoop = SampleDefinition.CreateImported(
+            destination.AllocateObjectId(), "Looped", "tone.wav", Wave(1234));
+        changedLoop.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 1);
+        destination.Add(changedLoop);
+
+        SampleDefinition movedChannel = SampleDefinition.CreateImported(
+            destination.AllocateObjectId(), "Moved", "tone.wav", Wave(1234));
+        movedChannel.SourceChannelPositions.Add(new Vector3(1, 0, 0));
+        destination.Add(movedChannel);
+
+        Assert.That(FmSynthImportExactMatcher.StrictlyEqual(original, changedLoop),
+            Is.False);
+        Assert.That(FmSynthImportExactMatcher.StrictlyEqual(original, movedChannel),
+            Is.False);
+        FmImportExactMatchSource input = Source("sample-metadata.hm", source, root);
+        FmSynthImportPlan plan =
+            FmSynthImportExactMatcher.CreatePlan([input], destination);
+        FmImportObjectKey key =
+            new(input.Discovery.SourceDocumentIdentity, original.Id);
+        Assert.That(plan.GetDefinitionMapping(key).Kind,
+            Is.EqualTo(FmImportMappingKind.ImportCopy));
+        Assert.That(plan.Effective.ObjectByKey[key].IsCopied, Is.True);
+    }
+
+    [Test]
+    public void HashAndDeepSampleEqualityRejectDifferentAudioDespiteSameName()
+    {
+        SongDocument source = new();
+        SampleDefinition original = SampleDefinition.CreateImported(
+            source.AllocateObjectId(), "Clip", "clip.wav", Wave(100));
+        source.Add(original);
+        FmSynthDefinition root = AddSampleRoot(source, original.Id);
+        SongDocument destination = new();
+        SampleDefinition local = SampleDefinition.CreateImported(
+            destination.AllocateObjectId(), "Clip", "clip.wav", Wave(101));
+        destination.Add(local);
+
+        Assert.That(FmSynthImportExactMatcher.StrictlyEqual(original, local),
+            Is.False);
+        FmImportExactMatchSource input = Source("different-audio.hm", source, root);
+        Assert.That(FmSynthImportExactMatcher.Find([input], destination),
+            Is.Empty);
+    }
+
+    private static FmSynthDefinition AddSampleRoot(SongDocument song,
+        ObjectId sampleId)
+    {
+        FmSynthDefinition root = new(song.AllocateObjectId(), "Sample root",
+            new FmSynthGraph([new FmSoundSourceNode(0, sampleId, 440)], 0));
+        song.Add(root);
+        return root;
+    }
+
+    private static byte[] Wave(short value)
+    {
+        using MemoryStream stream = new();
+        using (BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true))
+        {
+            writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+            writer.Write(38);
+            writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+            writer.Write(16);
+            writer.Write((short)1);
+            writer.Write((short)1);
+            writer.Write(8000);
+            writer.Write(16000);
+            writer.Write((short)2);
+            writer.Write((short)16);
+            writer.Write(Encoding.ASCII.GetBytes("data"));
+            writer.Write(2);
+            writer.Write(value);
+        }
+        return stream.ToArray();
     }
 
     private static NodeEnvelopeDefinition Node(
