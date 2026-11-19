@@ -28,8 +28,11 @@ internal static class Program
         // filename field and uses ShowDialog(owner) for window ownership.
         // Its registration overrides the platform storage provider, so
         // make this a Linux-only opt-in for direct GTK/managed comparison.
-        if (DesktopFilePickerPolicy.UseManagedDialogs(
-            picker, OperatingSystem.IsLinux()))
+        // Keep the OS guard explicit at the call site: the Avalonia
+        // extension is annotated for desktop operating systems, and CA1416
+        // cannot infer OS reachability through our policy helper.
+        if (OperatingSystem.IsLinux()
+            && DesktopFilePickerPolicy.UseManagedDialogs(picker, isLinux: true))
             builder.UseManagedSystemDialogs();
 
         return builder;
