@@ -14,7 +14,7 @@ public sealed class SamplePcmHashTests
     [Test]
     public void ConstructorOwnsSampleBitsAndComputesOneImmutableCanonicalHash()
     {
-        float[] values = [0f, -0f, 1f,
+        float[] values = [0f, BitConverter.Int32BitsToSingle(unchecked((int)0x80000000)), 1f,
             BitConverter.Int32BitsToSingle(unchecked((int)0x7fc00001))];
         SamplePcmData pcm = new(48000, 2, values);
         byte[] canonical = new byte[values.Length * sizeof(float)];
@@ -31,10 +31,10 @@ public sealed class SamplePcmHashTests
         values[1] = 7f;
         Assert.That(pcm.Sha256, Is.EqualTo(expected));
         Assert.That(BitConverter.SingleToInt32Bits(pcm.GetSample(0, 1)),
-            Is.EqualTo(BitConverter.SingleToInt32Bits(-0f)),
+            Is.EqualTo(BitConverter.SingleToInt32Bits(BitConverter.Int32BitsToSingle(unchecked((int)0x80000000)))),
             "the PCM buffer is a defensive copy, not the caller's array");
         Assert.That(pcm.HasSameAudio(new SamplePcmData(48000, 2, [
-            0f, -0f, 1f, BitConverter.Int32BitsToSingle(unchecked((int)0x7fc00001))
+            0f, BitConverter.Int32BitsToSingle(unchecked((int)0x80000000)), 1f, BitConverter.Int32BitsToSingle(unchecked((int)0x7fc00001))
         ])), Is.True);
     }
 
@@ -42,7 +42,7 @@ public sealed class SamplePcmHashTests
     public void EqualityDistinguishesSignedZeroAndNanPayloadsDespiteFloatingEquality()
     {
         SamplePcmData positive = new(44100, 1, [0f]);
-        SamplePcmData negative = new(44100, 1, [-0f]);
+        SamplePcmData negative = new(44100, 1, [BitConverter.Int32BitsToSingle(unchecked((int)0x80000000))]);
         Assert.That(positive.Sha256, Is.Not.EqualTo(negative.Sha256));
         Assert.That(positive.HasSameAudio(negative), Is.False);
         Assert.That(positive.HasSameAudio(new SamplePcmData(48000, 1, [0f])),
