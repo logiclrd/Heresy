@@ -262,8 +262,8 @@ public sealed class FmSynthImportTransactionCommitterTests
         Assert.That(second.IsCommitted, Is.True, second.Error);
         Assert.That(second.Edit!.ImportedObjectIds, Has.Count.EqualTo(1),
             "only the explicit Synth root is copied on subsequent imports");
-        Assert.That(destination.Objects.Values.OfType<SampleDefinition>().ToArray(),
-            Has.Count.EqualTo(1));
+        Assert.That(destination.Objects.Values.OfType<SampleDefinition>().Count(),
+            Is.EqualTo(1));
         FmSynthDefinition secondRoot = (FmSynthDefinition)destination.Objects[
             second.SelectedRootIds.Single()];
         Assert.That(secondRoot.Name, Is.EqualTo("New Synth 4"));
@@ -301,8 +301,8 @@ public sealed class FmSynthImportTransactionCommitterTests
             FmSynthImportTransactionCommitter.Commit(plan, [from], destination);
         Assert.That(refused.IsCommitted, Is.False);
         Assert.That(destination.Objects.Values.OfType<FmSynthDefinition>(), Is.Empty);
-        Assert.That(destination.Objects.Values.OfType<SampleDefinition>().ToArray(),
-            Has.Count.EqualTo(1));
+        Assert.That(destination.Objects.Values.OfType<SampleDefinition>().Count(),
+            Is.EqualTo(1));
     }
 
     [TestCase(".hm")]
