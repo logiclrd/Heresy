@@ -228,6 +228,57 @@ Do not reintroduce completed-task checklists here.
   type; check both complex objects and objects referenced elsewhere.
   See [UI workflow](user-interface-workflows.md).
 
+## Script objects and editor UX
+
+- [ ] **Polish script-object editors and generated return behavior.**
+  Apply consistently to Script Sequences, Script Patterns, Script Envelopes,
+  Script Instruments and every applicable script-source field. For scripts
+  whose generated entry point requires a return value, provide an implicit
+  `return default;` when execution would otherwise fall off the end of
+  the user's text; preserve authored explicit returns and actionable
+  diagnostics for unrelated compilation errors. Replace the existing
+  introductory placeholder text about `_O()` and implementation technologies
+  with a short, valid, editable example *for each script kind*, matched to
+  the supported API. A Script Sequence example can use a `switch` on
+  `sequenceIndex` (with `Play(_O(...))` for a real case); examples must
+  compile and demonstrate the actual author's entry point.
+
+  Use a **monospace editor font** via the first installed candidate in
+  exactly this preference order: Commit Mono, Hack, Fira Mono, Noto Mono,
+  Liberation Mono, IBM Plex Mono, Ubuntu Mono, Cascadia Mono, Consolas,
+  Lucida Console, SF Mono, Menlo, Monaco; then any sans-serif monospace
+  family; then any other monospace family; then Courier New, Courier;
+  finally the normal UI font if none is available. Do not assume any one
+  named font exists on Windows, Linux or macOS.
+
+  Rename the script editor's **Apply source** button to **Save**. Keep
+  Save disabled until the text has been edited relative to the applied
+  source, and do not silently lose pending edits: closing/canceling the
+  dialog with unsaved text must offer Save, Discard and Cancel (stay in
+  editor). Reconcile the new caption/commit boundary with the approved
+  [tiered Undo/Redo design](tiered-undo-redo-design.md), including pending
+  5-second text-undo batches and preserving editor-local history rather
+  than introducing an unrelated history mechanism. Regression/GUI checks
+  should cover fallthrough vs explicit return, example compilation,
+  font fallbacks on all desktop platforms, Save enablement and each
+  unsaved-dismissal choice.
+
+## Playback preparation feedback
+
+- [ ] **Show script compilation activity at the far right of the main
+  status bar.** During Roslyn script compilation/preparation (including
+  compilation delaying the *first* preview note), display a distinct,
+  readily noticeable status such as **Compiling scripts…** in bold.
+  Show the activity while compilation is actually in progress and clear
+  it on completion or failure without overwriting the existing status/
+  diagnostics or claiming playback has started. Keep compilation off
+  the realtime audio/PCM thread and preserve responsive UI behavior.
+  Check both short and slow compilations and failure/retry transitions.
+  **Context:** Owner-tested [PR #40](https://github.com/logiclrd/Heresy/pull/40)
+  fixes an unrelated invalid Script Sequence blocking Synth preview; this
+  separate UX request addresses the initial note-playback latency noticed
+  during that test.
+
 ## Synth editor — UI defects
 
 ## Synth editor — live parameter audition
