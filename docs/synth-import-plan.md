@@ -350,3 +350,17 @@ The main window now has a narrowly scoped **Edit → Undo last Synth import / Re
 
 Regression coverage exercises one-unit undo/redo and absence of tombstones, accepted-batch identity and selected roots, wrong-document rejection, New/Open clearing, latest-import replacement, marked/unmarked authoring-change refusal, observer-failure rollback/retry, headless menu activation and shortcut scope, and refusal without changing an authored Synth. The final **`Import selected` graph-aware workflow from Slice 13 remains unchanged**, with no separate preview button. Physical GUI acceptance of both slices (and `.hm`/`.hm.json` save/reopen/audio) is reserved for the owner; do not merge PR #34 without explicit approval.
 
+## 26. Owner review — numeric-name continuation and two-stage Sample deduplication
+
+Owner desktop review of Slices 13–14 items 1–4 found two refinements; item 5 (physical saved Sample/audio acceptance) remains outstanding.
+
+1. Terminal numeric word: on a case-insensitive collision, interpret the final space-delimited decimal word as the current numeric suffix and increment it from there. Reimporting "New Synth 3" suggests "New Synth 4", not "New Synth 3 2". Subsequent occupied numbers are skipped. Unnumbered names begin with suffix 2, while noncolliding original names remain untouched. The algorithm uses BigInteger so even large numeric words are handled without overflow. Pinned names can still intentionally duplicate any existing name.
+
+2. Automatic Sample reuse: dependency Sample definitions now join Node/Script Envelope and Filter definitions in exact-match discovery. The matcher first verifies the Sample rate, channel count, frame count, loop definition and spatial per-channel positions; these are playback-significant and are not safe to discard. It then calculates a SHA-256 over interleaved decoded PCM floating-point bits using a bounded-memory incremental buffer, caching the hash per PCM buffer for the discovery pass. Only if the hashes are equal does it compare all actual PCM sample float bits, including the signs of zero and NaN payloads. The hash alone is never considered proof. This works across different encoded file representations with identical decoded PCM, and intentionally ignores name, numeric ID and visual source colour. The smallest matching destination ID is preferred. Automatic exact-match provenance remains orange; explicit user remaps remain manual, and Reset restores captured automatic matches.
+
+Stage B repeats the same two-stage Sample equivalence check at commit time against the current authored destination, and only unmatched Samples go through encoded asset reading, hash verification, decode and detached copy. Reused Samples do not allocate a new Sample, duplicate its pending encoded bytes, or read the source encoded file again. Mismatched loops or spatial positions must instead copy the Sample, to avoid unexpectedly changing sound. The existing full authoring fingerprints still prevent stale source/destination plans.
+
+Regressions cover numeric progression and manual duplicates, PCM match/mismatch and metadata mismatch, Stage-B stale-data refusal, and importing a Synth twice with a single reused Sample and incremented Synth name.
+
+**Still not done:** owner item 5 — saved .hm/.hm.json Sample save/reopen and real audio playback, together with manual verification of these refinements. PR #34 remains draft and unmerged pending owner approval.
+
