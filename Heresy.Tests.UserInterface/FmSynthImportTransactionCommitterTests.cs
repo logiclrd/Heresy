@@ -221,6 +221,90 @@ public sealed class FmSynthImportTransactionCommitterTests
         }
     }
 
+    [Test]
+    public void RepeatedSynthImportNumbersNameAndReusesExistingPcmSample()
+    {
+        SongDocument source = new();
+        SampleDefinition sample = SampleDefinition.CreateImported(
+            source.AllocateObjectId(), "Source audio", "voice.wav", Wave(2056));
+        source.Add(sample);
+        FmSynthDefinition root = Add(source, "New Synth 3",
+            new FmSynthGraph([new FmSoundSourceNode(0, sample.Id, 440)], 0));
+        FmImportExactMatchSource from = Discover(source, "repeated-sample.hm", root);
+        SongDocument destination = new();
+
+        FmImportCommitResult first = FmSynthImportTransactionCommitter.Commit(
+            Plan(destination, from), [from], destination);
+        Assert.That(first.IsCommitted, Is.True, first.Error);
+        Assert.That(first.Edit!.ImportedObjectIds, Has.Count.EqualTo(2));
+        ObjectId importedSample = destination.Objects.Values
+            .OfType<SampleDefinition>().Single().Id;
+        Assert.That(((FmSynthDefinition)destination.Objects[
+            first.SelectedRootIds.Single()]).Name, Is.EqualTo("New Synth 3"));
+
+        FmSynthImportPlan secondPlan = Plan(destination, from);
+        FmImportObjectKey sampleKey = new(
+            from.Discovery.SourceDocumentIdentity, sample.Id);
+        Assert.That(secondPlan.GetDefinitionMapping(sampleKey).Kind,
+            Is.EqualTo(FmImportMappingKind.ReuseExisting));
+        Assert.That(secondPlan.GetDefinitionMapping(sampleKey).ExistingId,
+            Is.EqualTo(importedSample));
+        Assert.That(secondPlan.GetProposedName(from.Discovery.SelectedSynthRoots.Single())
+            .Name, Is.EqualTo("New Synth 4"));
+        FmImportStageBResult preflight =
+            FmSynthImportStageBPreflight.Check(secondPlan, [from], destination);
+        Assert.That(preflight.IsPreflightValid, Is.True,
+            string.Join(" | ", preflight.Issues.Select(x => x.Message)));
+        Assert.That(preflight.PreparedSamples, Is.Empty);
+
+        FmImportCommitResult second = FmSynthImportTransactionCommitter.Commit(
+            secondPlan, [from], destination);
+        Assert.That(second.IsCommitted, Is.True, second.Error);
+        Assert.That(second.Edit!.ImportedObjectIds, Has.Count.EqualTo(1),
+            "only the explicit Synth root is copied on subsequent imports");
+        Assert.That(destination.Objects.Values.OfType<SampleDefinition>(),
+            Has.Count.EqualTo(1));
+        FmSynthDefinition secondRoot = (FmSynthDefinition)destination.Objects[
+            second.SelectedRootIds.Single()];
+        Assert.That(secondRoot.Name, Is.EqualTo("New Synth 4"));
+        Assert.That(secondRoot.Graph.Nodes.OfType<FmSoundSourceNode>().Single().SourceId,
+            Is.EqualTo(importedSample));
+    }
+
+    [Test]
+    public void AutomaticSampleMatchIsReverifiedAtCommitBoundary()
+    {
+        SongDocument source = new();
+        SampleDefinition sample = SampleDefinition.CreateImported(
+            source.AllocateObjectId(), "Clip", "original.wav", Wave(12));
+        source.Add(sample);
+        FmSynthDefinition root = Add(source, "Root",
+            new FmSynthGraph([new FmSoundSourceNode(0, sample.Id, 440)], 0));
+        SongDocument destination = new();
+        SampleDefinition existing = SampleDefinition.CreateImported(
+            destination.AllocateObjectId(), "Different name", "same.wav", Wave(12));
+        destination.Add(existing);
+        FmImportExactMatchSource from = Discover(source, "stale-sample.hm", root);
+        FmSynthImportPlan plan = Plan(destination, from);
+        FmImportObjectKey key = new(from.Discovery.SourceDocumentIdentity, sample.Id);
+        Assert.That(plan.GetDefinitionMapping(key).ExistingId, Is.EqualTo(existing.Id));
+
+        // This direct authoring edit intentionally does not mark a document
+        // revision. Stage B still rechecks the complete destination state.
+        existing.ReplaceImportedEncoding("changed.wav", Wave(123));
+        FmImportStageBResult checkedPlan =
+            FmSynthImportStageBPreflight.Check(plan, [from], destination);
+        Assert.That(checkedPlan.IsPreflightValid, Is.False);
+        Assert.That(checkedPlan.Issues.Any(x =>
+            x.Kind == FmImportStageBIssueKind.AutomaticMatchChanged), Is.True);
+        FmImportCommitResult refused =
+            FmSynthImportTransactionCommitter.Commit(plan, [from], destination);
+        Assert.That(refused.IsCommitted, Is.False);
+        Assert.That(destination.Objects.Values.OfType<FmSynthDefinition>(), Is.Empty);
+        Assert.That(destination.Objects.Values.OfType<SampleDefinition>(),
+            Has.Count.EqualTo(1));
+    }
+
     private static FmSynthDefinition Add(SongDocument song, string name,
         FmSynthGraph graph)
     {
