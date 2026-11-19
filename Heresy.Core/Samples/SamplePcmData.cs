@@ -70,6 +70,25 @@ public sealed class SamplePcmData
 		return Convert.ToHexString(hash.GetHashAndReset());
 	}
 
+	/// <summary>Compare immutable PCM, checking the cached SHA-256 first and
+	/// inspecting every sample bit only when the digests agree. The digest is
+	/// an optimization, not the ultimate proof of equality.</summary>
+	public bool HasSameAudio(SamplePcmData? other)
+	{
+		if (ReferenceEquals(this, other))
+			return true;
+		if (other is null || SampleRate != other.SampleRate
+			|| ChannelCount != other.ChannelCount
+			|| FrameCount != other.FrameCount
+			|| !string.Equals(Sha256, other.Sha256, StringComparison.Ordinal))
+			return false;
+		for (int index = 0; index < _samples.Length; index++)
+			if (BitConverter.SingleToInt32Bits(_samples[index])
+				!= BitConverter.SingleToInt32Bits(other._samples[index]))
+				return false;
+		return true;
+	}
+
 	public float GetSample(long frame, int channel)
 	{
 		if ((ulong)frame >= (ulong)FrameCount)
