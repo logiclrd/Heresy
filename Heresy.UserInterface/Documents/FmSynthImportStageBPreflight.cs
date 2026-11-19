@@ -366,21 +366,19 @@ public static class FmSynthImportStageBPreflight
         foreach (PlannedSource key in adjacency.Keys)
             Walk(key);
 
-        // Do not attempt a potentially costly decode or file read if the plan
-        // is already invalid; no partial asset bundle can escape on failure.
+        // Final acceptance must verify encoded files for *both* copied and
+        // automatically reused Sample dependencies. Otherwise an on-disk
+        // source/destination asset could be replaced after the song was loaded
+        // and its cached PCM hash would still describe the old buffer.
+        // Unreferenced samples, including explicitly overridden source uses,
+        // are never read. No partial prepared-byte bundle escapes on failure.
         if (issues.Count == 0)
-            foreach (FmImportEffectiveObject obj in plan.Effective.Objects.Where(o =>
-                o.IsCopied && plan.DiscoveredObjects[o.Key].Kind == SongObjectKind.Sample))
+        {
+            HashSet<ObjectId> verifiedLocalSamples = [];
+
+            void VerifyAsset(SampleDefinition sample, string role,
+                FmImportObjectKey? obj, ObjectId? localId, bool copy)
             {
-                if (!sourceDocuments.TryGetValue(obj.Key.SourceDocumentIdentity,
-                        out SongDocument? original)
-                    || !original.TryGet(obj.Key.SourceObjectId,
-                        out SongObject? stored) || stored is not SampleDefinition sample)
-                {
-                    Add(FmImportStageBIssueKind.MissingSource,
-                        $"Copied Sample #{obj.Key.SourceObjectId.Value} is unavailable.", obj.Key);
-                    continue;
-                }
                 try
                 {
                     byte[] bytes;
@@ -404,41 +402,89 @@ public static class FmSynthImportStageBPreflight
                     else
                     {
                         Add(FmImportStageBIssueKind.SampleAssetMissing,
-                            $"Sample #{obj.Key.SourceObjectId.Value} has no encoded representation.",
-                            obj.Key);
-                        continue;
+                            $"{role} has no encoded representation.",
+                            obj, local: localId);
+                        return;
                     }
 
+                    // Recompute the *encoded file's* digest from bytes freshly
+                    // read at Import-click time. Do not confuse this with
+                    // SamplePcmData.Sha256 (immutable decoded audio).
                     string hash = Convert.ToHexString(SHA256.HashData(bytes))
                         .ToLowerInvariant();
-                    if (expectedHash is not null &&
-                        !string.Equals(hash, expectedHash, StringComparison.OrdinalIgnoreCase))
+                    if (expectedHash is not null
+                        && !string.Equals(hash, expectedHash,
+                            StringComparison.OrdinalIgnoreCase))
                     {
                         Add(FmImportStageBIssueKind.SampleAssetChanged,
-                            $"Sample #{obj.Key.SourceObjectId.Value} encoded SHA-256 has changed.",
-                            obj.Key);
-                        continue;
+                            $"{role} encoded SHA-256 has changed.",
+                            obj, local: localId);
+                        return;
                     }
+
+                    // Decode creates new immutable PCM with a newly computed
+                    // hash from the *current* file. Check the digest first,
+                    // then every PCM bit if hashes match. A matching digest
+                    // by itself never authorizes an import or Sample reuse.
                     SamplePcmData decoded = SampleAudioCodec.Decode(bytes, fileName);
-                    if (sample.PcmData is not SamplePcmData pcm
-                        || !SameDecodedPcm(decoded, pcm))
+                    if (sample.PcmData is not SamplePcmData original
+                        || !decoded.HasSameAudio(original))
                     {
                         Add(FmImportStageBIssueKind.SampleAssetInvalid,
-                            $"Sample #{obj.Key.SourceObjectId.Value} encoded PCM does not match the loaded audio (content, channels, rate or frames).",
-                            obj.Key);
-                        continue;
+                            $"{role} encoded PCM does not match the loaded audio (content, channels, rate or frames).",
+                            obj, local: localId);
+                        return;
                     }
-                    prepared.Add(new(obj.Key, fileName, bytes, hash));
+                    if (copy && obj is FmImportObjectKey sourceKey)
+                        prepared.Add(new(sourceKey, fileName, bytes, hash));
                 }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException
-                    or ArgumentException or NotSupportedException or InvalidOperationException
+                catch (Exception error) when (error is IOException
+                    or UnauthorizedAccessException or ArgumentException
+                    or NotSupportedException or InvalidOperationException
                     or OverflowException)
                 {
                     Add(FmImportStageBIssueKind.SampleAssetInvalid,
-                        $"Sample #{obj.Key.SourceObjectId.Value} cannot be prepared: {error.Message}",
-                        obj.Key);
+                        $"{role} cannot be verified: {error.Message}",
+                        obj, local: localId);
                 }
             }
+
+            foreach (FmImportEffectiveObject obj in plan.Effective.Objects.Where(o =>
+                (o.IsCopied || o.IsReferenced)
+                && plan.DiscoveredObjects[o.Key].Kind == SongObjectKind.Sample))
+            {
+                if (!sourceDocuments.TryGetValue(obj.Key.SourceDocumentIdentity,
+                        out SongDocument? original)
+                    || !original.TryGet(obj.Key.SourceObjectId,
+                        out SongObject? stored) || stored is not SampleDefinition sample)
+                {
+                    Add(FmImportStageBIssueKind.MissingSource,
+                        $"Referenced Sample #{obj.Key.SourceObjectId.Value} is unavailable.",
+                        obj.Key);
+                    continue;
+                }
+                VerifyAsset(sample,
+                    $"Source Sample #{obj.Key.SourceObjectId.Value}",
+                    obj.Key, null, obj.IsCopied);
+
+                if (obj.Mapping.Kind == FmImportMappingKind.ReuseExisting
+                    && obj.Mapping.Provenance ==
+                        FmImportMappingProvenance.AutomaticExactMatch
+                    && obj.Mapping.ExistingId is ObjectId localId
+                    && verifiedLocalSamples.Add(localId))
+                {
+                    if (!destination.TryGet(localId, out SongObject? existing)
+                        || existing is not SampleDefinition localSample)
+                        Add(FmImportStageBIssueKind.MissingDestination,
+                            $"Automatically reused destination Sample #{localId.Value} is missing.",
+                            obj.Key, local: localId);
+                    else
+                        VerifyAsset(localSample,
+                            $"Destination Sample #{localId.Value}",
+                            obj.Key, localId, copy: false);
+                }
+            }
+        }
 
         return new FmImportStageBResult(
             Array.AsReadOnly(issues.ToArray()),
@@ -540,22 +586,6 @@ public static class FmSynthImportStageBPreflight
             warn(new FmImportStageBIssue(
                 FmImportStageBIssueKind.DestinationOpaqueScriptReferences,
                 "The destination contains scripted Pattern/Sequence references that the Core reference analyzer cannot resolve; non-script explicit references were audited."));
-    }
-
-    private static bool SameDecodedPcm(SamplePcmData actual, SamplePcmData original)
-    {
-        if (actual.SampleRate != original.SampleRate
-            || actual.ChannelCount != original.ChannelCount
-            || actual.FrameCount != original.FrameCount)
-            return false;
-        // An unhashed legacy reference can still point to different but
-        // perfectly decodable audio. Header equality is not enough.
-        for (long frame = 0; frame < actual.FrameCount; frame++)
-            for (int channel = 0; channel < actual.ChannelCount; channel++)
-                if (actual.GetSample(frame, channel) !=
-                    original.GetSample(frame, channel))
-                    return false;
-        return true;
     }
 
     private static bool SameDiscovery(FmImportDiscoveredGraph actual,
