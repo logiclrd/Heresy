@@ -383,7 +383,8 @@ public sealed class FmSynthImportPlan
         {
             if (!_objects.TryGetValue(match.Source, out FmImportDiscoveredObject? obj)
                 || _rootSet.Contains(match.Source)
-                || obj.Kind is not (SongObjectKind.Envelope or SongObjectKind.Filter)
+                || obj.Kind is not (SongObjectKind.Envelope or SongObjectKind.Filter
+                    or SongObjectKind.Sample)
                 || match.ExistingId.IsNone
                 || !_defaultExactMatches.TryAdd(match.Source, match.ExistingId))
                 throw new ArgumentException("Invalid exact-match recommendation.", nameof(matches));
