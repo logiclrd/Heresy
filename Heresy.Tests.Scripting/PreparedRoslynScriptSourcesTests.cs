@@ -81,7 +81,7 @@ public sealed class PreparedRoslynScriptSourcesTests
 	}
 
 	[Test]
-	public void InvalidScriptFailsDuringPreparationBeforePlaybackStarts()
+	public void InvalidScriptFailsOnlyWhenReferencedAndBeforeItsPlaybackStarts()
 	{
 		SongDocument document = new();
 		ScriptPatternDefinition invalid = new((ObjectId)21U, "Invalid")
@@ -90,9 +90,12 @@ public sealed class PreparedRoslynScriptSourcesTests
 		};
 		document.Add(invalid);
 
-		Action prepare = () => new PreparedRoslynIncrementalScriptSources(
+		PreparedRoslynIncrementalScriptSources prepared = new(
 			SongDocumentSnapshot.Create(document));
-		prepare.Should().Throw<NotSupportedException>()
+		prepared.TryResolve(invalid.Id, out SongObject? source).Should().BeTrue();
+		Action compileWhenUsed = () => prepared.CompilePattern(
+			(ScriptPatternDefinition)source!);
+		compileWhenUsed.Should().Throw<NotSupportedException>()
 			.WithMessage("*HRS2001*");
 	}
 
