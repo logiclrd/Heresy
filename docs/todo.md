@@ -185,6 +185,16 @@ Do not reintroduce completed-task checklists here.
   SHA-256 fingerprint of decoded PCM followed by exact bitwise data comparison,
   with loop and spatial metadata preserved. Stage B repeats the proof.
   Regressions cover repeated Synth import with reused Sample.
+  Follow-up: every SamplePcmData now computes and immutably retains a canonical
+  decoded-PCM SHA-256 during construction. The exact matcher builds its
+  hash-bucket map of destination Samples lazily; subsequent import plans reuse
+  the precomputed PCM hashes. At final acceptance, Stage B re-reads and hashes
+  the encoded file of every referenced copied or auto-reused source Sample
+  and every automatically reused destination Sample, decoding fresh PCM and
+  checking cached-vs-fresh hash followed by exact bits. Changed source or
+  destination assets block the transaction, even with no encoded SHA-256
+  provided in a legacy asset reference. Tests cover hash immutability,
+  signed-zero/NaN bits, and tampering on either side of a Sample reuse.
   Remaining: owner acceptance item 5 (physical .hm/.hm.json Sample save/reopen
   and sound/playback), recheck these two refinements, and address cross-Filter
   override translation and opaque scripted-reference limitations.
