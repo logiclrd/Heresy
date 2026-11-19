@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Globalization;
+using System.Numerics;
 
 using Heresy.Core.Filters;
 using Heresy.Core.Objects;
@@ -616,8 +618,31 @@ public sealed class FmSynthImportPlan
             string suggestion = obj.Name;
             if (GetDefinitionMapping(key).Kind == FmImportMappingKind.ImportCopy)
             {
-                for (int suffix = 2; names.Contains(suggestion); suffix++)
-                    suggestion = obj.Name + " " + suffix;
+                if (names.Contains(suggestion))
+                {
+                    // A terminal numeric word is already a suffix. In
+                    // particular, reimporting "New Synth 3" suggests
+                    // "New Synth 4", not "New Synth 3 2".
+                    string stem = obj.Name;
+                    BigInteger suffix = 1;
+                    int separator = obj.Name.LastIndexOf(' ');
+                    if (separator > 0
+                        && BigInteger.TryParse(
+                            obj.Name.AsSpan(separator + 1),
+                            NumberStyles.None, CultureInfo.InvariantCulture,
+                            out BigInteger trailing))
+                    {
+                        stem = obj.Name[..separator];
+                        suffix = trailing;
+                    }
+                    do
+                    {
+                        suffix++;
+                        suggestion = stem + " " +
+                            suffix.ToString(CultureInfo.InvariantCulture);
+                    }
+                    while (names.Contains(suggestion));
+                }
                 names.Add(suggestion);
             }
             _names[key] = new(suggestion, false);
