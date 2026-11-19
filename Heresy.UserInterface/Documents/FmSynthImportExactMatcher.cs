@@ -1,4 +1,6 @@
 using System;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -6,6 +8,7 @@ using System.Linq;
 using Heresy.Core.Envelopes;
 using Heresy.Core.Filters;
 using Heresy.Core.Objects;
+using Heresy.Core.Samples;
 
 namespace Heresy.UserInterface.Documents;
 
@@ -20,9 +23,11 @@ public sealed record FmImportExactMatch(
     FmImportObjectKey Source, ObjectId ExistingId);
 
 /// <summary>
-/// Conservatively proves complete persisted object identity for Node/Script
-/// Envelopes and Filters. Other types are deliberately ineligible for automatic
-/// reuse. Comparisons include authored metadata but not ID or display name.
+/// Conservatively proves authored identity for Node/Script Envelopes,
+/// Filters and Sample dependencies. Sample checks use SHA-256 of decoded PCM
+/// as a fast filter, then compare every floating-point sample bit-for-bit.
+/// Authored loop and channel positions must also agree. Source colour and
+/// display name are deliberately not sound-identity attributes.
 ///
 /// This does not mutate either SongDocument, allocate IDs, or read assets.
 /// Its recommendations are a captured default snapshot; the destination-wide
@@ -39,8 +44,12 @@ public static class FmSynthImportExactMatcher
 
         // Deterministic tie-break independent of dictionary insertion order.
         SongObject[] local = destination.Objects.Values
-            .Where(obj => obj is EnvelopeDefinition or FilterDefinition)
+            .Where(obj => obj is EnvelopeDefinition or FilterDefinition
+                or SampleDefinition)
             .OrderBy(obj => obj.Id.Value).ToArray();
+        // Each PCM buffer is hashed at most once per discovery pass, even
+        // when multiple sources or local Samples share the same audio.
+        Dictionary<SamplePcmData, byte[]> pcmHashes = [];
         List<FmImportExactMatch> results = [];
         HashSet<FmImportObjectKey> seen = [];
         HashSet<string> documents = new(StringComparer.Ordinal);
@@ -75,11 +84,15 @@ public static class FmSynthImportExactMatcher
 
                 // Missing/wrong-kind objects cannot be matched; the existing
                 // discovery issues remain visible to later validation.
-                if (original is not EnvelopeDefinition and not FilterDefinition)
+                if (original is not EnvelopeDefinition and not FilterDefinition
+                    and not SampleDefinition)
                     continue;
 
                 SongObject? found = local.FirstOrDefault(candidate =>
-                    StrictlyEqual(original, candidate));
+                    original is SampleDefinition sourceSample
+                        && candidate is SampleDefinition localSample
+                        ? EqualSamples(sourceSample, localSample, pcmHashes)
+                        : StrictlyEqual(original, candidate));
                 if (found is not null)
                     results.Add(new FmImportExactMatch(key, found.Id));
             }
@@ -126,6 +139,8 @@ public static class FmSynthImportExactMatcher
                    && a.ReleaseDuration == b.ReleaseDuration,
             (FilterDefinition a, FilterDefinition b)
                 => EqualFilters(a, b),
+            (SampleDefinition a, SampleDefinition b)
+                => EqualSamples(a, b, new Dictionary<SamplePcmData, byte[]>()),
             _ => false,
         };
     }
@@ -165,6 +180,72 @@ public static class FmSynthImportExactMatcher
                 return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// A mismatched SHA-256 rejects without comparing individual PCM values.
+    /// A matching SHA-256 is NOT itself accepted: always verify the actual
+    /// audio bits, rate, channels, frames, loop and spatial channel positions.
+    /// The comparison is independent of display names, numeric IDs and source
+    /// UI tint. This also supports the same PCM under different encodings.
+    /// </summary>
+    private static bool EqualSamples(SampleDefinition source,
+        SampleDefinition local, Dictionary<SamplePcmData, byte[]> hashCache)
+    {
+        if (source.PcmData is not SamplePcmData a
+            || local.PcmData is not SamplePcmData b
+            || a.SampleRate != b.SampleRate
+            || a.ChannelCount != b.ChannelCount
+            || a.FrameCount != b.FrameCount
+            || source.Loop != local.Loop
+            || !source.SourceChannelPositions.SequenceEqual(
+                local.SourceChannelPositions))
+            return false;
+
+        if (!Hash(a).AsSpan().SequenceEqual(Hash(b)))
+            return false;
+
+        // Compare raw IEEE-754 bits rather than float ==: -0 vs +0 and
+        // distinct NaN payloads are distinguishable authored sample data.
+        for (long frame = 0; frame < a.FrameCount; frame++)
+            for (int channel = 0; channel < a.ChannelCount; channel++)
+                if (BitConverter.SingleToInt32Bits(a.GetSample(frame, channel))
+                    != BitConverter.SingleToInt32Bits(b.GetSample(frame, channel)))
+                    return false;
+        return true;
+
+        byte[] Hash(SamplePcmData pcm)
+        {
+            if (!hashCache.TryGetValue(pcm, out byte[]? digest))
+                hashCache.Add(pcm, digest = Sha256(pcm));
+            return digest;
+        }
+    }
+
+    private static byte[] Sha256(SamplePcmData pcm)
+    {
+        // Incremental, bounded-memory hash over the interleaved PCM's exact
+        // IEEE-754 representation, independent of codec and file container.
+        using IncrementalHash hash =
+            IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        Span<byte> buffer = stackalloc byte[4096];
+        int used = 0;
+        for (long frame = 0; frame < pcm.FrameCount; frame++)
+            for (int channel = 0; channel < pcm.ChannelCount; channel++)
+            {
+                BinaryPrimitives.WriteInt32LittleEndian(
+                    buffer.Slice(used, sizeof(int)),
+                    BitConverter.SingleToInt32Bits(pcm.GetSample(frame, channel)));
+                used += sizeof(int);
+                if (used == buffer.Length)
+                {
+                    hash.AppendData(buffer);
+                    used = 0;
+                }
+            }
+        if (used != 0)
+            hash.AppendData(buffer[..used]);
+        return hash.GetHashAndReset();
     }
 
     private static bool SameParameters(
