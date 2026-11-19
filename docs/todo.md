@@ -188,13 +188,16 @@ Do not reintroduce completed-task checklists here.
   Follow-up: every SamplePcmData now computes and immutably retains a canonical
   decoded-PCM SHA-256 during construction. The exact matcher builds its
   hash-bucket map of destination Samples lazily; subsequent import plans reuse
-  the precomputed PCM hashes. At final acceptance, Stage B re-reads and hashes
-  the encoded file of every referenced copied or auto-reused source Sample
-  and every automatically reused destination Sample, decoding fresh PCM and
-  checking cached-vs-fresh hash followed by exact bits. Changed source or
-  destination assets block the transaction, even with no encoded SHA-256
-  provided in a legacy asset reference. Tests cover hash immutability,
-  signed-zero/NaN bits, and tampering on either side of a Sample reuse.
+  the precomputed PCM hashes. At final acceptance, Stage B reads only the
+  encoded assets of selected copied or automatically reused **source** Samples,
+  calculating SHA-256 incrementally during external-file reads and validating
+  newly decoded PCM against the loaded source. Previously loaded destination
+  Samples are trusted by their immutable PCM/hashes; destination encoded files
+  are never re-read or rehashed during import. Changed source assets block the
+  transaction, even without a saved encoded SHA-256, while changed or missing
+  destination encoded files do not block reuse of loaded destination PCM.
+  Tests cover hash immutability, signed-zero/NaN bits, and source/destination
+  file changes under both hashed and unhashed references.
   Remaining: owner acceptance item 5 (physical .hm/.hm.json Sample save/reopen
   and sound/playback), recheck these two refinements, and address cross-Filter
   override translation and opaque scripted-reference limitations.
