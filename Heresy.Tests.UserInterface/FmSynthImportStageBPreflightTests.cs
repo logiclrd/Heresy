@@ -516,7 +516,7 @@ public sealed class FmSynthImportStageBPreflightTests
     [TestCase(true, false)]
     [TestCase(false, true)]
     [TestCase(false, false)]
-    public void AcceptedAutomaticSampleReuseRechecksSourceAndDestinationFiles(
+    public void AcceptedAutomaticSampleReuseRechecksOnlyImportedSourceAsset(
         bool mutateSource, bool hashedAsset)
     {
         using TemporaryDirectory dir = new();
@@ -553,25 +553,83 @@ public sealed class FmSynthImportStageBPreflightTests
         Assert.That(valid.IsPreflightValid, Is.True, Message(valid));
         Assert.That(valid.PreparedSamples, Is.Empty);
 
-        // Modifying the encoded file changes neither SongDocumentRevision
-        // nor the already-decoded immutable SamplePcmData instance.
+        // Neither file modification changes the loaded immutable PCM or
+        // increments a document revision. Only the selected import-source
+        // file is eligible for revalidation, not the local Sample's asset.
         File.WriteAllBytes(mutateSource ? sourceFile : localFile, Wave(2201));
-        FmImportStageBResult changed =
+        FmImportStageBResult checkedPlan =
             FmSynthImportStageBPreflight.Check(plan, [from], destination);
-        Assert.That(changed.IsPreflightValid, Is.False);
-        Assert.That(changed.Issues.Any(issue =>
-            issue.Kind == (hashedAsset
-                ? FmImportStageBIssueKind.SampleAssetChanged
-                : FmImportStageBIssueKind.SampleAssetInvalid)), Is.True,
-            Message(changed));
-        Assert.That(changed.PreparedSamples, Is.Empty);
-        FmImportCommitResult refused =
+        Assert.That(checkedPlan.IsPreflightValid, Is.EqualTo(!mutateSource),
+            Message(checkedPlan));
+        Assert.That(checkedPlan.PreparedSamples, Is.Empty);
+
+        FmImportCommitResult result =
             FmSynthImportTransactionCommitter.Commit(plan, [from], destination);
-        Assert.That(refused.IsCommitted, Is.False);
-        Assert.That(destination.Objects.Values.OfType<FmSynthDefinition>(),
-            Is.Empty);
+        Assert.That(result.IsCommitted, Is.EqualTo(!mutateSource), result.Error);
+        if (mutateSource)
+        {
+            Assert.That(checkedPlan.Issues.Any(issue =>
+                issue.Kind == (hashedAsset
+                    ? FmImportStageBIssueKind.SampleAssetChanged
+                    : FmImportStageBIssueKind.SampleAssetInvalid)), Is.True,
+                Message(checkedPlan));
+            Assert.That(destination.Objects.Values.OfType<FmSynthDefinition>(),
+                Is.Empty);
+        }
+        else
+        {
+            Assert.That(checkedPlan.Issues, Is.Empty);
+            Assert.That(result.Edit!.ImportedObjectIds, Has.Count.EqualTo(1),
+                "only the selected Synth is copied; local Sample is reused");
+            Assert.That(destination.Objects.Values.OfType<SampleDefinition>().Count(),
+                Is.EqualTo(1));
+            FmSynthDefinition imported = (FmSynthDefinition)destination.Objects[
+                result.SelectedRootIds.Single()];
+            Assert.That(imported.Graph.Nodes.OfType<FmSoundSourceNode>()
+                .Single().SourceId, Is.EqualTo(local.Id));
+        }
         Assert.That(destination.Objects.Values.OfType<SampleDefinition>().Single(),
             Is.SameAs(local));
+    }
+
+    [Test]
+    public void MissingLocalAssetDoesNotBlockReuseOfAlreadyLoadedSamplePcm()
+    {
+        using TemporaryDirectory dir = new();
+        string sourceFile = Path.Combine(dir.Path, "source.wav");
+        string localFile = Path.Combine(dir.Path, "destination.wav");
+        byte[] bytes = Wave(1300);
+        File.WriteAllBytes(sourceFile, bytes);
+        File.WriteAllBytes(localFile, bytes);
+
+        SongDocument source = new();
+        SampleDefinition sample = new(
+            source.AllocateObjectId(), "From", ExternalAssetIntegrity.CreateReference(sourceFile));
+        sample.ReloadPersistedEncoding(sample.Asset!, bytes);
+        source.Add(sample);
+        FmSynthDefinition root = Synth(source, "Root",
+            new FmSynthGraph([new FmSoundSourceNode(0, sample.Id, 440)], 0));
+
+        SongDocument destination = new();
+        SampleDefinition local = new(
+            destination.AllocateObjectId(), "To", ExternalAssetIntegrity.CreateReference(localFile));
+        local.ReloadPersistedEncoding(local.Asset!, bytes);
+        destination.Add(local);
+
+        FmImportExactMatchSource from = Discover(source, root);
+        FmSynthImportPlan plan = Plan(destination, from);
+        File.Delete(localFile);
+        Assert.That(plan.GetDefinitionMapping(new(
+            from.Discovery.SourceDocumentIdentity, sample.Id)).ExistingId,
+            Is.EqualTo(local.Id));
+        FmImportStageBResult checkedPlan =
+            FmSynthImportStageBPreflight.Check(plan, [from], destination);
+        Assert.That(checkedPlan.IsPreflightValid, Is.True, Message(checkedPlan));
+        Assert.That(checkedPlan.PreparedSamples, Is.Empty);
+        FmImportCommitResult result =
+            FmSynthImportTransactionCommitter.Commit(plan, [from], destination);
+        Assert.That(result.IsCommitted, Is.True, result.Error);
+        Assert.That(result.Edit!.ImportedObjectIds, Has.Count.EqualTo(1));
     }
 
     private static byte[] Wave(short sample)
