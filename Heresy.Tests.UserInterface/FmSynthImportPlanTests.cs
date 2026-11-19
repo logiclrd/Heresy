@@ -161,6 +161,59 @@ public sealed class FmSynthImportPlanTests
     }
 
     [Test]
+    public void NumericTerminalWordIsIncrementedInsteadOfAppendingAnotherSuffix()
+    {
+        SongDocument song = new();
+        FmSynthDefinition first = Add(song, "New Synth 3",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        FmSynthDefinition second = Add(song, "New Synth 3",
+            new FmSynthGraph([new FmConstantNode(0, 2)], 0));
+        FmImportDiscoveredGraph discovery = Discover("numbers.hm", song,
+            [first, second]);
+        FmSynthImportPlan plan = new([discovery], [
+            new FmImportExistingName(SongObjectKind.FmSynth, "New Synth 3"),
+            new FmImportExistingName(SongObjectKind.FmSynth, "New Synth 5"),
+        ]);
+        FmImportObjectKey firstKey = discovery.SelectedSynthRoots[0];
+        FmImportObjectKey secondKey = discovery.SelectedSynthRoots[1];
+        Assert.That(plan.GetProposedName(firstKey).Name,
+            Is.EqualTo("New Synth 4"));
+        Assert.That(plan.GetProposedName(secondKey).Name,
+            Is.EqualTo("New Synth 6"),
+            "the next root sees both previously allocated and destination names");
+        Assert.That(plan.GetProposedName(firstKey).IsPinned, Is.False);
+        plan.SetProposedName(firstKey, "New Synth 3");
+        Assert.That(plan.GetProposedName(firstKey).Name,
+            Is.EqualTo("New Synth 3"),
+            "an explicit user choice may deliberately duplicate names");
+        plan.ResetToDefaults();
+        Assert.That(plan.GetProposedName(firstKey).Name,
+            Is.EqualTo("New Synth 4"));
+        Assert.That(plan.GetProposedName(secondKey).Name,
+            Is.EqualTo("New Synth 6"));
+    }
+
+    [Test]
+    public void NumericNameWithoutCollisionRemainsUnchangedEvenWithLargeSuffix()
+    {
+        SongDocument song = new();
+        FmSynthDefinition first = Add(song, "New Synth 3",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        FmSynthDefinition other = Add(song, "Clip 999999999999999999999999999",
+            new FmSynthGraph([new FmConstantNode(0, 2)], 0));
+        FmImportDiscoveredGraph discovery =
+            Discover("large-numbers.hm", song, [first, other]);
+        FmSynthImportPlan plan = new([discovery], [
+            new FmImportExistingName(SongObjectKind.FmSynth,
+                "Clip 999999999999999999999999999"),
+        ]);
+        Assert.That(plan.GetProposedName(discovery.SelectedSynthRoots[0]).Name,
+            Is.EqualTo("New Synth 3"));
+        Assert.That(plan.GetProposedName(discovery.SelectedSynthRoots[1]).Name,
+            Is.EqualTo("Clip 1000000000000000000000000000"));
+    }
+
+    [Test]
     public void CrossDocumentIdenticalIdsRemainIndependentAndReuseOneDefinitionPerSource()
     {
         SongDocument firstSong = new();
