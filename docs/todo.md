@@ -86,7 +86,7 @@ Do not reintroduce completed-task checklists here.
 
 ## Main window — object management
 
-- [ ] **Implement graph-aware Synth import planning and dependency resolution.**
+- [x] **Implement graph-aware Synth import planning and dependency resolution.**
   Replace the existing Import Synths flow with the editable TreeDataGrid
   plan, stable canonical/alias rows, per-object/per-use mapping choices,
   exact-match highlighting with manual provenance, collision-avoiding
@@ -198,11 +198,24 @@ Do not reintroduce completed-task checklists here.
   destination encoded files do not block reuse of loaded destination PCM.
   Tests cover hash immutability, signed-zero/NaN bits, and source/destination
   file changes under both hashed and unhashed references.
-  Remaining: owner acceptance item 5 (physical .hm/.hm.json Sample save/reopen
-  and sound/playback), recheck these two refinements, and address cross-Filter
-  override translation and opaque scripted-reference limitations.
-  Eventual general document undo history is separate.
-  Do not merge without approval.
+  **Owner acceptance complete (2026-11-19):** owner imported a Synth
+  depending on two Samples into a fresh document; saved both .hm and
+  .hm.json; restarted Heresy and reopened each independently, confirming
+  test playback in the Synth editor; restarted and imported from the
+  saved .hm.json; and verified repeated Open/New and overwriting the
+  currently open document within one persistent session. Acceptance
+  item #5 is PASS and all 14 bounded PR #34 slices are complete.
+  The trailing-number, Sample deduplication and source-only hash
+  follow-ups are incorporated. No further PR #34 slice is required.
+  Cross-Filter-stage override translation remains conservatively limited
+  (unsupported incompatible remaps are refused); opaque scripted
+  Pattern/Sequence references remain an explicitly reported Stage-B
+  warning rather than a full validation claim. These limitations and
+  eventual general-purpose document Undo are separate follow-up work.
+  A Linux multi-monitor native file-dialog placement/focus defect was
+  also observed and tracked independently as GitHub issue #36; it does
+  not change the Synth import acceptance result. PR #34 is approved
+  for merge by the owner.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
