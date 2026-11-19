@@ -86,7 +86,7 @@ Do not reintroduce completed-task checklists here.
 
 ## Main window — object management
 
-- [ ] **Implement graph-aware Synth import planning and dependency resolution.**
+- [x] **Implement graph-aware Synth import planning and dependency resolution.**
   Replace the existing Import Synths flow with the editable TreeDataGrid
   plan, stable canonical/alias rows, per-object/per-use mapping choices,
   exact-match highlighting with manual provenance, collision-avoiding
@@ -96,6 +96,126 @@ Do not reintroduce completed-task checklists here.
   regression coverage for the new engine, rather than a standalone
   throwaway fix. See the complete approved [Synth import design](synth-import-plan.md).
   This is separate from the future **Duplicate Object** feature.
+  **Implementation progress:** draft PR #34 creates the read-only discovery
+  graph and semantic connection/use identities, including the original
+  Source+Multi combination, nested Instruments/Synths, shared
+  Envelopes/Filters, inactive Filter wires, missing-reference diagnostics,
+  and disconnected graph roots. The old import command remains unchanged.
+  The consolidated PR #34 also adds pure editable import-plan decisions,
+  per-use overrides, stable canonical ownership, manual/automatic provenance,
+  collision-avoiding editable names and multi-document identity handling,
+  with dedicated regression tests. Neither slice changes the old importer.
+  A third slice adds read-only effective dependency closure, per-use
+  active/inactive projections, originally-disconnected node preservation,
+  semantic Filter stage/parameter port matching across local swaps, and
+  explicit inactive reasons. No destination edits or UI changes occur.
+  A fourth slice adds conservative Node/Script Envelope and Filter exact
+  equivalence, captured automatic reuse defaults and one-way manual
+  provenance, with reset support and identity/history regression tests.
+  A fifth slice adds snapshotted local-target category/type checks and
+  interactive Stage-A structural diagnostics: required/optional references,
+  Operator operand retention, copied dependency cycles, Filter-instance
+  override compatibility, and available Sample PCM/encoding metadata.
+  A sixth slice adds the headless Stage-B click-time preflight
+  foundation: live source/document and automatic-match revalidation,
+  combined copied/local sound-source cycle and missing dependency checks,
+  live Filter port/override checks and encoded Sample preflight. It reads
+  .hm archive and .hm.json asset paths, verifies hashes and decodability,
+  and retains fully detached encoded bytes for a future transaction.
+  The seventh slice provides stable TreeDataGrid-facing identity,
+  alias navigation, plan-edit actions and the live Stage-A summary.
+  The eighth slice upgrades Avalonia to 12.1.5, adds Wiesław Šoltés's
+  MIT TreeDataGrid, and provides an interactive, nonmutating graph-plan
+  preview accessible from the existing import selection dialog. The
+  legacy Import selected command still uses the old importer; preview
+  choices cannot be committed yet and that limitation is explicit in UI.
+  The ninth slice improves live final-click safety: read-only source and
+  destination authoring fingerprints reject parameter edits that do not
+  increment DocumentRevision, and the destination-wide explicit
+  Pattern/Sequence/Instrument/tree/reference/tombstone audit catches invalid
+  local links; opaque scripts remain labeled as a validation warning.
+  Preview layout defaults to maximized, 1*/2*/1* columns, and stretching
+  name fields. On final completion, REMOVE the extra "Review graph-aware
+  plan (preview)" button and transfer its function to the existing
+  "Import selected" button WITHOUT renaming that button.
+  The tenth slice adds a nonmutating transaction preparer: it reads
+  the destination's next-ID cursor without allocation, computes provisional
+  IDs scoped to each source document, and constructs detached graph,
+  Instrument, Sample, Filter and Envelope copies with per-use remaps,
+  semantic graph-input selection and pending encoded Sample assets.
+  No prepared batch is exposed if any clone fails. Its IDs are not reserved.
+  The eleventh slice implements the headless atomic transaction boundary:
+  exact last-moment source/destination freshness and ID-cursor checks,
+  all-object/all-tree publication with one Changed event, failure rollback
+  restoring cursor/revisions/tree order, and a guarded single-unit import
+  Undo/Redo receipt. Automated Source+Multi and Sample package save/reopen
+  acceptance is included, but the preview/legacy Import selected commands
+  have NOT been replaced. There is no general document-wide UI undo manager
+  yet; the receipt is ready for later integration.
+  The twelfth slice adds an opt-in, commit-capable mode to the same visual
+  plan editor: Stage-A controls Import availability, Stage-B/commit errors are
+  modal and return to the unchanged plan for retry, and successful acceptance
+  returns the new root IDs and one-unit receipt. Four headless regressions
+  cover preview isolation, invalid-to-repaired Stage A, same-song Source+Multi
+  acceptance and stale Stage-B retry with preserved expansion and user name.
+  The selector still launches only safe preview and Import selected still
+  calls the old importer; no document-wide UI Undo has been connected.
+  The thirteenth slice completes the visible command handoff: original
+  "Import selected" opens the commit-enabled graph-aware plan without renaming
+  the button, and the separate preview button is removed. Cancel returns to
+  the unchanged root selection or exits without mutation; the accepted
+  transaction returns new explicit Synth root IDs and the final copy/reuse
+  counts. MainWindow no longer invokes the legacy importer, selects the first
+  newly imported Synth and opens its editor when one root was requested.
+  Shared dependencies are counted as copies, not extra selected roots.
+  Headless regressions cover cancellation, same-song acceptance, two roots
+  sharing a dependency, and the exact entry-point control labels.
+  Slice 14 adds an explicit document-scoped **last Synth import** history:
+  one guarded batch receipt, whole-batch Undo/Redo with no tombstones,
+  immediate refusal on later authored changes, and clear-on-New/Open. In the
+  main window's document trees only, Edit menu commands and Ctrl+Z /
+  Ctrl+Y / Ctrl+Shift+Z operate on the latest Synth import; individual
+  editors retain their own undo stacks and are never intercepted.
+  A second import replaces the one-level receipt (not a general multi-level
+  song undo history). Headless regressions cover history identity, rollback,
+  stale changes, document replacement and keyboard/menu scope.
+  Following owner GUI testing of items 1–4, refinements address:
+  numeric trailing-word suffixes (reimport "New Synth 3" suggests "New Synth 4"
+  rather than "New Synth 3 2") and two-stage Sample deduplication:
+  SHA-256 fingerprint of decoded PCM followed by exact bitwise data comparison,
+  with loop and spatial metadata preserved. Stage B repeats the proof.
+  Regressions cover repeated Synth import with reused Sample.
+  Follow-up: every SamplePcmData now computes and immutably retains a canonical
+  decoded-PCM SHA-256 during construction. The exact matcher builds its
+  hash-bucket map of destination Samples lazily; subsequent import plans reuse
+  the precomputed PCM hashes. At final acceptance, Stage B reads only the
+  encoded assets of selected copied or automatically reused **source** Samples,
+  calculating SHA-256 incrementally during external-file reads and validating
+  newly decoded PCM against the loaded source. Previously loaded destination
+  Samples are trusted by their immutable PCM/hashes; destination encoded files
+  are never re-read or rehashed during import. Changed source assets block the
+  transaction, even without a saved encoded SHA-256, while changed or missing
+  destination encoded files do not block reuse of loaded destination PCM.
+  Tests cover hash immutability, signed-zero/NaN bits, and source/destination
+  file changes under both hashed and unhashed references.
+  **Owner acceptance complete (2026-11-19):** owner imported a Synth
+  depending on two Samples into a fresh document; saved both .hm and
+  .hm.json; restarted Heresy and reopened each independently, confirming
+  test playback in the Synth editor; restarted and imported from the
+  saved .hm.json; and verified repeated Open/New and overwriting the
+  currently open document within one persistent session. Acceptance
+  item #5 is PASS and all 14 bounded PR #34 slices are complete.
+  The trailing-number, Sample deduplication and source-only hash
+  follow-ups are incorporated. No further PR #34 slice is required.
+  Cross-Filter-stage override translation remains conservatively limited
+  (unsupported incompatible remaps are refused); opaque scripted
+  Pattern/Sequence references remain an explicitly reported Stage-B
+  warning rather than a full validation claim. These limitations and
+  eventual general-purpose document Undo are separate follow-up work.
+  A Linux multi-monitor native file-dialog placement/focus defect was
+  also observed and tracked independently as GitHub issue #36; it does
+  not change the Synth import acceptance result. PR #34 is approved
+  for merge by the owner.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,

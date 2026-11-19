@@ -1,7 +1,9 @@
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.NUnit;
+using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Themes.Fluent;
+using System;
 
 [assembly: AvaloniaTestApplication(typeof(Heresy.Tests.UserInterface.PatternToolbarTestAppBuilder))]
 
@@ -21,5 +23,10 @@ public sealed class PatternToolbarTestAppBuilder
 public sealed class PatternToolbarTestApplication : Application
 {
 	public override void Initialize()
-		=> Styles.Add(new FluentTheme());
+	{
+		Styles.Add(new FluentTheme());
+		// Exercise the real MIT TreeDataGrid template in headless tests.
+		Uri theme = new("avares://TreeDataGrid.Avalonia/Themes/Fluent.axaml");
+		Styles.Add(new StyleInclude(theme) { Source = theme });
+	}
 }

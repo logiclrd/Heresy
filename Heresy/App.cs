@@ -39,6 +39,16 @@ public sealed class App : Application
 		{
 			Source = editorStyles,
 		});
+
+		// Wieslaw Soltes's MIT TreeDataGrid has separate Avalonia templates.
+		// Register the control theme with the desktop host before showing an
+		// import-plan dialog, just like the AvaloniaEdit styles above.
+		Uri treeDataGridStyles = new(
+			"avares://TreeDataGrid.Avalonia/Themes/Fluent.axaml");
+		styles.Add(new StyleInclude(treeDataGridStyles)
+		{
+			Source = treeDataGridStyles,
+		});
 	}
 
 	public override void OnFrameworkInitializationCompleted()
