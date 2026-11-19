@@ -179,10 +179,16 @@ Do not reintroduce completed-task checklists here.
   A second import replaces the one-level receipt (not a general multi-level
   song undo history). Headless regressions cover history identity, rollback,
   stale changes, document replacement and keyboard/menu scope.
-  Remaining: physical GUI testing of Slices 13–14, including .hm/.hm.json
-  assets, save/reopen, mixed graph, audio and stale-undo behavior; resolve
-  cross-Filter-stage override translation and opaque scripted-reference
-  limitations. An eventual general document undo history is separate.
+  Following owner GUI testing of items 1–4, refinements address:
+  numeric trailing-word suffixes (reimport "New Synth 3" suggests "New Synth 4"
+  rather than "New Synth 3 2") and two-stage Sample deduplication:
+  SHA-256 fingerprint of decoded PCM followed by exact bitwise data comparison,
+  with loop and spatial metadata preserved. Stage B repeats the proof.
+  Regressions cover repeated Synth import with reused Sample.
+  Remaining: owner acceptance item 5 (physical .hm/.hm.json Sample save/reopen
+  and sound/playback), recheck these two refinements, and address cross-Filter
+  override translation and opaque scripted-reference limitations.
+  Eventual general document undo history is separate.
   Do not merge without approval.
 
 - [ ] **Add Duplicate Object to every main-window object list.**
