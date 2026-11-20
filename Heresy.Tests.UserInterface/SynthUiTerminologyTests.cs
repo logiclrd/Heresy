@@ -34,7 +34,7 @@ public sealed class SynthUiTerminologyTests
                     && Grid.GetColumn(border) == 0);
             StackPanel header = ((Grid)patches.Child!).Children
                 .OfType<StackPanel>().Single();
-            TextBlock title = (TextBlock)header.Children.OfType<Border>().Single().Child!;
+            TextBlock title = (TextBlock)((Grid)header.Children.OfType<Border>().Single().Child!).Children[0];
             WrapPanel actions = header.Children.OfType<WrapPanel>().Single();
 
             Assert.Multiple(() =>
