@@ -65,7 +65,7 @@ public static class SongObjectDuplication
         string expectedSnapshot =
             SongDocumentJson.SerializeAuthoringSnapshot(document);
         string name = SuggestName(document, source);
-        SongObject clone = Clone(source, next, name);
+        SongObject clone = CloneWithReferences(source, next, name);
         return new(document, sourceId, next, clone, expectedSnapshot);
     }
 
@@ -140,15 +140,18 @@ public static class SongObjectDuplication
         return candidate;
     }
 
-    private static SongObject Clone(SongObject source, ObjectId id, string name)
+    internal static SongObject CloneWithReferences(
+        SongObject source, ObjectId id, string name,
+        IReadOnlyDictionary<ObjectId, ObjectId>? remap = null,
+        IReadOnlyDictionary<ObjectId, FilterDefinition>? clonedFilters = null)
         => source switch
         {
-            DataSequenceDefinition sequence => CloneSequence(sequence, id, name),
+            DataSequenceDefinition sequence => CloneSequence(sequence, id, name, remap),
             ScriptSequenceDefinition script => new ScriptSequenceDefinition(id, name)
             {
                 Source = script.Source,
             },
-            DataPatternDefinition pattern => ClonePattern(pattern, id, name),
+            DataPatternDefinition pattern => ClonePattern(pattern, id, name, remap),
             ScriptPatternDefinition script => CopyPatternProperties(
                 script, new ScriptPatternDefinition(id, name)
                 {
@@ -158,20 +161,30 @@ public static class SongObjectDuplication
                 => CloneEnvelope((EnvelopeDefinition)source, id, name),
             FilterDefinition filter => CloneFilter(filter, id, name),
             SampleDefinition sample => CloneSample(sample, id, name),
-            InstrumentDefinition instrument => CloneInstrument(instrument, id, name),
+            InstrumentDefinition instrument => CloneInstrument(instrument, id, name, remap, clonedFilters),
             ScriptInstrumentDefinition scriptInstrument =>
-                CloneScriptInstrument(scriptInstrument, id, name),
-            FmSynthDefinition synth => CloneSynth(synth, id, name),
+                CloneScriptInstrument(scriptInstrument, id, name, remap, clonedFilters),
+            FmSynthDefinition synth => CloneSynth(synth, id, name, remap, clonedFilters),
             _ => throw new NotSupportedException(
                 $"Duplicate Object does not yet support {source.GetType().Name}."),
         };
 
+    internal static ObjectId Remap(
+        ObjectId id, IReadOnlyDictionary<ObjectId, ObjectId>? map)
+        => map is not null && map.TryGetValue(id, out ObjectId replacement)
+            ? replacement : id;
+
+    private static ObjectId? RemapOptional(
+        ObjectId? id, IReadOnlyDictionary<ObjectId, ObjectId>? map)
+        => id is ObjectId value ? Remap(value, map) : null;
+
     private static DataSequenceDefinition CloneSequence(
-        DataSequenceDefinition source, ObjectId id, string name)
+        DataSequenceDefinition source, ObjectId id, string name,
+        IReadOnlyDictionary<ObjectId, ObjectId>? remap)
     {
         DataSequenceDefinition copy = new(id, name);
         copy.Entries.AddRange(source.Entries.Select(
-            item => new SequenceEntry(item.PatternId, item.StartRow)));
+            item => new SequenceEntry(Remap(item.PatternId, remap), item.StartRow)));
         return copy;
     }
 
@@ -187,7 +200,8 @@ public static class SongObjectDuplication
     }
 
     private static DataPatternDefinition ClonePattern(
-        DataPatternDefinition source, ObjectId id, string name)
+        DataPatternDefinition source, ObjectId id, string name,
+        IReadOnlyDictionary<ObjectId, ObjectId>? remap)
     {
         DataPatternDefinition copy = CopyPatternProperties(
             source, new DataPatternDefinition(id, name));
@@ -195,8 +209,12 @@ public static class SongObjectDuplication
             in source.Grid.EnumerateNonEmptyCells())
         {
             PatternCell copied = copy.Grid.GetOrCreateCell(row, column);
-            copied.Note = cell.Note is null ? null : cell.Note with { };
-            copied.SourceId = cell.SourceId;
+            copied.Note = cell.Note is StartPatternNote note
+                ? new StartPatternNote(Remap(note.SourceId, remap),
+                    note.PitchMultiplier, note.PlaybackSpeedMultiplier,
+                    note.Mixdown, RemapOptional(note.EventFilterDefinitionId, remap))
+                : cell.Note is null ? null : cell.Note with { };
+            copied.SourceId = Remap(cell.SourceId, remap);
             copied.Volume = cell.Volume;
             copied.Effects.AddRange(cell.Effects.Select(effect => effect with { }));
         }
@@ -270,23 +288,46 @@ public static class SongObjectDuplication
         return result;
     }
 
-    private static ToneSpecification CloneTone(ToneSpecification tone)
+    private static FilterInstance? CloneFilterUse(
+        FilterInstance? source,
+        IReadOnlyDictionary<ObjectId, FilterDefinition>? clonedFilters)
+    {
+        if (source is null)
+            return null;
+        if (clonedFilters is null
+            || !clonedFilters.TryGetValue(source.DefinitionId,
+                out FilterDefinition? newDefinition))
+            return source.Clone();
+        FilterInstance clone = new(newDefinition);
+        foreach (FilterStageDefinition stage in source.Definition.Stages)
+            clone.ReplaceStageOverrides(stage.StageId,
+                source.GetOverrides(stage.StageId));
+        return clone;
+    }
+
+    private static ToneSpecification CloneTone(
+        ToneSpecification tone,
+        IReadOnlyDictionary<ObjectId, ObjectId>? remap,
+        IReadOnlyDictionary<ObjectId, FilterDefinition>? clonedFilters)
         => new()
         {
-            SourceId = tone.SourceId,
+            SourceId = Remap(tone.SourceId, remap),
             PitchMultiplier = tone.PitchMultiplier,
             Nna = tone.Nna,
-            VolumeEnvelopeId = tone.VolumeEnvelopeId,
-            PitchEnvelopeId = tone.PitchEnvelopeId,
-            PanningEnvelopeId = tone.PanningEnvelopeId,
-            FilterEnvelopeId = tone.FilterEnvelopeId,
+            VolumeEnvelopeId = RemapOptional(tone.VolumeEnvelopeId, remap),
+            PitchEnvelopeId = RemapOptional(tone.PitchEnvelopeId, remap),
+            PanningEnvelopeId = RemapOptional(tone.PanningEnvelopeId, remap),
+            FilterEnvelopeId = RemapOptional(tone.FilterEnvelopeId, remap),
             // The mutable Filter use belongs to this tone; the Filter
             // definition itself is a same-song *reference* and stays shared.
-            FilterConfiguration = tone.FilterConfiguration?.Clone(),
+            FilterConfiguration = CloneFilterUse(
+                tone.FilterConfiguration, clonedFilters),
         };
 
     private static InstrumentDefinition CloneInstrument(
-        InstrumentDefinition source, ObjectId id, string name)
+        InstrumentDefinition source, ObjectId id, string name,
+        IReadOnlyDictionary<ObjectId, ObjectId>? remap,
+        IReadOnlyDictionary<ObjectId, FilterDefinition>? clonedFilters)
     {
         InstrumentDefinition copy = new(id, name)
         {
@@ -297,13 +338,16 @@ public static class SongObjectDuplication
         };
         copy.CopySourceColourFrom(source);
         copy.ToneSpecifications.AddRange(
-            source.ToneSpecifications.Select(CloneTone));
+            source.ToneSpecifications.Select(tone =>
+                CloneTone(tone, remap, clonedFilters)));
         copy.ToneTable.AddRange(source.ToneTable);
         return copy;
     }
 
     private static ScriptInstrumentDefinition CloneScriptInstrument(
-        ScriptInstrumentDefinition source, ObjectId id, string name)
+        ScriptInstrumentDefinition source, ObjectId id, string name,
+        IReadOnlyDictionary<ObjectId, ObjectId>? remap,
+        IReadOnlyDictionary<ObjectId, FilterDefinition>? clonedFilters)
     {
         ScriptInstrumentDefinition copy = new(id, name)
         {
@@ -314,14 +358,18 @@ public static class SongObjectDuplication
         };
         copy.CopySourceColourFrom(source);
         copy.ToneSpecifications.AddRange(
-            source.ToneSpecifications.Select(CloneTone));
+            source.ToneSpecifications.Select(tone =>
+                CloneTone(tone, remap, clonedFilters)));
         return copy;
     }
 
     private static FmSynthDefinition CloneSynth(
-        FmSynthDefinition source, ObjectId id, string name)
+        FmSynthDefinition source, ObjectId id, string name,
+        IReadOnlyDictionary<ObjectId, ObjectId>? remap,
+        IReadOnlyDictionary<ObjectId, FilterDefinition>? clonedFilters)
     {
-        FmSynthNode[] nodes = source.Graph.Nodes.Select(CloneSynthNode).ToArray();
+        FmSynthNode[] nodes = source.Graph.Nodes
+            .Select(node => CloneSynthNode(node, remap, clonedFilters)).ToArray();
         FmSynthDefinition copy = new(id, name,
             new FmSynthGraph(nodes, source.Graph.OutputNodeId));
         copy.CopySourceColourFrom(source);
@@ -341,7 +389,11 @@ public static class SongObjectDuplication
     /// shallow duplication. The Filter configuration is owned by the cloned
     /// node (FmFilterNode itself clones the FilterInstance).
     /// </summary>
-    private static FmSynthNode CloneSynthNode(FmSynthNode node) => node switch
+    private static FmSynthNode CloneSynthNode(
+        FmSynthNode node,
+        IReadOnlyDictionary<ObjectId, ObjectId>? remap,
+        IReadOnlyDictionary<ObjectId, FilterDefinition>? clonedFilters)
+        => node switch
     {
         FmConstantNode constant => new FmConstantNode(constant.Id, constant.Value),
         FmNoiseNode noise => new FmNoiseNode(noise.Id,
@@ -352,11 +404,11 @@ public static class SongObjectDuplication
             oscillator.ExponentialMultiplier, oscillator.Constant,
             oscillator.Curvature),
         FmSoundSourceNode sound => new FmSoundSourceNode(
-            sound.Id, sound.SourceId, sound.FrequencyHz,
+            sound.Id, Remap(sound.SourceId, remap), sound.FrequencyHz,
             sound.MultiplierNodeId, sound.ExponentialMultiplier,
             sound.Constant),
         FmEnvelopeNode envelope => new FmEnvelopeNode(
-            envelope.Id, envelope.EnvelopeId),
+            envelope.Id, Remap(envelope.EnvelopeId, remap)),
         FmMultiNode multi => new FmMultiNode(
             multi.Id, multi.InputNodeId, multi.Distribution, multi.Detune,
             multi.VoiceCount, multi.HarmonicComponents, multi.ChordComponents,
@@ -364,7 +416,8 @@ public static class SongObjectDuplication
         FmOperatorNode operation => new FmOperatorNode(
             operation.Id, operation.Operation, operation.InputNodeIds),
         FmFilterNode filter => new FmFilterNode(
-            filter.Id, filter.AudioInputNodeId, filter.Configuration,
+            filter.Id, filter.AudioInputNodeId,
+            CloneFilterUse(filter.Configuration, clonedFilters),
             filter.Connections.Select(wire => wire with { }), filter.TailSeconds),
         _ => throw new NotSupportedException(
             $"Cannot duplicate FM node {node.GetType().Name}."),
