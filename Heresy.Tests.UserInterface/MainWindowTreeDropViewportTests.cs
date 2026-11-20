@@ -93,8 +93,11 @@ public sealed class MainWindowTreeDropViewportTests
             RebuildAfterDrop(window, tree, moving);
             window.UpdateLayout();
 
-            Assert.That(viewer.Offset.Y, Is.EqualTo(0).Within(0.01),
-                "A moved top-level first row requires only scrolling to the first row");
+            Border header = (Border)ItemForNode(tree, moving).Header!;
+            double necessary = header.TranslatePoint(new Point(), viewer)!.Value.Y
+                + viewer.Offset.Y;
+            Assert.That(viewer.Offset.Y, Is.EqualTo(necessary).Within(0.01),
+                "Scroll exactly to the new row's content top, accounting for tree padding");
             AssertVisible(tree, viewer, moving);
         });
     }
