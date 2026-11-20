@@ -266,7 +266,7 @@ public sealed class SongObjectDuplicationTests
     }
 
     [Test]
-    public void UnsupportedFamilyRejectsBeforeAnyAllocationOrDocumentMutation()
+    public void MissingSourceRejectsBeforeAnyAllocationOrDocumentMutation()
     {
         SongDocument document = new();
         InstrumentDefinition instrument =
@@ -275,8 +275,9 @@ public sealed class SongObjectDuplicationTests
         ObjectId next = document.NextUnallocatedObjectId;
         uint revision = document.DocumentRevision;
 
-        Assert.That(() => SongObjectDuplication.Prepare(document, instrument.Id),
-            Throws.TypeOf<NotSupportedException>());
+        Assert.That(() => SongObjectDuplication.Prepare(
+            document, new ObjectId(999)),
+            Throws.TypeOf<InvalidOperationException>());
         Assert.That(document.NextUnallocatedObjectId, Is.EqualTo(next));
         Assert.That(document.DocumentRevision, Is.EqualTo(revision));
         Assert.That(document.Objects.Count, Is.EqualTo(1));
