@@ -38,6 +38,14 @@ a folder dropped into itself or its descendants are rejected. Successful
 tree-only moves preserve object IDs and audio revision, and are persisted in
 both .hm and .hm.json formats. These semantics apply to all six sections.
 
+After dropping, rebuilding and reselecting the moved item must **preserve all
+six panes' existing scroll offsets**. If the moved item's new header rectangle
+is already entirely visible in its pane, its scroll offset must remain
+unchanged. Otherwise, scroll in that pane only by the **minimum distance**
+needed to make the whole header visible; for oversized rows that cannot fit,
+prefer the nearest edge rather than oscillating. This overrides the TreeView's
+normal automatic scrolling to newly selected items during drop processing.
+
 
 The document tree has **six** fixed top-level sections, persisted in
 visual row-major order: Sequences, Patterns, Patches, Filters, Envelopes
