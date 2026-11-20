@@ -17,6 +17,20 @@ names and falls back through tombstones to raw IDs for broken references.
 Tree-only reorganization uses `SongTreeEditor` and advances `DocumentRevision`
 without advancing `AudioRevision`; moving a node never changes its ObjectId.
 
+In each of the six document panes, drag a tree item by its row label (after
+moving at least six device-independent pixels). Hover over the **top** or
+**bottom** of another object row to insert **before** or **after** it. Folder
+rows have three drop zones: top quarter = before the folder, middle half =
+inside the folder (including an empty folder), bottom quarter = after the
+folder. The blue header border shows the currently active insertion edge or
+folder target. Drop on the section **heading** (or the empty tree background)
+to append the item to that section's otherwise invisible fixed root, allowing
+items to leave nested folders. Cross-section moves and a folder dropped
+into itself or its descendants are rejected. Successful tree-only moves
+preserve object IDs and audio revision, and are persisted in both .hm and
+.hm.json formats. These semantics apply to all six sections.
+
+
 The document tree has **six** fixed top-level sections, persisted in
 visual row-major order: Sequences, Patterns, Patches, Filters, Envelopes
 and Instruments. The top row has two half-width panes (Sequences and
