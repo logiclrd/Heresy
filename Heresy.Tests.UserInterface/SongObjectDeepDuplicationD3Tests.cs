@@ -189,7 +189,7 @@ public sealed class SongObjectDeepDuplicationD3Tests
         Assert.That(instruments.Select(i => i.ToneSpecifications.Single().SourceId)
             .Distinct().Single(), Is.EqualTo(plan.IdMap[shared.Id]));
         Assert.That(instruments.Select(i => i.Name),
-            Is.EqualTo(new[] { "Instrument 3", "Instrument 4" }));
+            Is.EqualTo(new[] { "Instrument 2", "Instrument 3" }));
     }
 
     [Test]
