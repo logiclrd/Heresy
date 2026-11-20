@@ -169,6 +169,42 @@ public static class SongTreeEditor
 			&& CanMoveInto(document, node, targetParent);
 	}
 
+	public static bool CanMoveAfter(
+		SongDocument document,
+		SongTreeNode node,
+		SongTreeNode target)
+	{
+		return CanMoveBefore(document, node, target);
+	}
+
+	public static void MoveAfter(
+		SongDocument document,
+		SongTreeNode node,
+		SongTreeNode target)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		ArgumentNullException.ThrowIfNull(node);
+		ArgumentNullException.ThrowIfNull(target);
+
+		if (ReferenceEquals(node, target))
+			return;
+
+		SongTreeFolder? targetParent = GetParent(document, target);
+		if (targetParent is null)
+			throw new InvalidOperationException("The target node is not attached below the song-tree root.");
+
+		int targetIndex = targetParent.Children.IndexOf(target) + 1;
+		SongTreeFolder? source = GetParent(document, node);
+		if (ReferenceEquals(source, targetParent))
+		{
+			int sourceIndex = targetParent.Children.IndexOf(node);
+			if (sourceIndex < targetIndex)
+				targetIndex--;
+		}
+
+		Move(document, node, targetParent, targetIndex);
+	}
+
 	public static void MoveInto(
 		SongDocument document,
 		SongTreeNode node,
