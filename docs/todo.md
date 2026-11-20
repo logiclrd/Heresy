@@ -259,14 +259,37 @@ Do not reintroduce completed-task checklists here.
   comments, strings and shadowed calls; result references are revalidated.
   Missing, malformed or nonliteral intrinsic targets refuse the entire
   operation. Script cycles and shared targets are cloned once and re-linked,
-  and scripted roots with no references are supported. Both shallow and
-  deep duplication remain headless until the menu integration.
-  **Next D5:** Both menu actions, sibling placement and selection in all six panes.
-  **D6:** Batch undo/redo history integration, persistence and physical owner
-  acceptance. See
+  and scripted roots with no references are supported.
+  **D5 implemented (PR #38, manual verification pending):** The six-pane
+  tree context menus now expose shallow Duplicate for every live object,
+  and Duplicate (deep) for Instruments, Synths and all scripted definitions.
+  No commands appear on folders or missing references. Each root clone is
+  atomically placed immediately after its clicked tree occurrence and selected;
+  deep dependencies follow their first existing tree placement or section
+  root. New object definitions, tree positions and ID allocator commit as one
+  transaction. Core transaction receipts retain Undo/Redo internally, but
+  **no new temporary history UI is added**.
+  **D6 (revised):** Complete persistence/UI verification and physical owner
+  acceptance. The former ad hoc duplicate-history integration is explicitly
+  superseded by the [tiered Undo/Redo design](tiered-undo-redo-design.md). See
   [Duplicate Object specification](duplicate-object-plan.md).
   Keep this separate from [implemented UI workflow](user-interface-workflows.md).
 
+
+## Undo/Redo — tiered redesign
+
+- [ ] **Implement two-tier Undo/Redo** as specified in
+  [tiered Undo/Redo design](tiered-undo-redo-design.md): song-level view
+  boundary checkpoints plus editor-session-local domain snapshots with
+  five-second idle batching, forced grid/source flush boundaries,
+  complete state restoration, focus metadata and dirty-state
+  saved-content identity. A Pattern-grid interaction outside the grid
+  closes the note batch even if it changes only Octave/Skip; those settings
+  themselves remain outside Pattern Undo state. A script text timer
+  checkpoints its *buffer* only and never auto-applies to the song.
+  Replace the old one-level Synth import history rather than extending it,
+  and integrate tree-level Duplicate/import as ordinary song checkpoints.
+  **Separate future project, not part of PR #38.**
 
 ## Script objects and editor UX
 
