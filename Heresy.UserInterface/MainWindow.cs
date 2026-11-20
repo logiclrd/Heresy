@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -167,6 +168,10 @@ public sealed class MainWindow : Window
 	private PointerPressedEventArgs? _dragTrigger;
 	private Point _dragStart;
 	private bool _dragInProgress;
+	private Border? _dropHighlight;
+	private IBrush? _dropHighlightOriginalBrush;
+	private Thickness _dropHighlightOriginalThickness;
+	private SongTreeDropPlacement? _dropHighlightPlacement;
 	private bool _closeApproved;
 	private bool _closePromptInProgress;
 	private CancellationTokenSource? _exportCancellation;
@@ -371,7 +376,7 @@ public sealed class MainWindow : Window
 		int column,
 		int columnSpan)
 	{
-		TreeView tree = new();
+		TreeView tree = new() { Background = Brushes.Transparent };
 		tree.KeyDown += (_, e) => OnTreeRenameKeyDown(tree, e);
 		_trees.Add(section, tree);
 		tree.SelectionChanged += (_, _) =>
@@ -383,6 +388,14 @@ public sealed class MainWindow : Window
 			}
 		};
 
+		// The section's fixed root is not visible as a TreeViewItem. Make
+		// the empty tree background an append-to-root destination.
+		DragDrop.SetAllowDrop(tree, true);
+		DragDrop.AddDragOverHandler(tree, (_, e) =>
+			OnSectionRootDragOver(section, null, e));
+		DragDrop.AddDropHandler(tree, (_, e) =>
+			OnSectionRootDrop(section, e));
+
 		TextBlock title =
 			new()
 			{
@@ -391,6 +404,24 @@ public sealed class MainWindow : Window
 				FontWeight = FontWeight.SemiBold,
 				VerticalAlignment = VerticalAlignment.Center,
 			};
+
+		// An always-accessible root target also works when the tree fills
+		// the pane; hover the section heading to move an item out of a folder.
+		Border rootDropTarget = new()
+		{
+			Child = title,
+			Background = Brushes.Transparent,
+			Padding = new Thickness(3, 1),
+		};
+		ToolTip.SetTip(rootDropTarget,
+			"Drop an item here to move it to this section's root");
+		DragDrop.SetAllowDrop(rootDropTarget, true);
+		DragDrop.AddDragOverHandler(rootDropTarget, (_, e) =>
+			OnSectionRootDragOver(section, rootDropTarget, e));
+		DragDrop.AddDragLeaveHandler(rootDropTarget, (_, _) =>
+			ClearTreeDropHighlight(rootDropTarget));
+		DragDrop.AddDropHandler(rootDropTarget, (_, e) =>
+			OnSectionRootDrop(section, e));
 
 		Button newFolder = new() { Content = "+ Folder" };
 		newFolder.Click += async (_, _) => await CreateFolderAsync(section);
@@ -476,7 +507,7 @@ public sealed class MainWindow : Window
 				Margin = new Thickness(8, 6),
 				Spacing = 3,
 			};
-		header.Children.Add(title);
+		header.Children.Add(rootDropTarget);
 		header.Children.Add(actions);
 
 		Grid pane = new();
@@ -2012,6 +2043,7 @@ public sealed class MainWindow : Window
 		if (_documentView is not null && !TrySetEditorContent(_documentView))
 			return;
 		TrackWorkspaceDocument();
+		ClearTreeDropHighlight();
 		UpdateWindowTitle();
 
 		_selectedItem = null;
@@ -2103,10 +2135,18 @@ public sealed class MainWindow : Window
 			};
 		}
 
+		// A visible top/bottom insertion guide or enclosing folder outline
+		// is drawn on this header, independently of theme selection colours.
+		Border dropMarker = new()
+		{
+			Child = headerContent,
+			Background = Brushes.Transparent,
+			Padding = new Thickness(1),
+		};
 		TreeViewItem result =
 			new()
 			{
-				Header = headerContent,
+				Header = dropMarker,
 				IsExpanded = item.IsFolder,
 				Tag = item,
 			};
@@ -2130,12 +2170,15 @@ public sealed class MainWindow : Window
 		}
 		result.ItemsSource = children;
 
-		result.PointerPressed += (_, e) =>
-			OnTreePointerPressed(
-				tree,
-				result,
-				item,
-				e);
+		// TreeViewItem class handlers can mark PointerPressed handled while
+		// selecting the row. A plain PointerPressed += listener then never
+		// sees the press and no drag can begin. Tunnel through all nested rows
+		// (outer first, deepest last), even for already-handled events.
+		result.AddHandler(
+			InputElement.PointerPressedEvent,
+			(_, e) => OnTreePointerPressed(tree, result, item, e),
+			RoutingStrategies.Tunnel,
+			handledEventsToo: true);
 		result.DoubleTapped += async (_, e) =>
 			await OnTreeDoubleTappedAsync(
 				section,
@@ -2143,17 +2186,27 @@ public sealed class MainWindow : Window
 				result,
 				item,
 				e);
-		result.PointerMoved += async (_, e) =>
-			await OnTreePointerMovedAsync(tree, item, e);
-		result.PointerReleased += (_, _) => ClearDragCandidate(item);
+		result.AddHandler(
+			InputElement.PointerMovedEvent,
+			async (_, e) => await OnTreePointerMovedAsync(tree, item, e),
+			RoutingStrategies.Bubble,
+			handledEventsToo: true);
+		result.AddHandler(
+			InputElement.PointerReleasedEvent,
+			(_, _) => ClearDragCandidate(item),
+			RoutingStrategies.Tunnel,
+			handledEventsToo: true);
 
 		DragDrop.SetAllowDrop(result, true);
 		DragDrop.AddDragOverHandler(
 			result,
-			(_, e) => OnTreeDragOver(item, e));
+			(_, e) => OnTreeDragOver(item, dropMarker, e));
+		DragDrop.AddDragLeaveHandler(
+			result,
+			(_, _) => ClearTreeDropHighlight(dropMarker));
 		DragDrop.AddDropHandler(
 			result,
-			(_, e) => OnTreeDrop(item, e));
+			(_, e) => OnTreeDrop(item, dropMarker, e));
 
 		result.ContextMenu = BuildTreeContextMenu(section, tree, item, result);
 		return result;
@@ -2949,35 +3002,74 @@ public sealed class MainWindow : Window
 		}
 	}
 
-	private void OnTreeDragOver(
+	private static SongTreeDropPlan GetRowDropPlan(
 		SongTreeItemViewModel target,
+		Border marker,
 		DragEventArgs e)
 	{
-		SongTreeNode? node = e.DataTransfer.TryGetValue(TreeNodeFormat);
-		if (node is null)
-		{
-			e.DragEffects = DragDropEffects.None;
-			return;
-		}
+		// TreeViewItem.Bounds may include its expanded descendants. Measure
+		// the header itself so folder before/into/after zones stay accurate.
+		double height = Math.Max(marker.Bounds.Height, 1.0);
+		double relativeY = e.GetPosition(marker).Y / height;
+		return SongTreeDropPlan.ForRow(target.Node, relativeY);
+	}
 
-		bool canMove = target.Node switch
-		{
-			SongTreeFolder folder =>
-				SongTreeEditor.CanMoveInto(_workspace.Document, node, folder),
-			_ =>
-				SongTreeEditor.CanMoveBefore(_workspace.Document, node, target.Node),
-		};
-		e.DragEffects = canMove
-			? DragDropEffects.Move
-			: DragDropEffects.None;
+	private void OnTreeDragOver(
+		SongTreeItemViewModel target,
+		Border marker,
+		DragEventArgs e)
+	{
+		PreviewTreeDrop(GetRowDropPlan(target, marker, e), marker, e);
 	}
 
 	private void OnTreeDrop(
 		SongTreeItemViewModel target,
+		Border marker,
+		DragEventArgs e)
+	{
+		CommitTreeDrop(GetRowDropPlan(target, marker, e), e);
+	}
+
+	private void OnSectionRootDragOver(
+		SongTreeSection section,
+		Border? marker,
+		DragEventArgs e)
+	{
+		SongTreeDropPlan plan = SongTreeDropPlan.ForSectionRoot(
+			_workspace.Document.GetSectionRoot(section));
+		PreviewTreeDrop(plan, marker, e);
+	}
+
+	private void OnSectionRootDrop(SongTreeSection section, DragEventArgs e)
+	{
+		SongTreeDropPlan plan = SongTreeDropPlan.ForSectionRoot(
+			_workspace.Document.GetSectionRoot(section));
+		CommitTreeDrop(plan, e);
+	}
+
+	private void PreviewTreeDrop(
+		SongTreeDropPlan plan,
+		Border? marker,
 		DragEventArgs e)
 	{
 		SongTreeNode? node = e.DataTransfer.TryGetValue(TreeNodeFormat);
-		if (node is null)
+		bool allowed = node is not null && plan.CanApply(_workspace.Document, node);
+		e.DragEffects = allowed ? DragDropEffects.Move : DragDropEffects.None;
+		if (allowed && marker is not null)
+			ShowTreeDropHighlight(marker, plan.Placement);
+		else
+			ClearTreeDropHighlight();
+		// Row drag/drop is a routed event. An inner row must not let its
+		// ancestor folder overwrite the accepted target or drop position.
+		e.Handled = true;
+	}
+
+	private void CommitTreeDrop(SongTreeDropPlan plan, DragEventArgs e)
+	{
+		ClearTreeDropHighlight();
+		e.Handled = true;
+		SongTreeNode? node = e.DataTransfer.TryGetValue(TreeNodeFormat);
+		if (node is null || !plan.CanApply(_workspace.Document, node))
 		{
 			e.DragEffects = DragDropEffects.None;
 			return;
@@ -2985,19 +3077,54 @@ public sealed class MainWindow : Window
 
 		try
 		{
-			if (target.Node is SongTreeFolder folder)
-				SongTreeEditor.MoveInto(_workspace.Document, node, folder);
-			else
-				SongTreeEditor.MoveBefore(_workspace.Document, node, target.Node);
-
+			uint before = _workspace.Document.DocumentRevision;
+			plan.Apply(_workspace.Document, node);
 			e.DragEffects = DragDropEffects.Move;
-			RefreshDocumentView("Reorganized song tree", node);
+			if (_workspace.Document.DocumentRevision != before)
+				RefreshDocumentView("Reorganized song tree", node);
+			else
+				SetStatus("Song tree unchanged");
 		}
 		catch (InvalidOperationException ex)
 		{
 			e.DragEffects = DragDropEffects.None;
 			SetStatus(ex.Message);
 		}
+	}
+
+	private void ShowTreeDropHighlight(
+		Border marker,
+		SongTreeDropPlacement placement)
+	{
+		if (ReferenceEquals(_dropHighlight, marker)
+			&& _dropHighlightPlacement == placement)
+			return;
+
+		ClearTreeDropHighlight();
+		_dropHighlight = marker;
+		_dropHighlightPlacement = placement;
+		_dropHighlightOriginalBrush = marker.BorderBrush;
+		_dropHighlightOriginalThickness = marker.BorderThickness;
+		marker.BorderBrush = Brushes.DodgerBlue;
+		marker.BorderThickness = placement switch
+		{
+			SongTreeDropPlacement.Before => new Thickness(0, 2, 0, 0),
+			SongTreeDropPlacement.After => new Thickness(0, 0, 0, 2),
+			_ => new Thickness(2),
+		};
+	}
+
+	private void ClearTreeDropHighlight(Border? marker = null)
+	{
+		if (_dropHighlight is null
+			|| (marker is not null && !ReferenceEquals(marker, _dropHighlight)))
+			return;
+
+		_dropHighlight.BorderBrush = _dropHighlightOriginalBrush;
+		_dropHighlight.BorderThickness = _dropHighlightOriginalThickness;
+		_dropHighlight = null;
+		_dropHighlightPlacement = null;
+		_dropHighlightOriginalBrush = null;
 	}
 
 	private void SelectTreeItem(
