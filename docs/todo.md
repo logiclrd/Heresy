@@ -244,11 +244,20 @@ Do not reintroduce completed-task checklists here.
   verification at commit, independent tone Filter overrides and Synth graph
   nodes including disconnected/stale paths. Sample save/reopen tests cover
   both .hm and .hm.json; original reference IDs remain intact.
-  **Next D3:** Cycle-safe deep graph planning and typed-reference mapping.
-  **D4:** Scripted deep analyzer coverage and
-  `_O(id)` rewriting. **D5:** Both menu actions, sibling placement and
-  selection in all six panes. **D6:** Batch undo/redo, persistence, tests
-  and physical owner acceptance. See
+  **D3 complete, headless:** Cycle-safe iterative traversal of Instrument
+  tone sources and Synth graph source/Envelope/Filter dependencies (including
+  disconnected nodes), with one global original-to-duplicate map, provisional
+  contiguous IDs, batch name collision avoidance, shared-target deduplication,
+  whole-graph typed reference remapping, correctly rebound copied Filter uses,
+  atomic commit with final Sample-asset validation, and Undo/Redo as one batch.
+  Cross-Synth/self cycles, diamonds, missing references, stale edits and
+  .hm/.hm.json save/reopen have regression coverage. Scripts currently refuse
+  deep copying explicitly, even when encountered from a typed graph, pending
+  semantic script-reference processing in D4.
+  **Next D4:** Scripted deep analyzer coverage and `_O(id)` rewriting.
+  **D5:** Both menu actions, sibling placement and selection in all six panes.
+  **D6:** Batch undo/redo history integration, persistence and physical owner
+  acceptance. See
   [Duplicate Object specification](duplicate-object-plan.md).
   Keep this separate from [implemented UI workflow](user-interface-workflows.md).
 
