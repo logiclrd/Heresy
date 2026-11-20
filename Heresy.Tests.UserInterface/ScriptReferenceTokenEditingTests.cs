@@ -103,13 +103,13 @@ public sealed class ScriptReferenceTokenEditingTests
             window.UpdateLayout();
             source.TextArea.Focus();
             source.CaretOffset = "_O(137)".Length;
-            window.KeyPress(Key.Back, RawInputModifiers.None, default);
+            window.KeyPress(Key.Back, RawInputModifiers.None, default, null);
             Assert.That(source.Text, Is.EqualTo("_O(137;"));
 
             source.Text = "_O(137);";
             source.CaretOffset = 0;
             source.TextArea.Focus();
-            window.KeyPress(Key.Delete, RawInputModifiers.None, default);
+            window.KeyPress(Key.Delete, RawInputModifiers.None, default, null);
             Assert.That(source.Text, Is.EqualTo("O(137);"));
         }
         finally
