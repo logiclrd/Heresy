@@ -167,6 +167,7 @@ public sealed class MainWindow : Window
 	private bool _dragInProgress;
 	private TreeView? _dragTree;
 	private IPointer? _dragPointer;
+	private bool _startingTreeCapture;
 	private SongTreeNode? _draggingNode;
 	private Point _dragPosition;
 	private SongTreeDropPlan? _pendingTreeDrop;
@@ -410,7 +411,8 @@ public sealed class MainWindow : Window
 		{
 			// Capturing the tree may notify a formerly captured child.
 			// Ignore that bubbled notification while capture is ours.
-			if (ReferenceEquals(_dragTree, tree)
+			if (!_startingTreeCapture
+				&& ReferenceEquals(_dragTree, tree)
 				&& !ReferenceEquals(_dragPointer?.Captured, tree))
 				CancelTreeDrag();
 		};
@@ -3007,7 +3009,18 @@ public sealed class MainWindow : Window
 			// Tree-only moves never cross sections, so unlike a native
 			// drag operation we can retain capture and keep receiving pointer
 			// moves/releases even when the cursor leaves the tree viewport.
-			e.Pointer.Capture(tree);
+			// The old row's PointerCaptureLost can bubble through the
+			// tree before Avalonia installs the new capture. Ignore that
+			// intermediate notification and verify capture after it settles.
+			_startingTreeCapture = true;
+			try
+			{
+				e.Pointer.Capture(tree);
+			}
+			finally
+			{
+				_startingTreeCapture = false;
+			}
 			if (!ReferenceEquals(e.Pointer.Captured, tree))
 			{
 				CancelTreeDrag();
