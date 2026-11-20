@@ -82,17 +82,7 @@ public static class SongObjectDuplication
         // it *again* at the commit boundary: draft preparation cannot reserve
         // or freeze files written by unrelated processes.
         if (draft.Candidate is SampleDefinition candidate)
-        {
-            if (!draft.Document.TryGet(draft.SourceId, out SongObject? original)
-                || original is not SampleDefinition source)
-                throw new InvalidOperationException(
-                    "The Sample being duplicated is no longer available.");
-            (string _, byte[] encoded) = ReadVerifiedSampleEncoding(source);
-            if (candidate.PendingAsset is not PendingSampleAsset prepared
-                || !prepared.Bytes.Span.SequenceEqual(encoded))
-                throw new InvalidOperationException(
-                    "The Sample asset changed after duplicate preparation.");
-        }
+            VerifySampleCandidate(draft.Document, draft.SourceId, candidate);
         return draft.Document.CommitImportedObjects(
             [draft.Candidate], draft.ExpectedId,
             document =>
@@ -115,7 +105,12 @@ public static class SongObjectDuplication
             .Select(item => item.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        string original = source.Name.Trim();
+        return SuggestName(source.Name, occupied);
+    }
+
+    internal static string SuggestName(string name, ISet<string> occupied)
+    {
+        string original = name.Trim();
         if (original.Length == 0)
             throw new InvalidOperationException(
                 "An unnamed song object cannot be duplicated.");
@@ -229,6 +224,23 @@ public static class SongObjectDuplication
         return cloned;
     }
 
+
+    /// <summary>Verify at acceptance that the detached encoded Sample is
+    /// still byte-for-byte identical to a freshly validated source read.
+    /// Called for each Sample in a shallow or deep duplication batch.</summary>
+    internal static void VerifySampleCandidate(
+        SongDocument document, ObjectId sourceId, SampleDefinition candidate)
+    {
+        if (!document.TryGet(sourceId, out SongObject? original)
+            || original is not SampleDefinition source)
+            throw new InvalidOperationException(
+                $"The Sample #{sourceId.Value} being duplicated is unavailable.");
+        (string _, byte[] encoded) = ReadVerifiedSampleEncoding(source);
+        if (candidate.PendingAsset is not PendingSampleAsset prepared
+            || !prepared.Bytes.Span.SequenceEqual(encoded))
+            throw new InvalidOperationException(
+                $"Sample #{sourceId.Value} changed after duplicate preparation.");
+    }
 
     private static (string FileName, byte[] Encoded) ReadVerifiedSampleEncoding(
         SampleDefinition source)
