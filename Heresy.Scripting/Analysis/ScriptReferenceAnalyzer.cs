@@ -42,8 +42,13 @@ public sealed record ScriptReferenceAnalysisSnapshot(
 
 public sealed record ScriptReferenceAnalysis(
 	IReadOnlyList<ScriptObjectReference> References,
-	IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics)
+	IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics,
+	IReadOnlyList<ScriptSourceSpan>? DynamicReferences = null)
 {
+	/// <summary>Computed _O(expression) calls remain legal script text but
+	/// cannot become name tokens or participate in static deep duplication.</summary>
+	public bool HasDynamicReferences => DynamicReferences is { Count: > 0 };
+
 	public bool IsReliable
 	{
 		get
@@ -135,6 +140,7 @@ public static class ScriptReferenceAnalyzer
 						"Script analysis globals type has no metadata name."));
 
 		List<ScriptObjectReference> references = [];
+		List<ScriptSourceSpan> dynamicReferences = [];
 		SyntaxNode root = syntaxTree.GetRoot();
 		foreach (InvocationExpressionSyntax invocation
 			in root.DescendantNodes()
@@ -165,6 +171,17 @@ public static class ScriptReferenceAnalyzer
 
 			if (!TryGetObjectId(invocation, out ObjectId id))
 			{
+				// Computed IDs are valid source expressions if the script
+				// compiler accepts their types. Only literal IDs become named
+				// visual tokens; deep duplication separately refuses dynamic IDs.
+				if (invocation.ArgumentList.Arguments.Count == 1
+					&& invocation.ArgumentList.Arguments[0].Expression
+						is not LiteralExpressionSyntax)
+				{
+					dynamicReferences.Add(new ScriptSourceSpan(
+						invocation.SpanStart, invocation.Span.Length));
+					continue;
+				}
 				diagnostics.Add(
 					new ScriptAnalysisDiagnostic(
 						MalformedReferenceCode,
@@ -189,7 +206,8 @@ public static class ScriptReferenceAnalyzer
 			syntaxTree,
 			new ScriptReferenceAnalysis(
 				references,
-				diagnostics));
+				diagnostics,
+				dynamicReferences));
 	}
 
 	private static bool IsIntrinsicLookup(

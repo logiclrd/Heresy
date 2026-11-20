@@ -61,6 +61,13 @@ internal static class SongObjectScriptReferences
                     + string.Join("; ", analysis.Diagnostics
                         .Where(item => item.Severity == ScriptDiagnosticSeverity.Error)
                         .Select(item => item.Message)));
+            if (analysis.HasDynamicReferences)
+                throw new InvalidOperationException(
+                    $"Cannot deep-duplicate {source.GetType().Name}"
+                    + $" #{source.Id.Value}: {field} contains computed"
+                    + " _O(expression) references whose target IDs cannot"
+                    + " be determined statically. Use a nonzero integer"
+                    + " literal for deep duplication.");
             foreach (ScriptObjectReference reference in analysis.References)
                 result.Add(reference.Id);
         }

@@ -25,6 +25,11 @@ public static class ScriptObjectReferenceRewriter
 
         ScriptReferenceAnalysisSnapshot snapshot =
             ScriptReferenceAnalyzer.CreateSnapshot(source);
+        if (snapshot.Analysis.HasDynamicReferences)
+            throw new InvalidOperationException(
+                "Cannot deep-duplicate a script with computed _O(expression) "
+                + "references: their target IDs cannot be determined statically. "
+                + "Use a nonzero integer literal for deep duplication.");
         if (!snapshot.Analysis.IsReliable)
             throw new InvalidOperationException(
                 "Cannot deep-duplicate a script with unreliable object references: "
