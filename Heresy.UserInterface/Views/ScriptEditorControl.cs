@@ -5,6 +5,7 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 
@@ -51,6 +52,7 @@ public sealed class ScriptEditorControl : UserControl
 	};
 
 	private IReadOnlyList<ScriptDiagnosticVisualMarker> _diagnosticMarkers = [];
+	private IReadOnlyList<ScriptReferenceVisualToken> _referenceTokens = [];
 	private string? _diagnosticHoverText;
 
 	private readonly TextBox? _rowCount;
@@ -136,6 +138,13 @@ public sealed class ScriptEditorControl : UserControl
 			_syntaxColorizer);
 		_source.TextArea.TextView.BackgroundRenderers.Add(
 			_diagnosticRenderer);
+		// Intercept token-edge deletion before AvaloniaEdit treats a whole
+		// one-column visual reference as an indivisible character.
+		_source.TextArea.AddHandler(
+			InputElement.KeyDownEvent,
+			OnScriptTokenKeyDown,
+			RoutingStrategies.Tunnel,
+			handledEventsToo: true);
 		_source.TextChanged += (_, _) =>
 			RefreshAnalysis();
 		_source.PointerMoved += OnSourcePointerMoved;
@@ -405,6 +414,7 @@ public sealed class ScriptEditorControl : UserControl
 			IReadOnlyList<ScriptReferenceVisualToken> referenceTokens =
 				ScriptReferenceVisualTokenCatalog.Create(
 					analysis.References);
+			_referenceTokens = referenceTokens;
 			_referenceGenerator.SetTokens(
 				referenceTokens);
 			_syntaxColorizer.SetSpans(
@@ -432,6 +442,25 @@ public sealed class ScriptEditorControl : UserControl
 					TextWrapping = TextWrapping.Wrap,
 				});
 		}
+	}
+
+	private void OnScriptTokenKeyDown(object? sender, KeyEventArgs e)
+	{
+		if (e.Handled
+			|| e.KeyModifiers != KeyModifiers.None
+			|| _source.SelectionLength != 0
+			|| e.Key is not (Key.Back or Key.Delete))
+			return;
+
+		if (!ScriptReferenceTokenEditing.TryPlan(
+				_referenceTokens, _source.CaretOffset,
+				backspace: e.Key == Key.Back,
+				out ScriptReferenceTokenEditing.Deletion edit))
+			return;
+
+		_source.Document.Remove(edit.Offset, 1);
+		_source.CaretOffset = edit.CaretAfter;
+		e.Handled = true;
 	}
 
 	private void OnSourcePointerMoved(
@@ -541,10 +570,16 @@ public sealed class ScriptEditorControl : UserControl
 				Button diagnostic =
 					new()
 					{
-						Content =
-							$"{marker.Severity} {marker.Code} "
+						// String Button.Content becomes AccessText and treats
+						// underscores as Alt-key mnemonics. Script diagnostics
+						// must display _O(137) literally, without accelerators.
+						Content = new TextBlock
+						{
+							Text = $"{marker.Severity} {marker.Code} "
 								+ $"at {marker.OriginalSpan.Start}: "
 								+ marker.Message,
+							TextWrapping = TextWrapping.Wrap,
+						},
 						HorizontalAlignment = HorizontalAlignment.Stretch,
 						HorizontalContentAlignment = HorizontalAlignment.Left,
 					};
