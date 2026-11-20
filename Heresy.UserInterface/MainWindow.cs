@@ -3060,13 +3060,89 @@ public sealed class MainWindow : Window
 			uint before = _workspace.Document.DocumentRevision;
 			plan.Value.Apply(_workspace.Document, moving);
 			if (_workspace.Document.DocumentRevision != before)
-				RefreshDocumentView("Reorganized song tree", moving);
+				RefreshAfterTreeDrop(tree, moving);
 			else
 				SetStatus("Song tree unchanged");
 		}
 		catch (InvalidOperationException ex)
 		{
 			SetStatus(ex.Message);
+		}
+	}
+
+	/// <summary>
+	/// Recreate the tree projection after an organizational move without
+	/// letting programmatic selection drag the viewport to a new location.
+	/// All panes retain their previous offsets; the moved row is revealed
+	/// only when some part of its header falls outside the original viewport.
+	/// </summary>
+	private void RefreshAfterTreeDrop(TreeView movedTree, SongTreeNode moving)
+	{
+		var snapshots = _trees.Values.Select(tree =>
+		{
+			ScrollViewer? viewer = tree.GetVisualDescendants()
+				.OfType<ScrollViewer>().FirstOrDefault();
+			return (
+				Tree: tree,
+				Viewer: viewer,
+				Offset: viewer?.Offset ?? default,
+				AutoScroll: tree.AutoScrollToSelectedItem);
+		}).ToArray();
+
+		// TreeView normally invokes BringIntoView for a new selection.
+		// Turn that behavior off while replacing the children; it would
+		// otherwise fight the requested minimal drop scrolling.
+		foreach (var snapshot in snapshots)
+			snapshot.Tree.AutoScrollToSelectedItem = false;
+
+		try
+		{
+			RefreshDocumentView("Reorganized song tree", moving);
+			UpdateLayout();
+
+			// Rebuilding ItemsSource can reset the ScrollViewer offsets.
+			// Restore every pane before measuring the moved row.
+			foreach (var snapshot in snapshots)
+			{
+				if (snapshot.Viewer is not null)
+					snapshot.Viewer.Offset = snapshot.Offset;
+			}
+			UpdateLayout();
+
+			var movedSnapshot = snapshots.FirstOrDefault(x =>
+				ReferenceEquals(x.Tree, movedTree));
+			ScrollViewer? viewer = movedSnapshot.Viewer;
+			if (viewer is null)
+				return;
+
+			Border? row = _treeRowTargets[movedTree]
+				.Where(x => ReferenceEquals(x.Item.Node, moving))
+				.Select(x => x.Marker)
+				.FirstOrDefault();
+			if (row is null)
+				return;
+
+			Point? position = row.TranslatePoint(new Point(0, 0), viewer);
+			if (position is not Point point)
+				return;
+
+			// Header bounds, not TreeViewItem.Bounds: a folder item's
+			// latter rectangle can encompass all of its descendants.
+			double desired = SongTreeDropVisibility.MinimalOffset(
+				movedSnapshot.Offset.Y,
+				viewer.Viewport.Height,
+				viewer.Extent.Height,
+				viewer.Offset.Y + point.Y,
+				row.Bounds.Height);
+			if (Math.Abs(desired - viewer.Offset.Y) > 0.001)
+				viewer.Offset = new Vector(viewer.Offset.X, desired);
+		}
+		finally
+		{
+			// The selection is now visible, so restoring the normal
+			// automatic-scroll policy does not move the viewport.
+			foreach (var snapshot in snapshots)
+				snapshot.Tree.AutoScrollToSelectedItem = snapshot.AutoScroll;
 		}
 	}
 
