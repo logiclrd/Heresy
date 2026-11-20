@@ -50,9 +50,9 @@ public sealed class FilterInstance
 			?? throw new ArgumentNullException(nameof(definition));
 	}
 
-	private FilterInstance(FilterInstance other)
+	private FilterInstance(FilterInstance other, FilterDefinition definition)
 	{
-		_definition = other._definition;
+		_definition = definition;
 		_revision = other._revision;
 		foreach ((int id, StageOverrides overrides) in other._overrides)
 			_overrides.Add(id, overrides.Clone());
@@ -210,7 +210,58 @@ public sealed class FilterInstance
 			&& left.All(item => right.TryGetValue(item.Key,
 				out FilterParameterValue? value) && value == item.Value);
 
-	public FilterInstance Clone() => new(this);
+	public FilterInstance Clone() => new(this, _definition);
+
+	/// <summary>
+	/// Rebind a complete, independent copy of the configured use to another
+	/// Filter definition with exactly the same authored stage topology.
+	/// Unlike reconstructing from GetOverrides, this preserves even dormant
+	/// overrides and the original revision, so a deep duplicate cannot lose
+	/// historical authoring state. The replacement definition itself remains
+	/// separate from the original definition.
+	/// </summary>
+	public FilterInstance CloneForDefinition(FilterDefinition target)
+	{
+		ArgumentNullException.ThrowIfNull(target);
+		if (ReferenceEquals(target, _definition))
+			return Clone();
+		if (target.Stages.Count != _definition.Stages.Count
+			|| target.NextStageIdForPersistence
+				!= _definition.NextStageIdForPersistence)
+			throw new InvalidOperationException(
+				"Cannot rebind a Filter use to a different stage topology.");
+
+		for (int index = 0; index < target.Stages.Count; index++)
+		{
+			FilterStageDefinition original = _definition.Stages[index];
+			FilterStageDefinition replacement = target.Stages[index];
+			if (original.StageId != replacement.StageId
+				|| original.Kind != replacement.Kind
+				|| !string.Equals(original.Name, replacement.Name,
+					StringComparison.Ordinal)
+				|| original.DefaultParameters.Count
+					!= replacement.DefaultParameters.Count
+				|| original.DefaultParameters.Any(entry =>
+					!replacement.DefaultParameters.TryGetValue(
+						entry.Key, out FilterParameterValue? value)
+					|| value != entry.Value))
+				throw new InvalidOperationException(
+					"Cannot rebind a Filter use to incompatible stage definitions.");
+		}
+
+		IReadOnlyDictionary<int, long> generations =
+			_definition.StageGenerationsForPersistence;
+		IReadOnlyDictionary<int, long> targetGenerations =
+			target.StageGenerationsForPersistence;
+		if (generations.Count != targetGenerations.Count
+			|| generations.Any(item =>
+				!targetGenerations.TryGetValue(item.Key, out long generation)
+				|| generation != item.Value))
+			throw new InvalidOperationException(
+				"Cannot rebind a Filter use to different stage generations.");
+
+		return new FilterInstance(this, target);
+	}
 
 	private FilterSpecificationInstance CreateParameters(FilterStageDefinition stage)
 	{
