@@ -239,9 +239,13 @@ Do not reintroduce completed-task checklists here.
   **D1 complete, headless (PR #38):** Shallow Data/Script Sequence and Pattern,
   Node/Script Envelope and Filter copies, numbered names, independent
   owned content, detached preparation and guarded atomic commit/undo.
-  **Next D2:** Finish shallow Sample/Instrument/Script Instrument/Synth copies
-  and detached asset ownership. **D3:** Cycle-safe deep graph planning and
-  typed-reference mapping. **D4:** Scripted deep analyzer coverage and
+  **D2 complete, headless:** Shallow Sample/Instrument/Script
+  Instrument/Synth copies, owned encoded Sample bytes and fresh source-file
+  verification at commit, independent tone Filter overrides and Synth graph
+  nodes including disconnected/stale paths. Sample save/reopen tests cover
+  both .hm and .hm.json; original reference IDs remain intact.
+  **Next D3:** Cycle-safe deep graph planning and typed-reference mapping.
+  **D4:** Scripted deep analyzer coverage and
   `_O(id)` rewriting. **D5:** Both menu actions, sibling placement and
   selection in all six panes. **D6:** Batch undo/redo, persistence, tests
   and physical owner acceptance. See
