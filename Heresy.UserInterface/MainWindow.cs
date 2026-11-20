@@ -1857,6 +1857,60 @@ public sealed class MainWindow : Window
 		RefreshDocumentView($"Deleted {selected.DisplayName}", parent);
 	}
 
+	/// <summary>
+	/// Duplicate the exact clicked tree occurrence (not another placement
+	/// of the same definition). All clone, dependency and Sample preflight
+	/// runs before the atomic document commit. Do not register this in the
+	/// obsolete single-Synth-import Undo history; a unified whole-song
+	/// history will supersede that separate mechanism.
+	/// </summary>
+	private void DuplicateTreeObject(SongTreeItemViewModel item, bool deep)
+	{
+		if (item.Node is not SongTreeObject occurrence
+			|| item.IsMissingReference
+			|| !_workspace.Document.TryGet(occurrence.ObjectId, out SongObject? original)
+			|| original is null)
+		{
+			SetStatus("The selected object is no longer available to duplicate.");
+			return;
+		}
+		if (deep && !SongObjectDuplicateTreePlacement.HasDeepOption(original))
+		{
+			SetStatus("This object has no deep duplication operation.");
+			return;
+		}
+
+		try
+		{
+			SongImportBatchEdit receipt = deep
+				? SongObjectDeepDuplication.Commit(
+					SongObjectDeepDuplication.Prepare(_workspace.Document, original.Id),
+					occurrence)
+				: SongObjectDuplication.Commit(
+					SongObjectDuplication.Prepare(_workspace.Document, original.Id),
+					occurrence);
+
+			ObjectId copiedId = receipt.ImportedObjectIds[0];
+			SongTreeObject selectedCopy =
+				SongObjectDuplicateTreePlacement.FindCommittedRoot(
+					_workspace.Document, copiedId, occurrence);
+			// Another document mutation invalidates the existing one-level
+			// import-only receipt. The new song-wide history is separate work.
+			_workspace.ImportUndo.Clear();
+			RefreshDocumentView(
+				deep
+					? $"Deep-duplicated {original.Name} as {selectedCopy.Name}"
+						+ $" ({receipt.ImportedObjectIds.Count} object(s))"
+					: $"Duplicated {original.Name} as {selectedCopy.Name}",
+				selectedCopy);
+		}
+		catch (Exception error)
+		{
+			SetStatus($"Cannot {(deep ? "deep-duplicate" : "duplicate")} "
+				+ $"{original.Name}: {error.Message}");
+		}
+	}
+
 	private SongTreeFolder GetFolderForNewChild(SongTreeSection section)
 	{
 		SongTreeFolder sectionRoot = _workspace.Document.GetSectionRoot(section);
@@ -2174,6 +2228,38 @@ public sealed class MainWindow : Window
 		}
 		items.Add(newFolder);
 		items.Add(rename);
+
+		// Duplicating an organizational tree occurrence creates one new
+		// definition. Deep duplication is offered only where reference
+		// traversal has meaningful semantics for the runtime object type.
+		if (item.Node is SongTreeObject sourceOccurrence
+			&& !item.IsMissingReference
+			&& _workspace.Document.TryGet(sourceOccurrence.ObjectId,
+				out SongObject? source)
+			&& source is not null)
+		{
+			MenuItem shallow = new() { Header = "Duplicate" };
+			shallow.Click += (_, _) =>
+			{
+				tree.SelectedItem = control;
+				SelectTreeItem(item, tree);
+				DuplicateTreeObject(item, deep: false);
+			};
+			items.Add(shallow);
+
+			if (SongObjectDuplicateTreePlacement.HasDeepOption(source))
+			{
+				MenuItem deep = new() { Header = "Duplicate (deep)" };
+				deep.Click += (_, _) =>
+				{
+					tree.SelectedItem = control;
+					SelectTreeItem(item, tree);
+					DuplicateTreeObject(item, deep: true);
+				};
+				items.Add(deep);
+			}
+		}
+
 		items.Add(new Separator());
 		items.Add(delete);
 
