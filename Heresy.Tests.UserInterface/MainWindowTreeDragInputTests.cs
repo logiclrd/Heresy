@@ -87,7 +87,7 @@ public sealed class MainWindowTreeDragInputTests
             Point point = row.TranslatePoint(new Point(70, 10), window)!.Value;
             window.MouseMove(point);
             window.MouseDown(point, MouseButton.Left);
-            Point beyondThreshold = point.WithX(point.X + 18);
+            Point beyondThreshold = new Point(point.X + 18, point.Y);
             window.MouseMove(beyondThreshold);
 
             IPointer? pointer = (IPointer?)typeof(MainWindow)

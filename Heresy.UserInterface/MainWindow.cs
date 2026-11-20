@@ -408,7 +408,10 @@ public sealed class MainWindow : Window
 			RoutingStrategies.Bubble, handledEventsToo: true);
 		tree.PointerCaptureLost += (_, _) =>
 		{
-			if (ReferenceEquals(_dragTree, tree))
+			// Capturing the tree may notify a formerly captured child.
+			// Ignore that bubbled notification while capture is ours.
+			if (ReferenceEquals(_dragTree, tree)
+				&& !ReferenceEquals(_dragPointer?.Captured, tree))
 				CancelTreeDrag();
 		};
 		tree.SelectionChanged += (_, _) =>
