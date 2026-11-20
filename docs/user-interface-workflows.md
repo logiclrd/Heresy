@@ -18,17 +18,25 @@ Tree-only reorganization uses `SongTreeEditor` and advances `DocumentRevision`
 without advancing `AudioRevision`; moving a node never changes its ObjectId.
 
 In each of the six document panes, drag a tree item by its row label (after
-moving at least six device-independent pixels). Hover over the **top** or
-**bottom** of another object row to insert **before** or **after** it. Folder
-rows have three drop zones: top quarter = before the folder, middle half =
-inside the folder (including an empty folder), bottom quarter = after the
-folder. The blue header border shows the currently active insertion edge or
-folder target. Drop on the section **heading** (or the empty tree background)
-to append the item to that section's otherwise invisible fixed root, allowing
-items to leave nested folders. Cross-section moves and a folder dropped
-into itself or its descendants are rejected. Successful tree-only moves
-preserve object IDs and audio revision, and are persisted in both .hm and
-.hm.json formats. These semantics apply to all six sections.
+moving at least six device-independent pixels). The tree captures the pointer
+for the duration of its drag, including when the pointer moves outside the
+tree's visible viewport; release or Escape ends the drag and releases capture.
+Dragging **above** or **below** that viewport scrolls continuously at a speed
+proportional to the distance past the edge, with a bounded maximum speed.
+Moving the pointer back inside stops auto-scrolling. This is an in-application
+tree move, not an operating-system/native drag-and-drop operation.
+
+Hover over the **top** or **bottom** of another object row to insert **before**
+or **after** it. Folder rows have three drop zones: top quarter = before the
+folder, middle half = inside the folder (including an empty folder), bottom
+quarter = after the folder. Blue insertion-edge and folder-outline guides
+are drawn as **non-hit-testable overlays** and must never change row layout,
+spacing or pointer hit testing. Drop on the section **heading** (or the empty
+tree background) to append the item to that section's otherwise invisible
+fixed root, allowing items to leave nested folders. Cross-section moves and
+a folder dropped into itself or its descendants are rejected. Successful
+tree-only moves preserve object IDs and audio revision, and are persisted in
+both .hm and .hm.json formats. These semantics apply to all six sections.
 
 
 The document tree has **six** fixed top-level sections, persisted in
