@@ -267,7 +267,8 @@ public static class SongObjectDeepDuplication
             expectedNextId, snapshot, ids, candidates);
     }
 
-    public static SongImportBatchEdit Commit(SongObjectDeepDuplicateDraft draft)
+    public static SongImportBatchEdit Commit(
+        SongObjectDeepDuplicateDraft draft, SongTreeObject? selectedOccurrence = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
         // Every detached Sample is revalidated before atomic publication,
@@ -280,13 +281,20 @@ public static class SongObjectDeepDuplication
                     draft.Document, original, sample);
         }
 
+        IReadOnlyList<SongImportTreePlacement?>? placements =
+            selectedOccurrence is null
+                ? null
+                : SongObjectDuplicateTreePlacement.Plan(
+                    draft.Document, selectedOccurrence, draft.SourceId,
+                    draft.Candidates, draft.IdMap);
         return draft.Document.CommitImportedObjects(
             draft.Candidates, draft.ExpectedNextId,
             doc => doc.TryGet(draft.SourceId, out SongObject? root)
                 && root is not null
                 && string.Equals(
                     SongDocumentJson.SerializeAuthoringSnapshot(doc),
-                    draft.AuthoringSnapshot, StringComparison.Ordinal));
+                    draft.AuthoringSnapshot, StringComparison.Ordinal),
+            placements);
     }
 
     private static bool IsSoundSource(SongObject obj)
