@@ -4,10 +4,8 @@ using System.Reflection;
 
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Headless;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
-using Avalonia.Input.Raw;
 
 using AvaloniaEdit;
 
@@ -83,7 +81,7 @@ public sealed class ScriptReferenceTokenEditingTests
     }
 
     [AvaloniaTest]
-    public void ActualBackspaceAndDeleteAtVisualTokenEdgesKeepSourceEditable()
+    public void RoutedBackspaceAndDeleteAtVisualTokenEdgesKeepSourceEditable()
     {
         DocumentWorkspace workspace = new();
         ScriptPatternDefinition script =
@@ -101,15 +99,27 @@ public sealed class ScriptReferenceTokenEditingTests
                 .GetField("_source", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(editor)!;
             window.UpdateLayout();
-            source.TextArea.Focus();
             source.CaretOffset = "_O(137)".Length;
-            window.KeyPress(Key.Back, RawInputModifiers.None, default, null);
+            KeyEventArgs backspace = new()
+            {
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.Back,
+                KeyModifiers = KeyModifiers.None,
+            };
+            source.TextArea.RaiseEvent(backspace);
+            Assert.That(backspace.Handled, Is.True);
             Assert.That(source.Text, Is.EqualTo("_O(137;"));
 
             source.Text = "_O(137);";
             source.CaretOffset = 0;
-            source.TextArea.Focus();
-            window.KeyPress(Key.Delete, RawInputModifiers.None, default, null);
+            KeyEventArgs delete = new()
+            {
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.Delete,
+                KeyModifiers = KeyModifiers.None,
+            };
+            source.TextArea.RaiseEvent(delete);
+            Assert.That(delete.Handled, Is.True);
             Assert.That(source.Text, Is.EqualTo("O(137);"));
         }
         finally
