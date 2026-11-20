@@ -1,15 +1,20 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 
+using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
 using Heresy.Core.Filters;
+using Heresy.Core.FmSynthesis;
+using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Persistence;
 using Heresy.Core.Sequences;
+using Heresy.Core.Samples;
 
 namespace Heresy.UserInterface.Documents;
 
@@ -39,11 +44,9 @@ public sealed class SongObjectDuplicateDraft
 }
 
 /// <summary>
-/// First slice of same-song Duplicate Object: identity, naming, detached
-/// authoring-copy semantics and existing atomic commit/undo. Supports the
-/// Pattern, Sequence, Envelope and Filter definition families. Other families
-/// deliberately fail before ID reservation or publication until their
-/// Sample asset and Synth/Instrument reference semantics are implemented.
+/// Shallow duplication of same-song definitions, preserving original external
+/// object references while deeply copying each definition's *owned* state.
+/// Graph-aware recursive duplication is a separate planned operation.
 /// </summary>
 public static class SongObjectDuplication
 {
@@ -75,6 +78,21 @@ public static class SongObjectDuplication
     public static SongImportBatchEdit Commit(SongObjectDuplicateDraft draft)
     {
         ArgumentNullException.ThrowIfNull(draft);
+        // A persisted source Sample is an external mutable dependency. Check
+        // it *again* at the commit boundary: draft preparation cannot reserve
+        // or freeze files written by unrelated processes.
+        if (draft.Candidate is SampleDefinition candidate)
+        {
+            if (!draft.Document.TryGet(draft.SourceId, out SongObject? original)
+                || original is not SampleDefinition source)
+                throw new InvalidOperationException(
+                    "The Sample being duplicated is no longer available.");
+            (string _, byte[] encoded) = ReadVerifiedSampleEncoding(source);
+            if (candidate.PendingAsset is not PendingSampleAsset prepared
+                || !prepared.Bytes.Span.SequenceEqual(encoded))
+                throw new InvalidOperationException(
+                    "The Sample asset changed after duplicate preparation.");
+        }
         return draft.Document.CommitImportedObjects(
             [draft.Candidate], draft.ExpectedId,
             document =>
@@ -139,6 +157,11 @@ public static class SongObjectDuplication
             NodeEnvelopeDefinition or ScriptEnvelopeDefinition
                 => CloneEnvelope((EnvelopeDefinition)source, id, name),
             FilterDefinition filter => CloneFilter(filter, id, name),
+            SampleDefinition sample => CloneSample(sample, id, name),
+            InstrumentDefinition instrument => CloneInstrument(instrument, id, name),
+            ScriptInstrumentDefinition scriptInstrument =>
+                CloneScriptInstrument(scriptInstrument, id, name),
+            FmSynthDefinition synth => CloneSynth(synth, id, name),
             _ => throw new NotSupportedException(
                 $"Duplicate Object does not yet support {source.GetType().Name}."),
         };
@@ -188,6 +211,164 @@ public static class SongObjectDuplication
         return cloned;
     }
 
+
+    private static (string FileName, byte[] Encoded) ReadVerifiedSampleEncoding(
+        SampleDefinition source)
+    {
+        if (source.PcmData is not SamplePcmData originalPcm)
+            throw new InvalidOperationException(
+                $"Sample '{source.Name}' has no decoded PCM.");
+
+        byte[] encoded;
+        string fileName;
+        string? expectedEncodedHash;
+        if (source.PendingAsset is PendingSampleAsset pending)
+        {
+            encoded = pending.Bytes.ToArray();
+            fileName = pending.FileName;
+            expectedEncodedHash = pending.Sha256;
+        }
+        else if (source.Asset is ExternalAssetReference asset)
+        {
+            // OpenRead also resolves synthetic .hm archive entry paths.
+            using Stream stream = ExternalAssetIntegrity.OpenRead(asset.FullPath);
+            using MemoryStream output = new();
+            stream.CopyTo(output);
+            encoded = output.ToArray();
+            fileName = Path.GetFileName(asset.FullPath);
+            expectedEncodedHash = asset.Sha256;
+        }
+        else
+            throw new InvalidOperationException(
+                $"Sample '{source.Name}' has no encoded asset to duplicate.");
+
+        if (string.IsNullOrWhiteSpace(fileName))
+            throw new InvalidOperationException(
+                $"Sample '{source.Name}' has no usable asset file name.");
+        // For an unhashed legacy external reference, decoded PCM remains the
+        // ultimate proof that the fresh bytes match the loaded Sample.
+        if (!string.IsNullOrWhiteSpace(expectedEncodedHash)
+            && !string.Equals(
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(encoded)),
+                expectedEncodedHash, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"Sample '{source.Name}' encoded asset has changed since it was loaded.");
+        SamplePcmData fresh = SampleAudioCodec.Decode(encoded, fileName);
+        if (!fresh.HasSameAudio(originalPcm))
+            throw new InvalidOperationException(
+                $"Sample '{source.Name}' encoded PCM no longer matches its loaded audio.");
+        return (fileName, encoded);
+    }
+
+    private static SampleDefinition CloneSample(
+        SampleDefinition source, ObjectId id, string name)
+    {
+        (string fileName, byte[] encoded) = ReadVerifiedSampleEncoding(source);
+        SampleDefinition result =
+            SampleDefinition.CreateImportedCopy(id, source, fileName, encoded);
+        result.Name = name;
+        return result;
+    }
+
+    private static ToneSpecification CloneTone(ToneSpecification tone)
+        => new()
+        {
+            SourceId = tone.SourceId,
+            PitchMultiplier = tone.PitchMultiplier,
+            Nna = tone.Nna,
+            VolumeEnvelopeId = tone.VolumeEnvelopeId,
+            PitchEnvelopeId = tone.PitchEnvelopeId,
+            PanningEnvelopeId = tone.PanningEnvelopeId,
+            FilterEnvelopeId = tone.FilterEnvelopeId,
+            // The mutable Filter use belongs to this tone; the Filter
+            // definition itself is a same-song *reference* and stays shared.
+            FilterConfiguration = tone.FilterConfiguration?.Clone(),
+        };
+
+    private static InstrumentDefinition CloneInstrument(
+        InstrumentDefinition source, ObjectId id, string name)
+    {
+        InstrumentDefinition copy = new(id, name)
+        {
+            Divisions = source.Divisions,
+            Offset = source.Offset,
+            NnaOverride = source.NnaOverride,
+            NnaFadeDuration = source.NnaFadeDuration,
+        };
+        copy.CopySourceColourFrom(source);
+        copy.ToneSpecifications.AddRange(
+            source.ToneSpecifications.Select(CloneTone));
+        copy.ToneTable.AddRange(source.ToneTable);
+        return copy;
+    }
+
+    private static ScriptInstrumentDefinition CloneScriptInstrument(
+        ScriptInstrumentDefinition source, ObjectId id, string name)
+    {
+        ScriptInstrumentDefinition copy = new(id, name)
+        {
+            Source = source.Source,
+            PitchExpression = source.PitchExpression,
+            NnaExpression = source.NnaExpression,
+            NnaFadeDuration = source.NnaFadeDuration,
+        };
+        copy.CopySourceColourFrom(source);
+        copy.ToneSpecifications.AddRange(
+            source.ToneSpecifications.Select(CloneTone));
+        return copy;
+    }
+
+    private static FmSynthDefinition CloneSynth(
+        FmSynthDefinition source, ObjectId id, string name)
+    {
+        FmSynthNode[] nodes = source.Graph.Nodes.Select(CloneSynthNode).ToArray();
+        FmSynthDefinition copy = new(id, name,
+            new FmSynthGraph(nodes, source.Graph.OutputNodeId));
+        copy.CopySourceColourFrom(source);
+        copy.NodePositions.AddRange(source.NodePositions);
+        copy.FilterBatchChangesNodeIds.UnionWith(
+            source.FilterBatchChangesNodeIds);
+        foreach (FmSynthConnectionRoutingHint hint in source.ConnectionRoutingHints)
+            copy.ConnectionRoutingHints.Add(
+                new FmSynthConnectionRoutingHint(hint.SourceNodeId,
+                    hint.TargetNodeId, hint.TargetInputIndex, hint.RoutePoints));
+        return copy;
+    }
+
+    /// <summary>
+    /// Copy every authored graph node, including disconnected and stale
+    /// Filter-connection metadata. Keep external ObjectIds unchanged for
+    /// shallow duplication. The Filter configuration is owned by the cloned
+    /// node (FmFilterNode itself clones the FilterInstance).
+    /// </summary>
+    private static FmSynthNode CloneSynthNode(FmSynthNode node) => node switch
+    {
+        FmConstantNode constant => new FmConstantNode(constant.Id, constant.Value),
+        FmNoiseNode noise => new FmNoiseNode(noise.Id,
+            noise.Minimum, noise.Maximum),
+        FmOscillatorNode oscillator => new FmOscillatorNode(
+            oscillator.Id, oscillator.Waveform, oscillator.FrequencyHz,
+            oscillator.Minimum, oscillator.Maximum, oscillator.MultiplierNodeId,
+            oscillator.ExponentialMultiplier, oscillator.Constant,
+            oscillator.Curvature),
+        FmSoundSourceNode sound => new FmSoundSourceNode(
+            sound.Id, sound.SourceId, sound.FrequencyHz,
+            sound.MultiplierNodeId, sound.ExponentialMultiplier,
+            sound.Constant),
+        FmEnvelopeNode envelope => new FmEnvelopeNode(
+            envelope.Id, envelope.EnvelopeId),
+        FmMultiNode multi => new FmMultiNode(
+            multi.Id, multi.InputNodeId, multi.Distribution, multi.Detune,
+            multi.VoiceCount, multi.HarmonicComponents, multi.ChordComponents,
+            multi.RandomizePhase, multi.GainCompensation, multi.CycleLength),
+        FmOperatorNode operation => new FmOperatorNode(
+            operation.Id, operation.Operation, operation.InputNodeIds),
+        FmFilterNode filter => new FmFilterNode(
+            filter.Id, filter.AudioInputNodeId, filter.Configuration,
+            filter.Connections.Select(wire => wire with { }), filter.TailSeconds),
+        _ => throw new NotSupportedException(
+            $"Cannot duplicate FM node {node.GetType().Name}."),
+    };
     private static FilterDefinition CloneFilter(
         FilterDefinition source, ObjectId id, string name)
     {
