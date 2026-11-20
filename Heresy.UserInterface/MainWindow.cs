@@ -411,7 +411,8 @@ public sealed class MainWindow : Window
 		{
 			// Capturing the tree may notify a formerly captured child.
 			// Ignore that bubbled notification while capture is ours.
-			if (!_startingTreeCapture
+			if (_dragInProgress
+				&& !_startingTreeCapture
 				&& ReferenceEquals(_dragTree, tree)
 				&& !ReferenceEquals(_dragPointer?.Captured, tree))
 				CancelTreeDrag();
