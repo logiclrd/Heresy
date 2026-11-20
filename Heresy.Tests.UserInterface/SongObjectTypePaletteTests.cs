@@ -129,7 +129,7 @@ public sealed class SongObjectTypePaletteTests
                 .ItemsSource!.Cast<TreeViewItem>().ToArray();
             TreeViewItem scriptItem = patterns.Single(x =>
                 ((SongTreeItemViewModel)x.Tag!).ObjectId == script.Id);
-            Border scriptName = (Border)scriptItem.Header!;
+            Border scriptName = (Border)((Border)scriptItem.Header!).Child!;
             Assert.That(((SolidColorBrush)scriptName.Background!).Color,
                 Is.EqualTo(SongObjectTypePalette.ScriptedPattern));
             Assert.That(((TextBlock)scriptName.Child!).Text,
@@ -138,13 +138,14 @@ public sealed class SongObjectTypePaletteTests
                 Is.EqualTo(Brushes.Black));
             Assert.That(patterns.Single(x =>
                 ReferenceEquals(((SongTreeItemViewModel)x.Tag!).Node, folder))
-                .Header, Is.TypeOf<TextBlock>(),
-                "a folder should retain the normal tree header");
+                .Header is Border folderDropMarker
+                    ? folderDropMarker.Child : null, Is.TypeOf<TextBlock>(),
+                "a folder should retain a normal uncoloured name inside the drop marker");
 
             TreeViewItem filterItem = trees[SongTreeSection.Filters]
                 .ItemsSource!.Cast<TreeViewItem>().Single(x =>
                     ((SongTreeItemViewModel)x.Tag!).ObjectId == filter.Id);
-            Assert.That(((SolidColorBrush)((Border)filterItem.Header!)
+            Assert.That(((SolidColorBrush)((Border)((Border)filterItem.Header!).Child!)
                 .Background!).Color,
                 Is.EqualTo(SongObjectTypePalette.FilterOneStage));
 
@@ -157,7 +158,7 @@ public sealed class SongObjectTypePaletteTests
             TreeViewItem updated = trees[SongTreeSection.Filters]
                 .ItemsSource!.Cast<TreeViewItem>().Single(x =>
                     ((SongTreeItemViewModel)x.Tag!).ObjectId == filter.Id);
-            Assert.That(((SolidColorBrush)((Border)updated.Header!)
+            Assert.That(((SolidColorBrush)((Border)((Border)updated.Header!).Child!)
                 .Background!).Color,
                 Is.EqualTo(SongObjectTypePalette.FilterFourStages));
         }
