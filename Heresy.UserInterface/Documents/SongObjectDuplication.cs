@@ -310,11 +310,10 @@ public static class SongObjectDuplication
             || !clonedFilters.TryGetValue(source.DefinitionId,
                 out FilterDefinition? newDefinition))
             return source.Clone();
-        FilterInstance clone = new(newDefinition);
-        foreach (FilterStageDefinition stage in source.Definition.Stages)
-            clone.ReplaceStageOverrides(stage.StageId,
-                source.GetOverrides(stage.StageId));
-        return clone;
+        // Preserve the *complete* authored configuration, including dormant
+        // overrides for stages that changed kind, without a public setter
+        // round-trip that discards their historical generations.
+        return source.CloneForDefinition(newDefinition);
     }
 
     private static ToneSpecification CloneTone(
