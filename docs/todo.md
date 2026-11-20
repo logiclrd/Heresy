@@ -251,11 +251,17 @@ Do not reintroduce completed-task checklists here.
   whole-graph typed reference remapping, correctly rebound copied Filter uses,
   atomic commit with final Sample-asset validation, and Undo/Redo as one batch.
   Cross-Synth/self cycles, diamonds, missing references, stale edits and
-  .hm/.hm.json save/reopen have regression coverage. Scripts currently refuse
-  deep copying explicitly, even when encountered from a typed graph, pending
-  semantic script-reference processing in D4.
-  **Next D4:** Scripted deep analyzer coverage and `_O(id)` rewriting.
-  **D5:** Both menu actions, sibling placement and selection in all six panes.
+  .hm/.hm.json save/reopen have regression coverage.
+  **D4 complete, headless:** All scripted Sequence, Pattern, Envelope and
+  Instrument fields are semantically analyzed by Roslyn. Script Instrument
+  deep also traverses every typed tone reference. Recognized `_O(id)` source
+  spans are rewritten against the global duplicate ID mapping, preserving
+  comments, strings and shadowed calls; result references are revalidated.
+  Missing, malformed or nonliteral intrinsic targets refuse the entire
+  operation. Script cycles and shared targets are cloned once and re-linked,
+  and scripted roots with no references are supported. Both shallow and
+  deep duplication remain headless until the menu integration.
+  **Next D5:** Both menu actions, sibling placement and selection in all six panes.
   **D6:** Batch undo/redo history integration, persistence and physical owner
   acceptance. See
   [Duplicate Object specification](duplicate-object-plan.md).
