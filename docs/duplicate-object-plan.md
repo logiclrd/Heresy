@@ -1,6 +1,6 @@
 # Same-song Duplicate Object — shallow/deep specification and implementation plan
 
-**Status:** User-refined contract captured 19 November 2026; D1's shallow-only headless foundation is implemented on draft PR #38. No deep-clone implementation or UI activation yet; PR must not merge before the remaining slices and owner acceptance.
+**Status:** User-refined contract captured 19 November 2026; D1 and D2 shallow duplication are implemented headlessly on draft PR #38. No deep-clone implementation or UI activation yet; PR must not merge before the remaining slices and owner acceptance.
 
 **Scope:** All song **objects** in the six main-window song-tree panes. The Samples/"Patches" pane includes both Samples and FM Synths. Folder duplication is a separate concern. Unlike cross-song Import Synths, this feature duplicates within the same song.
 
@@ -69,7 +69,11 @@ If analysis is unreliable, a reference is malformed/nonliteral, or a reachable r
 - Candidate creation is detached; current `SongDocument.CommitImportedObjects` provides guarded atomic commit and undo/redo receipt. Temporary headless commit placement is the section root.
 - **D1 code does not implement deep cloning and is unchanged by this specification refinement.**
 
-**D2 — finish shallow runtime type coverage:** Sample, Instrument, Script Instrument and FM Synth, including detached encoded Sample ownership and independent ToneSpecification/FilterInstance/graph authoring data. Shallow keeps original referenced ObjectIds. Regression tests for all seven root object kinds and script/data variants.
+**D2 — complete shallow runtime type coverage (implemented):**
+- Samples use `SampleDefinition.CreateImportedCopy` with a new independently owned pending encoded asset and the already immutable source PCM. Encoding is reread at prepare **and again immediately before acceptance**; stored encoded SHA-256 (if present) and freshly decoded PCM must match the source's loaded PCM (cached hash then bitwise samples). A stale/corrupt/missing encoded source refuses the operation with no document mutation. `.hm` synthetic entry paths are read via `ExternalAssetIntegrity.OpenRead`. Copies preserve loop, source spatial positions and colour, and can save independently without relying on the old asset path.
+- Data Instruments and Script Instruments get separate ToneSpecification instances and tone tables, and independently cloned `FilterInstance` override state. References to their original sources/Envelopes/Filters stay unchanged; the Filter **definitions** remain shared. Scripts (`Source`, `PitchExpression`, `NnaExpression`) are copied verbatim for shallow duplication.
+- Synths reconstruct **every graph node** (including disconnected nodes and stale Filter modulation connections), preserve original external source/Envelope/Filter IDs, and copy per-node Filter configuration, positions, route-hint instances and per-node batch settings. Source colour and complete graph topology are retained.
+- All seven root kinds and their script/data subtypes now support headless shallow duplication. UI remains disabled until both actions and proper tree placement/history are available. D3/D4 will supply reachable dependency closure and scripted remapping. Focused regressions include preflight source-asset mutation, Sample `.hm`/`.hm.json` persistence, independent tone/Filter settings, and graph fidelity.
 
 **D3 — build generic deep-clone graph planner:** Per-runtime-type traversal policy; deterministic reachable set, global original-to-new-ID allocation and name map; repeated targets, diamonds, self-links, scripted cycles and overflow/stale preflight. Independent detached materialization with graph-wide reference remapping. Include Instrument source recursion and Synth sound-source/Envelope/Filter recursion.
 
