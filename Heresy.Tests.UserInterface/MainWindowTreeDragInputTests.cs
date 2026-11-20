@@ -90,10 +90,18 @@ public sealed class MainWindowTreeDragInputTests
             Point beyondThreshold = new Point(point.X + 18, point.Y);
             window.MouseMove(beyondThreshold);
 
+            object? armed = typeof(MainWindow).GetField("_dragCandidate",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window);
+            object? activeTree = typeof(MainWindow).GetField("_dragTree",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window);
+            object? dragging = typeof(MainWindow).GetField("_dragInProgress",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window);
+
             IPointer? pointer = (IPointer?)typeof(MainWindow)
                 .GetField("_dragPointer", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(window);
-            Assert.That(pointer, Is.Not.Null);
+            Assert.That(pointer, Is.Not.Null,
+                $"After threshold: armed={armed is not null}, activeTree={ReferenceEquals(activeTree, tree)}, dragInProgress={dragging}");
             Assert.That(pointer!.Captured, Is.SameAs(tree),
                 "The tree must own the capture for the entire drag");
 
