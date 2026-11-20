@@ -189,7 +189,7 @@ public sealed class SongObjectDuplicationD2Tests
             Is.EqualTo(sample.Id));
         Assert.That(((FmEnvelopeNode)copy.Graph.Nodes[4]).EnvelopeId,
             Is.EqualTo(envelope.Id));
-        Assert.That(copy.Graph.Nodes.OfType<FmNoiseNode>(), Has.Count.EqualTo(1));
+        Assert.That(copy.Graph.Nodes.OfType<FmNoiseNode>().Count(), Is.EqualTo(1));
         Assert.That(copy.SourceColourArgb, Is.EqualTo(source.SourceColourArgb));
         Assert.That(copy.NodePositions, Is.EqualTo(source.NodePositions));
         Assert.That(copy.ConnectionRoutingHints, Has.Count.EqualTo(1));
