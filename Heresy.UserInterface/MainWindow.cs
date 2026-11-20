@@ -2993,11 +2993,10 @@ public sealed class MainWindow : Window
 		{
 			if (_dragCandidate is null)
 				return;
-			if (!e.GetCurrentPoint(tree).Properties.IsLeftButtonPressed)
-			{
-				CancelTreeDrag();
-				return;
-			}
+			// The candidate was established by a left-button press. In some
+			// backends a synthesized PointerMoved has no button flags even
+			// while held; the actual release/capture-loss events govern
+			// the end of the gesture instead.
 
 			double dx = current.X - _dragStart.X;
 			double dy = current.Y - _dragStart.Y;
