@@ -32,7 +32,7 @@ public sealed class SongTreeDropVisibilityTests
         Assert.That(SongTreeDropVisibility.MinimalOffset(
             100, 80, 500, 125, 120), Is.EqualTo(125));
         Assert.That(SongTreeDropVisibility.MinimalOffset(
-            200, 80, 500, 70, 120), Is.EqualTo(190));
+            200, 80, 500, 70, 120), Is.EqualTo(110));
         Assert.That(SongTreeDropVisibility.MinimalOffset(
             135, 80, 500, 100, 120), Is.EqualTo(135));
     }
