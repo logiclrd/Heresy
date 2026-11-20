@@ -130,10 +130,14 @@ public sealed class SongDocument
 	/// </summary>
 	public SongImportBatchEdit CommitImportedObjects(
 		IReadOnlyList<SongObject> candidates, ObjectId expectedNextId,
-		Func<SongDocument, bool> isCurrent)
+		Func<SongDocument, bool> isCurrent,
+		IReadOnlyList<SongImportTreePlacement?>? treePlacements = null)
 	{
 		ArgumentNullException.ThrowIfNull(candidates);
 		ArgumentNullException.ThrowIfNull(isCurrent);
+		if (treePlacements is not null && treePlacements.Count != candidates.Count)
+			throw new ArgumentException(
+				"Placement count must equal the candidate count.", nameof(treePlacements));
 		if (candidates.Count == 0)
 			throw new ArgumentException(
 				"Import requires at least one copied object.", nameof(candidates));
@@ -160,10 +164,20 @@ public sealed class SongDocument
 				|| _tombstones.ContainsKey(candidate.Id))
 				throw new InvalidOperationException(
 					$"Import ID #{candidate.Id.Value} is not an unused contiguous destination ID.");
-			SongTreeFolder folder = GetSectionRoot(
+			SongTreeFolder section = GetSectionRoot(
 				SongTreeSections.ForKind(candidate.Kind));
+			SongImportTreePlacement? position = treePlacements?[index];
+			SongTreeFolder folder = position?.Parent ?? section;
+			if (!IsFolderInSection(section, folder))
+				throw new InvalidOperationException(
+					"The import placement folder is not attached to the correct song section.");
+			if (position?.InsertAfter is SongTreeNode anchor
+				&& !folder.Children.Contains(anchor))
+				throw new InvalidOperationException(
+					"The import placement anchor is not a child of its folder.");
 			placements[index] = new SongImportBatchEdit.Placement(
-				candidate, folder, new SongTreeObject(candidate.Name, candidate.Id));
+				candidate, folder, new SongTreeObject(candidate.Name, candidate.Id),
+				position?.InsertAfter);
 		}
 
 		uint previousNext = _nextObjectId;
@@ -178,7 +192,7 @@ public sealed class SongDocument
 			{
 				_objects.Add(placement.Object.Id, placement.Object);
 				installed++;
-				placement.Section.Children.Add(placement.TreeNode);
+				InsertImportPlacement(placement);
 			}
 			ulong next = (ulong)previousNext + (ulong)placements.Length;
 			_nextObjectId = next > uint.MaxValue ? 0 : (uint)next;
@@ -203,6 +217,32 @@ public sealed class SongDocument
 			AudioRevision = previousAudioRevision;
 			throw;
 		}
+	}
+
+	/// <summary>Resolve an old-sibling anchor at the point of insertion, so
+	/// a deep batch can place multiple copies in one folder without stale
+	/// numeric indices. Null means append to the selected parent.</summary>
+	private static void InsertImportPlacement(SongImportBatchEdit.Placement placement)
+	{
+		int index = placement.InsertAfter is null
+			? placement.Section.Children.Count
+			: placement.Section.Children.IndexOf(placement.InsertAfter) + 1;
+		if (index < 0 || (placement.InsertAfter is not null && index == 0))
+			throw new InvalidOperationException(
+				"The saved import placement anchor is missing.");
+		placement.Section.Children.Insert(index, placement.TreeNode);
+	}
+
+	private static bool IsFolderInSection(
+		SongTreeFolder section, SongTreeFolder candidate)
+	{
+		if (ReferenceEquals(section, candidate))
+			return true;
+		foreach (SongTreeNode child in section.Children)
+			if (child is SongTreeFolder folder
+				&& IsFolderInSection(folder, candidate))
+				return true;
+		return false;
 	}
 
 	/// <summary>Import undo and redo use the same no-intermediate-publish path,
@@ -239,7 +279,7 @@ public sealed class SongDocument
 				{
 					_objects.Add(placement.Object.Id, placement.Object);
 					changed++;
-					placement.Section.Children.Add(placement.TreeNode);
+					InsertImportPlacement(placement);
 				}
 				ulong next = (ulong)edit.InitialNextId + (ulong)edit.Placements.Count;
 				_nextObjectId = next > uint.MaxValue ? 0 : (uint)next;
@@ -286,7 +326,7 @@ public sealed class SongDocument
 				{
 					SongImportBatchEdit.Placement placement = edit.Placements[index];
 					_objects.Add(placement.Object.Id, placement.Object);
-					placement.Section.Children.Add(placement.TreeNode);
+					InsertImportPlacement(placement);
 				}
 			}
 			_nextObjectId = priorNext;
