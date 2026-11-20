@@ -71,11 +71,12 @@ public static class SongObjectDuplication
 
     /// <summary>
     /// An accepted draft publishes as one atomic object edit, with a guarded
-    /// Undo/Redo receipt. The tree placement currently defaults to the
-    /// appropriate section root; sibling-folder placement and UI history
-    /// wiring are separate follow-up slices.
+    /// Undo/Redo receipt. A selected occurrence optionally places the root
+    /// immediately after that occurrence in the same organizational folder.
+    /// UI undo-history integration belongs to the future tiered history work.
     /// </summary>
-    public static SongImportBatchEdit Commit(SongObjectDuplicateDraft draft)
+    public static SongImportBatchEdit Commit(
+        SongObjectDuplicateDraft draft, SongTreeObject? selectedOccurrence = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
         // A persisted source Sample is an external mutable dependency. Check
@@ -83,6 +84,16 @@ public static class SongObjectDuplication
         // or freeze files written by unrelated processes.
         if (draft.Candidate is SampleDefinition candidate)
             VerifySampleCandidate(draft.Document, draft.SourceId, candidate);
+        IReadOnlyList<SongImportTreePlacement?>? placements =
+            selectedOccurrence is null
+                ? null
+                : SongObjectDuplicateTreePlacement.Plan(
+                    draft.Document, selectedOccurrence, draft.SourceId,
+                    [draft.Candidate],
+                    new Dictionary<ObjectId, ObjectId>
+                    {
+                        [draft.SourceId] = draft.Candidate.Id,
+                    });
         return draft.Document.CommitImportedObjects(
             [draft.Candidate], draft.ExpectedId,
             document =>
@@ -90,7 +101,8 @@ public static class SongObjectDuplication
                 && source is not null
                 && string.Equals(
                     SongDocumentJson.SerializeAuthoringSnapshot(document),
-                    draft.AuthoringSnapshot, StringComparison.Ordinal));
+                    draft.AuthoringSnapshot, StringComparison.Ordinal),
+            placements);
     }
 
     /// <summary>Use the next free terminal numeric suffix rather than
