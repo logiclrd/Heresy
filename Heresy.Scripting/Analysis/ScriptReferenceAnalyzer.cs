@@ -186,7 +186,7 @@ public static class ScriptReferenceAnalyzer
 					new ScriptAnalysisDiagnostic(
 						MalformedReferenceCode,
 						ScriptDiagnosticSeverity.Error,
-						"Object references must use one non-zero 32-bit integer literal, for example _O(137).",
+						"An object lookup needs one argument. Literal IDs must be non-zero 32-bit integers, for example _O(137); computed uint expressions are also allowed.",
 						new ScriptSourceSpan(
 							invocation.SpanStart,
 							invocation.Span.Length)));

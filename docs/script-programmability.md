@@ -31,9 +31,18 @@ persisted, tested, restricted compilation and editor surfaces.
   shared script state.
 - **References:** stable `ObjectId` and `_O(id)` references must
   interact with tombstones, sound/envelope resolution and serialization.
-  Dynamic references may require conservative retention or an
-  explicit discoverable declaration; never silently delete a
-  referenced object.
+  Valid computed lookups such as `uint id = 137; _O(id)` are ordinary
+  executable C# source; only statically recognizable non-zero numeric
+  literal calls (such as `_O(137)`) become named visual reference tokens.
+  Computed references are not statically enumerable: graph analysis is
+  conservative, and **deep duplication refuses** scripts containing them
+  rather than silently omitting an edge. Ordinary shallow duplication
+  preserves such expressions verbatim. Never silently delete a referenced
+  object because its computed ID was invisible to static analysis.
+  In the source editor, Backspace from a token's right edge removes its
+  final `)` and Delete from its left edge removes its initial `_`,
+  revealing ordinary editable text in both cases. Diagnostic navigation
+  buttons display literal underscores without accelerator parsing.
 - **Diagnostics and transactions:** invalid scripts receive
   actionable compiler/editor diagnostics, cannot partially mutate a
   live song on failed authoring operations, and do not corrupt a

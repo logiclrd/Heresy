@@ -269,9 +269,14 @@ Do not reintroduce completed-task checklists here.
   root. New object definitions, tree positions and ID allocator commit as one
   transaction. Core transaction receipts retain Undo/Redo internally, but
   **no new temporary history UI is added**.
-  **D6 (revised):** Complete persistence/UI verification and physical owner
-  acceptance. The former ad hoc duplicate-history integration is explicitly
-  superseded by the [tiered Undo/Redo design](tiered-undo-redo-design.md). See
+  **D6 (revised):** Owner accepted A–F and H on 2026-11-19. G is
+  inconclusive pending retry with valid computed `_O(id)` expression:
+  permit executable computed calls as plain source (never name tokens),
+  explicitly refuse their untraceable deep duplication, make token-edge
+  Backspace/Delete reveal ordinary source, and display underscores in
+  diagnostic navigation buttons literally. Full D6 acceptance and PR merge
+  still require the owner's G retest. The former ad hoc duplicate-history
+  integration is explicitly superseded by the [tiered Undo/Redo design](tiered-undo-redo-design.md). See
   [Duplicate Object specification](duplicate-object-plan.md).
   Keep this separate from [implemented UI workflow](user-interface-workflows.md).
 

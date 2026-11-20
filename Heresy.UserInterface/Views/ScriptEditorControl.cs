@@ -244,7 +244,7 @@ public sealed class ScriptEditorControl : UserControl
 			new()
 			{
 				Text =
-					"Object references remain canonical _O(id) expressions in the AvaloniaEdit document. Roslyn-recognized references are rendered as single visual object-name tokens without changing raw source offsets; the same incremental Roslyn analysis drives live syntax colors and severity-colored diagnostic squiggles directly in the editor.",
+					"Literal _O(137) references are rendered as single visual object-name tokens without changing the stored C# source. Computed _O(expression) lookups remain plain editable text and cannot be safely deep-duplicated. Live Roslyn analysis drives syntax colors and diagnostic squiggles.",
 				TextWrapping = TextWrapping.Wrap,
 				MaxWidth = 900,
 			};
