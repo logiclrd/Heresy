@@ -48,14 +48,10 @@ public sealed class SongObjectDeepDuplicateDraft
 }
 
 /// <summary>
-/// D3: deep duplication of the strongly typed dependency graph. The closure
-/// is iterative and de-duplicated before *any* new identities are assigned,
-/// and all references are translated against that one finalized mapping.
-///
-/// Scripted definitions are intentionally refused pending D4's semantic
-/// expression discovery and span-safe rewriting. A typed graph that reaches
-/// such a definition also refuses atomically, rather than silently producing
-/// an incomplete deep copy. The ordinary shallow operation remains available.
+/// D3/D4: cycle-safe deep duplication of typed and semantically recognized
+/// scripted dependencies. The complete closure is discovered before new IDs
+/// are assigned; all references use the finalized shared ID mapping. Unreliable
+/// scripted reference analysis always refuses before publication.
 /// </summary>
 public static class SongObjectDeepDuplication
 {
@@ -66,10 +62,11 @@ public static class SongObjectDeepDuplication
         if (!document.TryGet(sourceId, out SongObject? root) || root is null)
             throw new InvalidOperationException(
                 $"Cannot duplicate missing song object #{sourceId.Value}.");
-        if (root is not (InstrumentDefinition or FmSynthDefinition))
+        if (root is not (InstrumentDefinition or ScriptInstrumentDefinition
+            or FmSynthDefinition or ScriptSequenceDefinition
+            or ScriptPatternDefinition or ScriptEnvelopeDefinition))
             throw new NotSupportedException(
-                $"Duplicate (deep) is not supported for {root.GetType().Name}"
-                + " by the D3 typed-reference planner.");
+                $"Duplicate (deep) is not supported for {root.GetType().Name}.");
 
         ObjectId expectedNextId = document.NextUnallocatedObjectId;
         if (expectedNextId.IsNone)
@@ -86,6 +83,26 @@ public static class SongObjectDeepDuplication
             SongObject node = document.Objects[current];
             switch (node)
             {
+                case ScriptInstrumentDefinition instrument:
+                    // Scripted Instruments traverse ALL authored typed references,
+                    // not only sound sources, as well as all three script fields.
+                    foreach (ToneSpecification tone in instrument.ToneSpecifications)
+                    {
+                        Visit(tone.SourceId, "Script Instrument tone source",
+                            IsSoundSource);
+                        VisitOptional(tone.VolumeEnvelopeId, "Script Instrument volume Envelope",
+                            item => item is EnvelopeDefinition);
+                        VisitOptional(tone.PitchEnvelopeId, "Script Instrument pitch Envelope",
+                            item => item is EnvelopeDefinition);
+                        VisitOptional(tone.PanningEnvelopeId, "Script Instrument panning Envelope",
+                            item => item is EnvelopeDefinition);
+                        VisitOptional(tone.FilterEnvelopeId, "Script Instrument filter Envelope",
+                            item => item is EnvelopeDefinition);
+                        if (tone.FilterConfiguration is FilterInstance configuration)
+                            Visit(configuration.DefinitionId, "Script Instrument Filter",
+                                item => item is FilterDefinition);
+                    }
+                    break;
                 case InstrumentDefinition instrument:
                     foreach (ToneSpecification tone in instrument.ToneSpecifications)
                         Visit(tone.SourceId, "Instrument tone source",
@@ -112,13 +129,12 @@ public static class SongObjectDeepDuplication
                         }
                     }
                     break;
-                case ScriptInstrumentDefinition:
                 case ScriptEnvelopeDefinition:
                 case ScriptPatternDefinition:
                 case ScriptSequenceDefinition:
-                    throw new NotSupportedException(
-                        $"Deep copying scripted object #{current.Value} requires"
-                        + " D4 semantic script reference discovery and rewriting.");
+                    // These definitions have script edges only; their data
+                    // equivalents remain terminal even in a deep operation.
+                    break;
                 case SampleDefinition:
                 case FilterDefinition:
                 case NodeEnvelopeDefinition:
@@ -131,6 +147,20 @@ public static class SongObjectDeepDuplication
                     throw new NotSupportedException(
                         $"Unsupported deep dependency type {node.GetType().Name}.");
             }
+
+            // The semantic parser excludes comments, strings and shadowed
+            // functions. Every recognized _O target is a graph edge, even a
+            // back-edge or self-reference. Malformed/nonliteral references
+            // cause an atomic refusal rather than a partial dependency set.
+            foreach (ObjectId target in SongObjectScriptReferences.Discover(node))
+                Visit(target, "Script _O reference", _ => true);
+        }
+
+        void VisitOptional(
+            ObjectId? targetId, string slot, Func<SongObject, bool> valid)
+        {
+            if (targetId.HasValue)
+                Visit(targetId.Value, slot, valid);
         }
 
         void Visit(ObjectId targetId, string slot, Func<SongObject, bool> valid)
@@ -215,6 +245,14 @@ public static class SongObjectDeepDuplication
                 ? clonedFilters[id]
                 : SongObjectDuplication.CloneWithReferences(document.Objects[id],
                     ids[id], proposedNames[id], ids, clonedFilters)).ToArray();
+
+        // After all candidate identities and typed references exist, rewrite
+        // every script field by Roslyn's semantic reference spans. Scripts
+        // are never changed on the original objects, and repeated targets
+        // always reuse the same single new ObjectId.
+        for (int index = 0; index < originals.Length; index++)
+            SongObjectScriptReferences.Rewrite(
+                document.Objects[originals[index]], candidates[index], ids);
 
         // A Sample asset may have changed during a slow file read. Check that
         // the source song's authoring state stayed consistent during Prepare.
