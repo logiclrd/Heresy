@@ -163,7 +163,6 @@ public sealed class MainWindow : Window
 	private SongTreeItemViewModel? _selectedItem;
 	private TreeView? _selectedTree;
 	private SongTreeItemViewModel? _dragCandidate;
-	private PointerPressedEventArgs? _dragTrigger;
 	private Point _dragStart;
 	private bool _dragInProgress;
 	private TreeView? _dragTree;
@@ -291,6 +290,7 @@ public sealed class MainWindow : Window
 		Closed += (_, _) =>
 		{
 			_windowClosed = true;
+			CancelTreeDrag();
 			_exportCancellation?.Cancel();
 			if (_runtimeDiagnosticsTransport is not null)
 				_runtimeDiagnosticsTransport.RuntimeDiagnostics -=
@@ -386,7 +386,18 @@ public sealed class MainWindow : Window
 		int columnSpan)
 	{
 		TreeView tree = new() { Background = Brushes.Transparent };
-		tree.KeyDown += (_, e) => OnTreeRenameKeyDown(tree, e);
+		tree.KeyDown += (_, e) =>
+		{
+			if (_dragInProgress && e.Key == Key.Escape)
+			{
+				CancelTreeDrag();
+				e.Handled = true;
+			}
+			else
+			{
+				OnTreeRenameKeyDown(tree, e);
+			}
+		};
 		_trees.Add(section, tree);
 		_treeRowTargets.Add(tree, []);
 		tree.AddHandler(InputElement.PointerMovedEvent,
@@ -2939,7 +2950,6 @@ public sealed class MainWindow : Window
 
 		_dragCandidate = item;
 		_dragTree = tree;
-		_dragTrigger = e;
 		_dragStart = e.GetPosition(tree);
 	}
 
@@ -2967,147 +2977,217 @@ public sealed class MainWindow : Window
 			item);
 	}
 
-	private async Task OnTreePointerMovedAsync(
-		TreeView tree,
-		SongTreeItemViewModel item,
-		PointerEventArgs e)
+	private void OnCapturedTreePointerMoved(TreeView tree, PointerEventArgs e)
 	{
-		if (_dragInProgress
-			|| !ReferenceEquals(_dragCandidate, item)
-			|| _dragTrigger is null)
-		{
+		if (!ReferenceEquals(_dragTree, tree))
 			return;
-		}
-
-		if (!e.GetCurrentPoint(tree).Properties.IsLeftButtonPressed)
-		{
-			ClearDragCandidate(item);
-			return;
-		}
 
 		Point current = e.GetPosition(tree);
-		double dx = current.X - _dragStart.X;
-		double dy = current.Y - _dragStart.Y;
-		if ((dx * dx) + (dy * dy) < 36.0)
-			return;
-
-		PointerPressedEventArgs trigger = _dragTrigger;
-		_dragCandidate = null;
-		_dragTrigger = null;
-		_dragInProgress = true;
-
-		DataTransfer data = new();
-		data.Add(DataTransferItem.Create(TreeNodeFormat, item.Node));
-		try
+		if (!_dragInProgress)
 		{
-			await DragDrop.DoDragDropAsync(
-				trigger,
-				data,
-				DragDropEffects.Move);
-		}
-		finally
-		{
-			_dragInProgress = false;
-		}
-	}
+			if (_dragCandidate is null)
+				return;
+			if (!e.GetCurrentPoint(tree).Properties.IsLeftButtonPressed)
+			{
+				CancelTreeDrag();
+				return;
+			}
 
-	private void ClearDragCandidate(SongTreeItemViewModel item)
-	{
-		if (ReferenceEquals(_dragCandidate, item))
-		{
+			double dx = current.X - _dragStart.X;
+			double dy = current.Y - _dragStart.Y;
+			if (dx * dx + dy * dy < 36.0)
+				return;
+
+			_draggingNode = _dragCandidate.Node;
 			_dragCandidate = null;
-			_dragTrigger = null;
+			_dragPointer = e.Pointer;
+			// Tree-only moves never cross sections, so unlike a native
+			// drag operation we can retain capture and keep receiving pointer
+			// moves/releases even when the cursor leaves the tree viewport.
+			e.Pointer.Capture(tree);
+			if (!ReferenceEquals(e.Pointer.Captured, tree))
+			{
+				CancelTreeDrag();
+				return;
+			}
+			_dragInProgress = true;
+			_dragAutoScrollLastTick = DateTimeOffset.UtcNow;
+			_dragAutoScrollTimer.Start();
 		}
-	}
 
-	private static SongTreeDropPlan GetRowDropPlan(
-		SongTreeItemViewModel target,
-		Border marker,
-		DragEventArgs e)
-	{
-		// TreeViewItem.Bounds may include its expanded descendants. Measure
-		// the header itself so folder before/into/after zones stay accurate.
-		double height = Math.Max(marker.Bounds.Height, 1.0);
-		double relativeY = e.GetPosition(marker).Y / height;
-		return SongTreeDropPlan.ForRow(target.Node, relativeY);
-	}
-
-	private void OnTreeDragOver(
-		SongTreeItemViewModel target,
-		Border marker,
-		DragEventArgs e)
-	{
-		PreviewTreeDrop(GetRowDropPlan(target, marker, e), marker, e);
-	}
-
-	private void OnTreeDrop(
-		SongTreeItemViewModel target,
-		Border marker,
-		DragEventArgs e)
-	{
-		CommitTreeDrop(GetRowDropPlan(target, marker, e), e);
-	}
-
-	private void OnSectionRootDragOver(
-		SongTreeSection section,
-		Border? marker,
-		DragEventArgs e)
-	{
-		SongTreeDropPlan plan = SongTreeDropPlan.ForSectionRoot(
-			_workspace.Document.GetSectionRoot(section));
-		PreviewTreeDrop(plan, marker, e);
-	}
-
-	private void OnSectionRootDrop(SongTreeSection section, DragEventArgs e)
-	{
-		SongTreeDropPlan plan = SongTreeDropPlan.ForSectionRoot(
-			_workspace.Document.GetSectionRoot(section));
-		CommitTreeDrop(plan, e);
-	}
-
-	private void PreviewTreeDrop(
-		SongTreeDropPlan plan,
-		Border? marker,
-		DragEventArgs e)
-	{
-		SongTreeNode? node = e.DataTransfer.TryGetValue(TreeNodeFormat);
-		bool allowed = node is not null && plan.CanApply(_workspace.Document, node);
-		e.DragEffects = allowed ? DragDropEffects.Move : DragDropEffects.None;
-		if (allowed && marker is not null)
-			ShowTreeDropHighlight(marker, plan.Placement);
-		else
-			ClearTreeDropHighlight();
-		// Row drag/drop is a routed event. An inner row must not let its
-		// ancestor folder overwrite the accepted target or drop position.
+		_dragPosition = current;
+		UpdateCapturedTreeDropTarget();
 		e.Handled = true;
 	}
 
-	private void CommitTreeDrop(SongTreeDropPlan plan, DragEventArgs e)
+	private void OnCapturedTreePointerReleased(TreeView tree, PointerReleasedEventArgs e)
 	{
-		ClearTreeDropHighlight();
-		e.Handled = true;
-		SongTreeNode? node = e.DataTransfer.TryGetValue(TreeNodeFormat);
-		if (node is null || !plan.CanApply(_workspace.Document, node))
+		if (!ReferenceEquals(tree, _dragTree))
+			return;
+		if (!_dragInProgress)
 		{
-			e.DragEffects = DragDropEffects.None;
+			CancelTreeDrag();
 			return;
 		}
+
+		_dragPosition = e.GetPosition(tree);
+		UpdateCapturedTreeDropTarget();
+		SongTreeDropPlan? plan = _pendingTreeDrop;
+		SongTreeNode? moving = _draggingNode;
+		CancelTreeDrag();
+		e.Handled = true;
+		if (plan is null || moving is null || !plan.Value.CanApply(_workspace.Document, moving))
+			return;
 
 		try
 		{
 			uint before = _workspace.Document.DocumentRevision;
-			plan.Apply(_workspace.Document, node);
-			e.DragEffects = DragDropEffects.Move;
+			plan.Value.Apply(_workspace.Document, moving);
 			if (_workspace.Document.DocumentRevision != before)
-				RefreshDocumentView("Reorganized song tree", node);
+				RefreshDocumentView("Reorganized song tree", moving);
 			else
 				SetStatus("Song tree unchanged");
 		}
 		catch (InvalidOperationException ex)
 		{
-			e.DragEffects = DragDropEffects.None;
 			SetStatus(ex.Message);
 		}
+	}
+
+	private void ClearDragCandidate(SongTreeItemViewModel item)
+	{
+		if (ReferenceEquals(_dragCandidate, item) && !_dragInProgress)
+			CancelTreeDrag();
+	}
+
+	private void CancelTreeDrag()
+	{
+		IPointer? pointer = _dragPointer;
+		_dragPointer = null;
+		_dragTree = null;
+		_dragCandidate = null;
+		_draggingNode = null;
+		_dragInProgress = false;
+		_pendingTreeDrop = null;
+		_dragAutoScrollTimer.Stop();
+		ClearTreeDropHighlight();
+		// Clear state before capture release, since PointerCaptureLost can
+		// synchronously fire again.
+		if (pointer is not null && pointer.Captured is not null)
+			pointer.Capture(null);
+	}
+
+	private void UpdateCapturedTreeDropTarget()
+	{
+		_pendingTreeDrop = null;
+		if (!_dragInProgress || _dragTree is not TreeView tree
+			|| _draggingNode is not SongTreeNode moving)
+		{
+			ClearTreeDropHighlight();
+			return;
+		}
+
+		SongTreeDropPlan? candidate = null;
+		Border? marker = null;
+
+		// The pane heading is deliberately outside the scrolling tree and
+		// remains an explicit destination for moving children to section root.
+		if (IsOverSectionHeading(tree, _dragPosition))
+		{
+			marker = _treeRootTargets[tree];
+			SongTreeSection section = _trees.Single(pair =>
+				ReferenceEquals(pair.Value, tree)).Key;
+			candidate = SongTreeDropPlan.ForSectionRoot(
+				_workspace.Document.GetSectionRoot(section));
+		}
+		else if (_dragPosition.X >= 0 && _dragPosition.X <= tree.Bounds.Width
+			&& _dragPosition.Y >= 0 && _dragPosition.Y <= tree.Bounds.Height)
+		{
+			// Get the actual header positions, not a TreeViewItem.Bounds
+			// containing all of its expanded descendants. Capture changes
+			// routing, so hit testing must use pointer coordinates explicitly.
+			foreach ((SongTreeItemViewModel item, Border row) in _treeRowTargets[tree])
+			{
+				Point? origin = row.TranslatePoint(new Point(0, 0), tree);
+				if (origin is null || row.Bounds.Height <= 0)
+					continue;
+				double dy = _dragPosition.Y - origin.Value.Y;
+				if (dy < 0 || dy >= row.Bounds.Height)
+					continue;
+				candidate = SongTreeDropPlan.ForRow(
+					item.Node, dy / row.Bounds.Height);
+				marker = row;
+				break;
+			}
+
+			// Blank space in a section is also its invisible section root.
+			if (candidate is null)
+			{
+				SongTreeSection section = _trees.Single(pair =>
+					ReferenceEquals(pair.Value, tree)).Key;
+				candidate = SongTreeDropPlan.ForSectionRoot(
+					_workspace.Document.GetSectionRoot(section));
+			}
+		}
+
+		if (candidate is SongTreeDropPlan plan
+			&& plan.CanApply(_workspace.Document, moving))
+		{
+			_pendingTreeDrop = plan;
+			if (marker is not null)
+				ShowTreeDropHighlight(marker, plan.Placement);
+			else
+				ClearTreeDropHighlight();
+		}
+		else
+		{
+			ClearTreeDropHighlight();
+		}
+	}
+
+	private bool IsOverSectionHeading(TreeView tree, Point treePosition)
+	{
+		if (!_treeRootTargets.TryGetValue(tree, out Border? heading))
+			return false;
+		Point? point = tree.TranslatePoint(treePosition, heading);
+		return point is Point local && local.X >= 0 && local.Y >= 0
+			&& local.X <= heading.Bounds.Width && local.Y <= heading.Bounds.Height;
+	}
+
+	private void TickTreeDragAutoScroll()
+	{
+		if (!_dragInProgress || _dragTree is not TreeView tree)
+		{
+			_dragAutoScrollTimer.Stop();
+			return;
+		}
+
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		double elapsed = (now - _dragAutoScrollLastTick).TotalSeconds;
+		_dragAutoScrollLastTick = now;
+		if (IsOverSectionHeading(tree, _dragPosition))
+			return;
+
+		ScrollViewer? viewer = tree.GetVisualDescendants()
+			.OfType<ScrollViewer>().FirstOrDefault();
+		if (viewer is null)
+			return;
+		Point? local = tree.TranslatePoint(_dragPosition, viewer);
+		if (local is not Point point)
+			return;
+
+		double speed = SongTreeDragAutoScroll.Velocity(
+			point.Y, 0, viewer.Viewport.Height);
+		if (speed == 0)
+			return;
+
+		double next = SongTreeDragAutoScroll.AdvanceOffset(
+			viewer.Offset.Y, viewer.Extent.Height,
+			viewer.Viewport.Height, speed, elapsed);
+		if (Math.Abs(next - viewer.Offset.Y) < 0.001)
+			return;
+		viewer.Offset = new Vector(viewer.Offset.X, next);
+		UpdateCapturedTreeDropTarget();
 	}
 
 	private void ShowTreeDropHighlight(
@@ -3119,12 +3199,11 @@ public sealed class MainWindow : Window
 			return;
 
 		ClearTreeDropHighlight();
+		if (!_dropOverlays.TryGetValue(marker, out Border? overlay))
+			return;
 		_dropHighlight = marker;
 		_dropHighlightPlacement = placement;
-		_dropHighlightOriginalBrush = marker.BorderBrush;
-		_dropHighlightOriginalThickness = marker.BorderThickness;
-		marker.BorderBrush = Brushes.DodgerBlue;
-		marker.BorderThickness = placement switch
+		overlay.BorderThickness = placement switch
 		{
 			SongTreeDropPlacement.Before => new Thickness(0, 2, 0, 0),
 			SongTreeDropPlacement.After => new Thickness(0, 0, 0, 2),
@@ -3138,11 +3217,10 @@ public sealed class MainWindow : Window
 			|| (marker is not null && !ReferenceEquals(marker, _dropHighlight)))
 			return;
 
-		_dropHighlight.BorderBrush = _dropHighlightOriginalBrush;
-		_dropHighlight.BorderThickness = _dropHighlightOriginalThickness;
+		if (_dropOverlays.TryGetValue(_dropHighlight, out Border? overlay))
+			overlay.BorderThickness = new Thickness(0);
 		_dropHighlight = null;
 		_dropHighlightPlacement = null;
-		_dropHighlightOriginalBrush = null;
 	}
 
 	private void SelectTreeItem(
