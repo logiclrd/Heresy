@@ -260,22 +260,28 @@ public sealed class SongObjectDeepDuplicationD3Tests
     }
 
     [Test]
-    public void ScriptedDependencyIsExplicitlyDeferredUntilD4InsteadOfSilentlyOmitted()
+    public void ScriptedDependencyReachedBySynthIsNowClonedAndSelfLinkIsRemapped()
     {
         SongDocument song = new();
         ScriptInstrumentDefinition script =
             new(song.AllocateObjectId(), "Scripted")
-            { Source = "_O(4)", PitchExpression = "1.0" };
+            { Source = "_O(1)", PitchExpression = "1.0" };
         song.Add(script);
         FmSynthDefinition root = new(song.AllocateObjectId(), "Root",
             new FmSynthGraph(
                 [new FmSoundSourceNode(0, script.Id, 440)], 0));
         song.Add(root);
         ObjectId cursor = song.NextUnallocatedObjectId;
-        Assert.That(() => SongObjectDeepDuplication.Prepare(song, root.Id),
-            Throws.TypeOf<NotSupportedException>());
-        Assert.That(() => SongObjectDeepDuplication.Prepare(song, script.Id),
-            Throws.TypeOf<NotSupportedException>());
+        SongObjectDeepDuplicateDraft plan =
+            SongObjectDeepDuplication.Prepare(song, root.Id);
+        Assert.That(plan.IdMap.Count, Is.EqualTo(2));
+        ScriptInstrumentDefinition cloned = (ScriptInstrumentDefinition)
+            plan.Candidates.Single(item => item.Id == plan.IdMap[script.Id]);
+        Assert.That(cloned.Source, Is.EqualTo(
+            $"_O({cloned.Id.Value})"));
+        Assert.That(script.Source, Is.EqualTo("_O(1)"));
+        Assert.That(((FmSoundSourceNode)((FmSynthDefinition)plan.RootCandidate)
+            .Graph.Nodes.Single()).SourceId, Is.EqualTo(cloned.Id));
         Assert.That(song.NextUnallocatedObjectId, Is.EqualTo(cursor));
         Assert.That(song.Objects.Count, Is.EqualTo(2));
     }
