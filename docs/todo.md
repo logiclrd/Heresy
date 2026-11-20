@@ -217,26 +217,37 @@ Do not reintroduce completed-task checklists here.
   not change the Synth import acceptance result. PR #34 is approved
   for merge by the owner.
 
-- [ ] **Add Duplicate Object to every main-window object list.**
-  Provide a consistent **Duplicate Object** action in each object list,
-  creating a new independently identifiable object of the same kind with
-  the selected object's content and settings copied according to that
-  object's existing reference/ownership semantics. Keep the original
-  unchanged, give the copy a usable name and selection, and maintain valid
-  internal IDs, references, document persistence and undo/redo where
-  applicable. Audit each list rather than implementing just one object
-  type; check both complex objects and objects referenced elsewhere.
-  See [UI workflow](user-interface-workflows.md).
-  **Implementation started (D1):** Detach and clone Data/Script Sequence,
-  Data/Script Pattern, Node/Script Envelope and Filter content with a fresh
-  proposed ObjectId, continuing numbered names, independent mutable cells/
-  collections and preserved same-song object references. Prepare does not
-  allocate IDs; a framework-independent atomic commit reuses the Core
-  imported-object transaction and guarded whole-object undo receipt.
-  D1 is headless and not in the UI yet. Remaining slices cover Sample
-  encoded asset ownership, Instrument/Script Instrument and Synth graphs,
-  adjacent same-folder placement, all six pane menus, and UI/history
-  integration. See [Duplicate Object plan](duplicate-object-plan.md).
+- [ ] **Add shallow and deep Duplicate to every main-window object list.**
+  **Duplicate** is always a shallow clone of exactly one new definition:
+  owned authoring data is independent, while same-song references retain
+  the original ObjectIds. Add **Duplicate (deep)** only for Instruments,
+  Synths, and **all scripted object subtypes** (Script Sequence, Pattern,
+  Envelope and Instrument), even if a given script currently references
+  nothing. Ordinary Data Sequences, Data Patterns, Node Envelopes, Filters
+  and Samples have no deep menu item.
+  Instrument deep follows tone **source** references recursively but not
+  its ordinary Envelope/Filter references. Synth deep follows graph sources,
+  instruments, Envelopes and Filters recursively; reached objects obey
+  their own per-type traversal rule. Scripted deep recursively follows
+  semantically parsed `_O(id)` references and all explicit typed references.
+  Build one global original-to-duplicate-ID map for the entire reached graph:
+  multiple uses share one duplicate, including self-references and cycles.
+  Translate references **inside** cloned objects only; originals are
+  unchanged. Refuse unreliable script reference analysis or missing targets
+  atomically instead of guessing. Use Roslyn-aware spans for script rewrite,
+  not string substitution.
+  **D1 complete, headless (PR #38):** Shallow Data/Script Sequence and Pattern,
+  Node/Script Envelope and Filter copies, numbered names, independent
+  owned content, detached preparation and guarded atomic commit/undo.
+  **Next D2:** Finish shallow Sample/Instrument/Script Instrument/Synth copies
+  and detached asset ownership. **D3:** Cycle-safe deep graph planning and
+  typed-reference mapping. **D4:** Scripted deep analyzer coverage and
+  `_O(id)` rewriting. **D5:** Both menu actions, sibling placement and
+  selection in all six panes. **D6:** Batch undo/redo, persistence, tests
+  and physical owner acceptance. See
+  [Duplicate Object specification](duplicate-object-plan.md).
+  Keep this separate from [implemented UI workflow](user-interface-workflows.md).
+
 
 ## Script objects and editor UX
 
