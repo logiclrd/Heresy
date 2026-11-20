@@ -62,9 +62,9 @@ public sealed class ScriptReferenceAnalyzerTests
 	public void MalformedLookupCallsProduceDiagnosticsRatherThanGuessedReferences()
 	{
 		string source =
-			"_O(1 + 2);\n"
+			"_O(0);\n"
 			+ "_O();\n"
-			+ "_O(-3);";
+			+ "_O(4294967296UL);";
 
 		ScriptReferenceAnalysis analysis =
 			ScriptReferenceAnalyzer.Analyze(source);
@@ -76,6 +76,27 @@ public sealed class ScriptReferenceAnalyzerTests
 			.Should().OnlyContain(diagnostic =>
 				diagnostic.Code == "HRS1001"
 				&& diagnostic.Severity == ScriptDiagnosticSeverity.Error);
+	}
+
+	[Test]
+	public void ComputedObjectIdsAreLegalTextButExplicitlyNotStaticallyTraceable()
+	{
+		const string source = """
+			uint id = 17;
+			var dynamicTarget = _O(id);
+			var arithmetic = _O(1 + 2);
+			var staticTarget = _O(31);
+			""";
+		ScriptReferenceAnalysis analysis = ScriptReferenceAnalyzer.Analyze(source);
+		analysis.IsReliable.Should().BeTrue();
+		analysis.Diagnostics.Should().BeEmpty();
+		analysis.HasDynamicReferences.Should().BeTrue();
+		analysis.DynamicReferences.Should().HaveCount(2);
+		analysis.References.Select(x => x.Id)
+			.Should().Equal((ObjectId)31U);
+		RoslynScriptObjectReferenceAnalyzer.Instance
+			.AnalyzeObjectReferences(source)
+			.IsReliable.Should().BeFalse("graph traversal cannot determine computed IDs");
 	}
 
 	[Test]

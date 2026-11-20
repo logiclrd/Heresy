@@ -251,6 +251,37 @@ public sealed class SongObjectDuplicateTreePlacementTests
             Is.EqualTo(new[] { script.Id, cloned.Id }));
     }
 
+    [Test]
+    public void ComputedScriptLookupRefusesDeepWithoutMutatingSongButShallowCopiesText()
+    {
+        SongDocument song = new();
+        ScriptPatternDefinition original = new(
+            song.AllocateObjectId(), "Dynamic script")
+        {
+            Source = "uint id = 2; var source = _O(id);",
+        };
+        song.Add(original);
+        uint revision = song.DocumentRevision;
+        ObjectId nextId = song.NextUnallocatedObjectId;
+        Assert.That(() => SongObjectDeepDuplication.Prepare(song, original.Id),
+            Throws.TypeOf<InvalidOperationException>()
+                .With.Message.Contains("computed"));
+        Assert.That(song.DocumentRevision, Is.EqualTo(revision));
+        Assert.That(song.NextUnallocatedObjectId, Is.EqualTo(nextId));
+        Assert.That(song.Objects, Has.Count.EqualTo(1));
+
+        SongTreeObject occurrence =
+            song.GetSectionRoot(SongTreeSection.Patterns)
+                .Children.OfType<SongTreeObject>().Single();
+        SongObjectDuplicateDraft shallow =
+            SongObjectDuplication.Prepare(song, original.Id);
+        SongObjectDuplication.Commit(shallow, occurrence);
+        ScriptPatternDefinition copy =
+            (ScriptPatternDefinition)song.Objects[shallow.Candidate.Id];
+        Assert.That(copy.Source, Is.EqualTo(original.Source));
+        Assert.That(song.Objects, Has.Count.EqualTo(2));
+    }
+
     private static byte[] Wave()
     {
         using MemoryStream stream = new();

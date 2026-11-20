@@ -183,6 +183,24 @@ public sealed class ScriptCompilerTests
 	}
 
 	[Test]
+	public void ComputedObjectLookupCompilesNormallyWithoutStaticToken()
+	{
+		ScriptPatternDefinition definition =
+			new((ObjectId)1U, "Dynamic source")
+			{
+				Source = """
+					uint id = 17;
+					Note(0, 0, _O(id));
+					""",
+			};
+		ScriptCompilationResult<IRawPatternNoteGenerator> compilation =
+			ScriptCompiler.CompilePattern(definition);
+		compilation.Success.Should().BeTrue();
+		compilation.Diagnostics.Should().NotContain(
+			diagnostic => diagnostic.Severity == ScriptDiagnosticSeverity.Error);
+	}
+
+	[Test]
 	public void SequenceScriptCompilesIntoExistingSequencerContract()
 	{
 		ScriptSequenceDefinition definition =

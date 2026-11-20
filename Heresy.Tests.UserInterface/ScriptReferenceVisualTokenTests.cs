@@ -93,6 +93,24 @@ public sealed class ScriptReferenceVisualTokenTests
 	}
 
 	[Test]
+	public void ComputedIdRemainsOrdinarySourceTextWithoutNamedToken()
+	{
+		DocumentWorkspace workspace = new();
+		workspace.Document.Add(
+			new ScriptPatternDefinition(workspace.Document.AllocateObjectId(), "Piano"));
+		const string source = "uint id = 1; var dynamic = _O(id); var fixedId = _O(1);";
+		ScriptSourceDocumentAnalysis analysis =
+			ScriptSourceDocumentAnalyzer.Analyze(workspace, source);
+		analysis.Syntax.HasDynamicReferences.Should().BeTrue();
+		ScriptReferenceVisualToken[] tokens =
+			ScriptReferenceVisualTokenCatalog.Create(analysis.References).ToArray();
+		tokens.Should().ContainSingle();
+		tokens[0].Text.Should().Be("Piano");
+		source.Substring(tokens[0].SourceSpan.Start, tokens[0].SourceSpan.Length)
+			.Should().Be("_O(1)");
+	}
+
+	[Test]
 	public void MissingReferenceUsesCanonicalRawReferenceAsTokenText()
 	{
 		DocumentWorkspace workspace = new();
