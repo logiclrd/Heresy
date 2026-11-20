@@ -227,6 +227,16 @@ Do not reintroduce completed-task checklists here.
   applicable. Audit each list rather than implementing just one object
   type; check both complex objects and objects referenced elsewhere.
   See [UI workflow](user-interface-workflows.md).
+  **Implementation started (D1):** Detach and clone Data/Script Sequence,
+  Data/Script Pattern, Node/Script Envelope and Filter content with a fresh
+  proposed ObjectId, continuing numbered names, independent mutable cells/
+  collections and preserved same-song object references. Prepare does not
+  allocate IDs; a framework-independent atomic commit reuses the Core
+  imported-object transaction and guarded whole-object undo receipt.
+  D1 is headless and not in the UI yet. Remaining slices cover Sample
+  encoded asset ownership, Instrument/Script Instrument and Synth graphs,
+  adjacent same-folder placement, all six pane menus, and UI/history
+  integration. See [Duplicate Object plan](duplicate-object-plan.md).
 
 ## Script objects and editor UX
 
