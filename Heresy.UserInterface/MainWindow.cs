@@ -15,6 +15,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Envelopes;
@@ -117,9 +118,6 @@ public sealed class MainWindow : Window
 			Patterns = new[] { "*.wav" },
 		};
 
-	private static readonly DataFormat<SongTreeNode> TreeNodeFormat =
-		DataFormat.CreateInProcessFormat<SongTreeNode>("Heresy.SongTreeNode");
-
 	private readonly DocumentWorkspace _workspace;
 	private readonly ISongPlaybackTransport? _playbackTransport;
 	private readonly SongExportService _exportService;
@@ -168,9 +166,19 @@ public sealed class MainWindow : Window
 	private PointerPressedEventArgs? _dragTrigger;
 	private Point _dragStart;
 	private bool _dragInProgress;
+	private TreeView? _dragTree;
+	private IPointer? _dragPointer;
+	private SongTreeNode? _draggingNode;
+	private Point _dragPosition;
+	private SongTreeDropPlan? _pendingTreeDrop;
+	private readonly Dictionary<TreeView, List<(SongTreeItemViewModel Item, Border Marker)>>
+		_treeRowTargets = [];
+	private readonly Dictionary<TreeView, Border> _treeRootTargets = [];
+	private readonly Dictionary<Border, Border> _dropOverlays = [];
+	private readonly DispatcherTimer _dragAutoScrollTimer =
+		new() { Interval = TimeSpan.FromMilliseconds(16) };
+	private DateTimeOffset _dragAutoScrollLastTick;
 	private Border? _dropHighlight;
-	private IBrush? _dropHighlightOriginalBrush;
-	private Thickness _dropHighlightOriginalThickness;
 	private SongTreeDropPlacement? _dropHighlightPlacement;
 	private bool _closeApproved;
 	private bool _closePromptInProgress;
@@ -221,6 +229,7 @@ public sealed class MainWindow : Window
 	{
 		_scopeHost = new OutputScopeDockHost(_mainContent,
 			scopeCapture ?? new AudioOutputWaveformCapture());
+		_dragAutoScrollTimer.Tick += (_, _) => TickTreeDragAutoScroll();
 		_scopeHost.ScopeVisibilityChanged += (_, _) =>
 		{
 			if (_scopeMenuItem is not null)
@@ -379,6 +388,18 @@ public sealed class MainWindow : Window
 		TreeView tree = new() { Background = Brushes.Transparent };
 		tree.KeyDown += (_, e) => OnTreeRenameKeyDown(tree, e);
 		_trees.Add(section, tree);
+		_treeRowTargets.Add(tree, []);
+		tree.AddHandler(InputElement.PointerMovedEvent,
+			(_, e) => OnCapturedTreePointerMoved(tree, e),
+			RoutingStrategies.Bubble, handledEventsToo: true);
+		tree.AddHandler(InputElement.PointerReleasedEvent,
+			(_, e) => OnCapturedTreePointerReleased(tree, e),
+			RoutingStrategies.Bubble, handledEventsToo: true);
+		tree.PointerCaptureLost += (_, _) =>
+		{
+			if (ReferenceEquals(_dragTree, tree))
+				CancelTreeDrag();
+		};
 		tree.SelectionChanged += (_, _) =>
 		{
 			if (tree.SelectedItem is TreeViewItem treeItem
@@ -387,14 +408,6 @@ public sealed class MainWindow : Window
 				SelectTreeItem(item, tree);
 			}
 		};
-
-		// The section's fixed root is not visible as a TreeViewItem. Make
-		// the empty tree background an append-to-root destination.
-		DragDrop.SetAllowDrop(tree, true);
-		DragDrop.AddDragOverHandler(tree, (_, e) =>
-			OnSectionRootDragOver(section, null, e));
-		DragDrop.AddDropHandler(tree, (_, e) =>
-			OnSectionRootDrop(section, e));
 
 		TextBlock title =
 			new()
@@ -407,21 +420,24 @@ public sealed class MainWindow : Window
 
 		// An always-accessible root target also works when the tree fills
 		// the pane; hover the section heading to move an item out of a folder.
+		Grid rootDropLayer = new();
+		rootDropLayer.Children.Add(title);
+		Border rootGuide = new()
+		{
+			IsHitTestVisible = false,
+			BorderBrush = Brushes.DodgerBlue,
+		};
+		rootDropLayer.Children.Add(rootGuide);
 		Border rootDropTarget = new()
 		{
-			Child = title,
+			Child = rootDropLayer,
 			Background = Brushes.Transparent,
 			Padding = new Thickness(3, 1),
 		};
 		ToolTip.SetTip(rootDropTarget,
 			"Drop an item here to move it to this section's root");
-		DragDrop.SetAllowDrop(rootDropTarget, true);
-		DragDrop.AddDragOverHandler(rootDropTarget, (_, e) =>
-			OnSectionRootDragOver(section, rootDropTarget, e));
-		DragDrop.AddDragLeaveHandler(rootDropTarget, (_, _) =>
-			ClearTreeDropHighlight(rootDropTarget));
-		DragDrop.AddDropHandler(rootDropTarget, (_, e) =>
-			OnSectionRootDrop(section, e));
+		_treeRootTargets.Add(tree, rootDropTarget);
+		_dropOverlays.Add(rootDropTarget, rootGuide);
 
 		Button newFolder = new() { Content = "+ Folder" };
 		newFolder.Click += async (_, _) => await CreateFolderAsync(section);
@@ -2044,6 +2060,14 @@ public sealed class MainWindow : Window
 			return;
 		TrackWorkspaceDocument();
 		ClearTreeDropHighlight();
+		foreach (List<(SongTreeItemViewModel Item, Border Marker)> rows
+			in _treeRowTargets.Values)
+			rows.Clear();
+		// Preserve the six fixed section heading overlays; old row overlays
+		// belong to detached tree controls after refresh.
+		foreach (Border marker in _dropOverlays.Keys
+			.Except(_treeRootTargets.Values).ToArray())
+			_dropOverlays.Remove(marker);
 		UpdateWindowTitle();
 
 		_selectedItem = null;
@@ -2137,12 +2161,25 @@ public sealed class MainWindow : Window
 
 		// A visible top/bottom insertion guide or enclosing folder outline
 		// is drawn on this header, independently of theme selection colours.
+		// The guide is a separate, non-hit-testable Grid child. It draws
+		// over the name without changing the measured size of the row:
+		// changing BorderThickness on the content Border caused jitter.
+		Grid markerLayer = new();
+		markerLayer.Children.Add(headerContent);
+		Border overlay = new()
+		{
+			IsHitTestVisible = false,
+			BorderBrush = Brushes.DodgerBlue,
+		};
+		markerLayer.Children.Add(overlay);
 		Border dropMarker = new()
 		{
-			Child = headerContent,
+			Child = markerLayer,
 			Background = Brushes.Transparent,
 			Padding = new Thickness(1),
 		};
+		_dropOverlays.Add(dropMarker, overlay);
+		_treeRowTargets[tree].Add((item, dropMarker));
 		TreeViewItem result =
 			new()
 			{
@@ -2186,27 +2223,7 @@ public sealed class MainWindow : Window
 				result,
 				item,
 				e);
-		result.AddHandler(
-			InputElement.PointerMovedEvent,
-			async (_, e) => await OnTreePointerMovedAsync(tree, item, e),
-			RoutingStrategies.Bubble,
-			handledEventsToo: true);
-		result.AddHandler(
-			InputElement.PointerReleasedEvent,
-			(_, _) => ClearDragCandidate(item),
-			RoutingStrategies.Tunnel,
-			handledEventsToo: true);
 
-		DragDrop.SetAllowDrop(result, true);
-		DragDrop.AddDragOverHandler(
-			result,
-			(_, e) => OnTreeDragOver(item, dropMarker, e));
-		DragDrop.AddDragLeaveHandler(
-			result,
-			(_, _) => ClearTreeDropHighlight(dropMarker));
-		DragDrop.AddDropHandler(
-			result,
-			(_, e) => OnTreeDrop(item, dropMarker, e));
 
 		result.ContextMenu = BuildTreeContextMenu(section, tree, item, result);
 		return result;
@@ -2921,6 +2938,7 @@ public sealed class MainWindow : Window
 		}
 
 		_dragCandidate = item;
+		_dragTree = tree;
 		_dragTrigger = e;
 		_dragStart = e.GetPosition(tree);
 	}
