@@ -12,6 +12,7 @@ using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.UserInterface;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.ViewModels;
 
 using NUnit.Framework;
 
