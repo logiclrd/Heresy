@@ -58,6 +58,9 @@ public sealed class EditorPatternCallsiteTests
             Assert.Multiple(() =>
             {
                 Assert.That(a[i].EditorCallsite, Is.Null);
+                Assert.That(a[i].EditorPatternRow, Is.Null);
+                Assert.That(b[i].EditorPatternRow, Is.EqualTo(
+                    i switch { 0 => 0, 1 => 1, 2 or 3 => 2, _ => 3 }));
                 Assert.That(b[i].EditorCallsite,
                     Is.EqualTo(new SequenceCallsite(start, next - start)));
                 Assert.That(a[i].Offset, Is.EqualTo(b[i].Offset));

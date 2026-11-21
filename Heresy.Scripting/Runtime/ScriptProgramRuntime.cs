@@ -588,7 +588,12 @@ public abstract class PatternScriptProgram
 			new NoteEvent(
 				new MusicalTime(TimeSpan.FromSeconds(timeOffsetSeconds), row),
 				target,
-				[command]) { EditorCallsite = _editorActionCallsite });
+				[command])
+			{
+				EditorCallsite = _editorActionCallsite,
+				EditorPatternRow = _editorActionCallsite.HasValue
+					? (int)Math.Floor(row) : null,
+			});
 		_lastRawRow = row;
 	}
 

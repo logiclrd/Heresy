@@ -25,5 +25,10 @@ public sealed record NoteEvent(
 	[JsonIgnore]
 	public SequenceCallsite? EditorCallsite { get; init; }
 
+	/// <summary>Original scripted musical row, retained even after the
+	/// scheduler normalizes NoteEvent.Offset to absolute playback time.</summary>
+	[JsonIgnore]
+	public int? EditorPatternRow { get; init; }
+
 	public NoteEvent WithEmissionOrder(long order) => this with { EmissionOrder = order };
 }

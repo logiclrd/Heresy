@@ -428,7 +428,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 						if (frame.ParentId is null
 							&& emit.Note.EditorCallsite is SequenceCallsite callsite)
 							EditorPatternActionBegan?.Invoke(frame.SourceId,
-								(int)Math.Floor(emit.Note.Offset.RowOffset),
+								emit.Note.EditorPatternRow ?? 0,
 								emit.Time, callsite);
 						List<NoteCommand> retained = [];
 						foreach (NoteCommand command in emit.Note.Commands)
