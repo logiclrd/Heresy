@@ -22,7 +22,7 @@ namespace Heresy.UserInterface.Views;
 /// of source/pitch/Envelope tone definitions. Referenced song objects remain
 /// discoverable even when the expression does not select them.
 /// </summary>
-public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEditor
+public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEditor, IScriptSourceShortcutTarget
 {
     private sealed record Choice(ObjectId? Id, string Text)
     {
@@ -136,6 +136,26 @@ public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEd
     }
 
     public string ScriptSourceDisplayName => _definition.Name;
+
+    public bool TryHandleSourceSaveShortcut(Visual? keySource)
+    {
+        if (ScriptSourceShortcutRouting.IsWithin(keySource, _expression)
+            || ScriptSourceShortcutRouting.IsWithin(keySource, _pitchExpression)
+            || ScriptSourceShortcutRouting.IsWithin(keySource, _saveExpressions))
+        {
+            TrySaveExpressions();
+            return true;
+        }
+
+        if (ScriptSourceShortcutRouting.IsWithin(keySource, _nnaExpression)
+            || ScriptSourceShortcutRouting.IsWithin(keySource, _saveNnaExpression))
+        {
+            TrySaveNnaExpression();
+            return true;
+        }
+
+        return false;
+    }
 
     private bool ExpressionsDirty =>
         !string.Equals(_expression.Text ?? string.Empty, _appliedExpression,

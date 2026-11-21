@@ -388,15 +388,70 @@ Do not reintroduce completed-task checklists here.
   cumbersome (see the redesign TODO below). PR #47 CI covers actual
   selector/pitch/NNA evaluation and Pattern note generation.
 
-- [ ] **Support F6 test/audition in the Script Pattern editor.**
-  Owner's natural F6 gesture currently works in the Data Pattern editor
-  but is not wired in the Script Pattern editor (observed 2026-11-21).
-  Reuse the expected Data Pattern audition workflow where appropriate,
-  with the same focus/keyboard and stop/retrigger semantics; check how
-  a dirty, not-yet-Saved script source is handled and provide sensible
-  compile/runtime diagnostics rather than silently discarding draft
-  text or globally changing what F6 means. Add GUI and playback
-  regression tests for Script Pattern and unchanged Data Pattern F6.
+- [ ] **F6 for Data Sequence and live playing-order highlight (PR #48).**
+  F6 in the Data Sequence editor starts that Sequence from order 0
+  independently of the song's configured root, matching Script Sequence
+  F6. Use the playback transport's existing sequence ID and entry index
+  (not just Pattern ID) to mark exactly the playing occurrence in the
+  editable order list, clear it on Stop/other playback, and scroll the
+  highlighted order into view without stealing keyboard focus. Rebuilt
+  rows reapply the current highlight; mismatched Pattern IDs do not
+  falsely highlight a reordered entry. Visual indication is read-only
+  and uses the same theme-blended color as Pattern playback.
+  **Implementation in draft PR #48; pending desktop acceptance.**
+
+- [ ] **Discover source-call activity and active-note overlays in Script
+  Sequence/Pattern editors (design first, separate PR).** Investigate
+  live, source-span-aware highlighting for `Play`, `Note`/
+  `NoteVirtual`, `NoteFilter`/`NoteFilterVirtual`,
+  `ChannelFilter`/`ChannelFilterVirtual`, and the complete
+  direct-statement playback-control helper surface (`Off`, `Cut`,
+  `VolumeVirtual`, `SourceFrameVirtual`, `DisplacementVirtual`,
+  `PastVirtual`, `Tempo`, `Speed`, `Seek`, `Pan`,
+  `Surround`, `Filter`, etc.). Distinguish **script execution**
+  (a call runs on the preparation/producer worker), **scheduled effect
+  time** (its resulting event becomes audible), and **note-active
+  lifetime** (the actual sounding voice(s) remain active). These are
+  different clocks and must not be conflated.
+
+  Design an optional debug/provenance side channel from the Roslyn
+  syntax span of the actual callsite into the sequence entry or
+  scheduled action. Preserve source identity/revision and unique
+  invocation IDs so repeated loops, reused patterns, virtual voice
+  scopes, multiple same-line calls and multiple simultaneous notes
+  cannot be mistaken for one another. Use a bounded, allocation-aware
+  producer-to-UI event stream, never UI callbacks from the PCM thread;
+  respect queued playback snapshot identity when the editor has pending
+  or subsequently changed source. Render via a separate AvaloniaEdit
+  background layer over canonical raw source spans (not syntax color
+  changes or destructive editor selection).
+
+  Start with an instrumented **Script Sequence `Play` call tied to
+  the current Sequence order**, then short-lived pattern-control
+  activations tied to their *scheduled* event times, then investigate
+  **sustained note highlights** from explicit voice/Note Off/Cut,
+  retrigger, natural completion, release-tail and nested-source
+  lifecycle notifications. Define UI semantics for overlapping,
+  repeating and silent/invalid calls, visibility/scroll-follow, and
+  cleanup on Stop/document change; keep realtime overhead negligible.
+  Provide a bounded prototype and measurements before adopting a
+  full instrumentation mechanism. **Do not bundle into the Data
+  Sequence F6/highlight shortcut work (PR #48).**
+
+- [ ] **Support F6 test/audition in the Script Pattern and Script
+  Sequence editors.** Owner's natural F6 gesture works in the Data
+  Pattern editor but was not wired in either scripted editor
+  (observed 2026-11-21). **Owner refinement:** the same F6 shortcut
+  should test the currently edited Script Sequence as well.
+  Script Patterns start at row zero and repeat, as Data Patterns do;
+  Script Sequences begin with their first order and follow their
+  scripted order generator. If source text is pending, F6 commits
+  that text to the song (not the disk file) before compiling/playing,
+  rather than auditioning an older source; errors must be visible and
+  failure must prevent playback when the source cannot be saved.
+  Preserve F5/F7/F8 and Data Pattern behavior. Regression-test both
+  Script kinds and both clean and dirty source cases.
+  **Implementation:** draft keyboard-shortcuts PR, awaiting acceptance.
 
 - [ ] **Route Ctrl+S to local Script Save only for script-source focus.**
   Currently Ctrl+S invokes global Save Document even while the
@@ -416,6 +471,10 @@ Do not reintroduce completed-task checklists here.
   boundaries with the approved tiered Undo/Redo design.
   Test focus on source, on Save button, elsewhere in script editor,
   and in the main window, plus key routing on supported platforms.
+  **Owner refinement:** both the Script Pattern and Script Sequence
+  editors use this exact focus-sensitive Ctrl+S policy. Implementation
+  also routes Script Envelope and both independent Script Instrument
+  Save groups; draft keyboard-shortcuts PR, awaiting acceptance.
 
 - [ ] **Audit Script Pattern physical/virtual channel helper parity.**
   The current `PatternScriptProgram` exposes `VolumeVirtual`,

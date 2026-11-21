@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 
@@ -7,7 +8,9 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 
+using Heresy.Playback;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequences;
 using Heresy.UserInterface.Documents;
@@ -27,6 +30,16 @@ public sealed class SequenceEditorControl : UserControl
 	private readonly Action<string> _changed;
 	private readonly Action<int, ObjectId> _openPattern;
 	private readonly StackPanel _rows = new() { Spacing = 4 };
+	private readonly ScrollViewer _scroll = new()
+	{
+		HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+		VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+		Margin = new Thickness(10, 0),
+	};
+	private readonly Dictionary<int, Border> _entryRows = [];
+	private readonly IBrush _playbackHighlightBrush;
+	private int? _playingOrder;
+	private bool _followScrollPosted;
 	private readonly TextBlock _rootStatus = new();
 	private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap };
 	private readonly ComboBox _addPattern;
@@ -44,7 +57,8 @@ public sealed class SequenceEditorControl : UserControl
 		DataSequenceDefinition sequence,
 		Action close,
 		Action<string> changed,
-		Action<int, ObjectId> openPattern)
+		Action<int, ObjectId> openPattern,
+		UserInterfaceConfiguration? configuration = null)
 	{
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
@@ -56,6 +70,9 @@ public sealed class SequenceEditorControl : UserControl
 			?? throw new ArgumentNullException(nameof(changed));
 		_openPattern = openPattern
 			?? throw new ArgumentNullException(nameof(openPattern));
+		_playbackHighlightBrush = new SolidColorBrush(
+			(configuration ?? new UserInterfaceConfiguration())
+				.PatternPlaybackRowHighlight);
 
 		_patterns = SequencePatternCatalog.GetPatterns(_workspace.Document);
 		_addPattern =
@@ -68,6 +85,70 @@ public sealed class SequenceEditorControl : UserControl
 
 		Content = BuildContent();
 		RefreshRows();
+	}
+
+	public ObjectId SequenceId => _sequence.Id;
+	public string SequenceName => _sequence.Name;
+
+	/// <summary>
+	/// The transport reports the actual playing Sequence order, not just
+	/// the Pattern ID (which can occur in several orders). A standalone
+	/// Pattern audition or a different Sequence clears this indicator.
+	/// </summary>
+	public void SetPlaybackPosition(PlaybackPatternPosition? position)
+	{
+		int? order = null;
+		if (position is not null
+			&& position.SequenceId == _sequence.Id
+			&& position.SequenceEntryIndex is int index
+			&& (uint)index < (uint)_sequence.Entries.Count
+			&& _sequence.Entries[index].PatternId == position.PatternId)
+			order = index;
+
+		if (_playingOrder == order)
+			return;
+		_playingOrder = order;
+		UpdatePlaybackHighlight();
+		RequestPlaybackFollow();
+	}
+
+	private void UpdatePlaybackHighlight()
+	{
+		foreach ((int index, Border row) in _entryRows)
+			row.Background = _playingOrder == index
+				? _playbackHighlightBrush : Brushes.Transparent;
+	}
+
+	private void RequestPlaybackFollow()
+	{
+		if (_playingOrder is null || _followScrollPosted)
+			return;
+
+		// Wait for resized/rebuilt rows to be measured, coalescing fast
+		// position events. Keep horizontal scroll and editor focus intact.
+		_followScrollPosted = true;
+		Dispatcher.UIThread.Post(() =>
+		{
+			_followScrollPosted = false;
+			if (_playingOrder is not int order
+				|| !_entryRows.TryGetValue(order, out Border? row)
+				|| _scroll.Viewport.Height <= 0)
+				return;
+
+			Point? location = row.TranslatePoint(
+				new Point(row.Bounds.Width / 2, row.Bounds.Height / 2),
+				_rows);
+			if (location is null)
+				return;
+
+			double maxOffset = Math.Max(0,
+				_scroll.Extent.Height - _scroll.Viewport.Height);
+			double target = Math.Clamp(
+				location.Value.Y - _scroll.Viewport.Height / 2,
+				0, maxOffset);
+			if (Math.Abs(target - _scroll.Offset.Y) > 0.5)
+				_scroll.Offset = new Vector(_scroll.Offset.X, target);
+		}, DispatcherPriority.Loaded);
 	}
 
 	private Control BuildContent()
@@ -164,14 +245,7 @@ public sealed class SequenceEditorControl : UserControl
 		AddHeading(headings, "Start row", 3);
 		AddHeading(headings, "Actions", 4);
 
-		ScrollViewer scroll =
-			new()
-			{
-				Content = _rows,
-				HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-				VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-				Margin = new Thickness(10, 0),
-			};
+		_scroll.Content = _rows;
 
 		Border messageBorder =
 			new()
@@ -189,7 +263,7 @@ public sealed class SequenceEditorControl : UserControl
 		root.Children.Add(addControls);
 		root.Children.Add(headings);
 		root.Children.Add(messageBorder);
-		root.Children.Add(scroll);
+		root.Children.Add(_scroll);
 
 		RefreshRootStatus(setRoot);
 		return root;
@@ -210,8 +284,11 @@ public sealed class SequenceEditorControl : UserControl
 		}
 
 		_rows.Children.Clear();
+		_entryRows.Clear();
 		for (int index = 0; index < _sequence.Entries.Count; index++)
 			_rows.Children.Add(BuildEntryRow(index));
+		UpdatePlaybackHighlight();
+		RequestPlaybackFollow();
 
 		if (_sequence.Entries.Count == 0)
 		{
@@ -328,12 +405,16 @@ public sealed class SequenceEditorControl : UserControl
 		AddAt(row, startRow, 3);
 		AddAt(row, actions, 4);
 
-		return new Border
+		Border wrapper = new()
 		{
 			BorderBrush = Brushes.Gray,
 			BorderThickness = new Thickness(0, 0, 0, 1),
+			Background = _playingOrder == index
+				? _playbackHighlightBrush : Brushes.Transparent,
 			Child = row,
 		};
+		_entryRows[index] = wrapper;
+		return wrapper;
 	}
 
 	private void AddEntry()
