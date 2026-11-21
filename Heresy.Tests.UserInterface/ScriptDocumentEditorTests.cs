@@ -1,8 +1,11 @@
 using System;
+using System.IO;
 
 using AwesomeAssertions;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Persistence;
+using Heresy.Scripting.Compilation;
 using Heresy.Core.Patterns;
 using Heresy.Core.Scripting;
 using Heresy.Core.Sequences;
@@ -16,6 +19,83 @@ namespace Heresy.Tests.UserInterface;
 [TestFixture]
 public sealed class ScriptDocumentEditorTests
 {
+	[Test]
+	public void InitialSourcesAreValidWhenSongContainsNoCompatibleObjects()
+	{
+		DocumentWorkspace workspace = new();
+		ScriptSequenceDefinition sequence =
+			ScriptDocumentEditor.CreateScriptSequence(workspace, "Empty Sequence");
+		ScriptPatternDefinition pattern =
+			ScriptDocumentEditor.CreateScriptPattern(workspace, "Empty Pattern");
+		sequence.Source.Should().Contain("return default;");
+		pattern.Source.Should().Contain("Add a Sample");
+		ScriptCompiler.CompileIncrementalSequence(sequence).Success.Should().BeTrue();
+		ScriptCompiler.CompileIncrementalPattern(pattern).Success.Should().BeTrue();
+	}
+
+	[Test]
+	public void NewScriptSequencePrefersActualPatternIdAndNeverRegeneratesIt()
+	{
+		DocumentWorkspace workspace = new();
+		SongDocument document = workspace.Document;
+		// A Sequence is not a valid Play() argument, even if it has a lower ID.
+		DataSequenceDefinition earlier = new(document.AllocateObjectId(), "Earlier");
+		document.Add(earlier);
+		DataPatternDefinition chosen = new(document.AllocateObjectId(), "Actual Pattern");
+		document.Add(chosen);
+		ScriptSequenceDefinition generated =
+			ScriptDocumentEditor.CreateScriptSequence(workspace, "Generated");
+		generated.Source.Should().Contain($"Play(_O({chosen.Id.Value}))");
+		generated.Source.Should().NotContain($"Play(_O({earlier.Id.Value}))");
+		ScriptCompiler.CompileIncrementalSequence(generated).Success.Should().BeTrue();
+		string original = generated.Source;
+		document.Add(new DataPatternDefinition(document.AllocateObjectId(), "Other Pattern"));
+		generated.Source.Should().Be(original);
+		ScriptDocumentEditor.UpdateSource(workspace, generated, "return default;");
+		generated.Source.Should().Be("return default;");
+	}
+
+	[Test]
+	public void NewScriptPatternPrefersExistingSoundSourceAndDoesNotInventSemitoneHelper()
+	{
+		DocumentWorkspace workspace = new();
+		SongDocument document = workspace.Document;
+		DataSequenceDefinition source = new(document.AllocateObjectId(), "Playable Sequence");
+		document.Add(source);
+		ScriptPatternDefinition generated =
+			ScriptDocumentEditor.CreateScriptPattern(workspace, "Pattern");
+		generated.Source.Should().Contain($"_O({source.Id.Value})");
+		generated.Source.Should().Contain("pitchMultiplier: 1.0");
+		generated.Source.Should().NotContain("Semitone(");
+		ScriptCompiler.CompileIncrementalPattern(generated).Success.Should().BeTrue();
+	}
+
+	[TestCase(".hm")]
+	[TestCase(".hm.json")]
+	public void InitialSourceBecomesOrdinaryPersistedText(string extension)
+	{
+		DocumentWorkspace workspace = new();
+		SongDocument document = workspace.Document;
+		DataPatternDefinition pattern = new(document.AllocateObjectId(), "Order");
+		document.Add(pattern);
+		ScriptSequenceDefinition generated =
+			ScriptDocumentEditor.CreateScriptSequence(workspace, "Script");
+		string savedSource = generated.Source;
+		string path = Path.Combine(Path.GetTempPath(),
+			"heresy-script-starter-" + Guid.NewGuid().ToString("N") + extension);
+		try
+		{
+			SongDocumentStorage.Save(path, document);
+			SongDocument opened = SongDocumentStorage.Load(path);
+			((ScriptSequenceDefinition)opened.Objects[generated.Id]).Source
+				.Should().Be(savedSource);
+		}
+		finally
+		{
+			if (File.Exists(path)) File.Delete(path);
+		}
+	}
+
 	[Test]
 	public void CreateScriptPatternAddsCanonicalPatternPlacementAndMarksAudio()
 	{
