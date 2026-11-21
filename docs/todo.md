@@ -212,78 +212,31 @@ Do not reintroduce completed-task checklists here.
   Pattern/Sequence references remain an explicitly reported Stage-B
   warning rather than a full validation claim. These limitations and
   eventual general-purpose document Undo are separate follow-up work.
-  A Linux multi-monitor native file-dialog placement/focus defect was
-  also observed and tracked independently as GitHub issue #36; it does
+  The Linux multi-monitor file-dialog placement/focus defect
+  has been isolated to KDE Plasma's xdg-desktop-portal-kde issue
+  [502311](https://bugs.kde.org/show_bug.cgi?id=502311), also reproduced
+  in Chrome. Heresy issue #36 was closed as upstream work; it does
   not change the Synth import acceptance result. PR #34 is approved
   for merge by the owner.
 
-- [ ] **Add shallow and deep Duplicate to every main-window object list.**
-  **Duplicate** is always a shallow clone of exactly one new definition:
-  owned authoring data is independent, while same-song references retain
-  the original ObjectIds. Add **Duplicate (deep)** only for Instruments,
-  Synths, and **all scripted object subtypes** (Script Sequence, Pattern,
-  Envelope and Instrument), even if a given script currently references
-  nothing. Ordinary Data Sequences, Data Patterns, Node Envelopes, Filters
-  and Samples have no deep menu item.
-  Instrument deep follows tone **source** references recursively but not
-  its ordinary Envelope/Filter references. Synth deep follows graph sources,
-  instruments, Envelopes and Filters recursively; reached objects obey
-  their own per-type traversal rule. Scripted deep recursively follows
-  semantically parsed `_O(id)` references and all explicit typed references.
-  Build one global original-to-duplicate-ID map for the entire reached graph:
-  multiple uses share one duplicate, including self-references and cycles.
-  Translate references **inside** cloned objects only; originals are
-  unchanged. Refuse unreliable script reference analysis or missing targets
-  atomically instead of guessing. Use Roslyn-aware spans for script rewrite,
-  not string substitution.
-  **D1 complete, headless (PR #38):** Shallow Data/Script Sequence and Pattern,
-  Node/Script Envelope and Filter copies, numbered names, independent
-  owned content, detached preparation and guarded atomic commit/undo.
-  **D2 complete, headless:** Shallow Sample/Instrument/Script
-  Instrument/Synth copies, owned encoded Sample bytes and fresh source-file
-  verification at commit, independent tone Filter overrides and Synth graph
-  nodes including disconnected/stale paths. Sample save/reopen tests cover
-  both .hm and .hm.json; original reference IDs remain intact.
-  **D3 complete, headless:** Cycle-safe iterative traversal of Instrument
-  tone sources and Synth graph source/Envelope/Filter dependencies (including
-  disconnected nodes), with one global original-to-duplicate map, provisional
-  contiguous IDs, batch name collision avoidance, shared-target deduplication,
-  whole-graph typed reference remapping, correctly rebound copied Filter uses,
-  atomic commit with final Sample-asset validation, and Undo/Redo as one batch.
-  Cross-Synth/self cycles, diamonds, missing references, stale edits and
-  .hm/.hm.json save/reopen have regression coverage.
-  **D4 complete, headless:** All scripted Sequence, Pattern, Envelope and
-  Instrument fields are semantically analyzed by Roslyn. Script Instrument
-  deep also traverses every typed tone reference. Recognized `_O(id)` source
-  spans are rewritten against the global duplicate ID mapping, preserving
-  comments, strings and shadowed calls; result references are revalidated.
-  Missing, malformed or nonliteral intrinsic targets refuse the entire
-  operation. Script cycles and shared targets are cloned once and re-linked,
-  and scripted roots with no references are supported.
-  **D5 implemented and owner-verified (PR #38):** The six-pane
-  tree context menus now expose shallow Duplicate for every live object,
-  and Duplicate (deep) for Instruments, Synths and all scripted definitions.
-  No commands appear on folders or missing references. Each root clone is
-  atomically placed immediately after its clicked tree occurrence and selected;
-  deep dependencies follow their first existing tree placement or section
-  root. New object definitions, tree positions and ID allocator commit as one
-  transaction. Core transaction receipts retain Undo/Redo internally, but
-  **no new temporary history UI is added**.
-  **D6 owner acceptance complete (2026-11-21):** A–F and H passed on
-  2026-11-19; G passed on 2026-11-21 after adding executable computed
-  `_O(int)` support. The owner tested G's token-edge behavior with a
-  reference not followed by another closing parenthesis, and verified both
-  shallow preservation of the script and atomic refusal of deep duplication
-  for computed IDs. The known edge case where deleting the inner `)` in
-  `_O(1))` immediately reprojects the reference using the outer `)` is
-  **understood and explicitly deferred** to the separate token-projection
-  TODO below; it is not a D6 blocker. Existing diagnostic accelerator and
-  token-edge fixes were also accepted. PR #38 still requires **explicit
-  owner merge approval**. The former ad hoc duplicate-history integration
-  is superseded by the [tiered Undo/Redo design](tiered-undo-redo-design.md).
-  See [Duplicate Object specification](duplicate-object-plan.md).
-  Keep this separate from [implemented UI workflow](user-interface-workflows.md).
-
+- [ ] **Finish selected-folder creation/import acceptance** (issue
+  [#41](https://github.com/logiclrd/Heresy/issues/41), draft PR
+  [#42](https://github.com/logiclrd/Heresy/pull/42)). Every + Create or
+  + Import action across all six panes uses the selected folder, the
+  immediate parent of the clicked object occurrence, or the section
+  root when there is no selection in that section. Capture the import
+  destination before showing file/selection dialogs. Synth graph-aware
+  import places all new Patches/Sample/Synth objects into the chosen
+  Patches folder and keeps cross-section dependencies at their own
+  section roots. Validate attached parent/section before ID allocation
+  and at the atomic Synth import commit boundary; preserve source
+  references, deterministic batch order and selection. Automated checks
+  cover both data/script variants, six sections, nested/empty folders,
+  duplicate occurrences, invalid/detached/wrong-section destinations,
+  audio/Synth import and .hm/.hm.json persistence. **Draft implementation
+  on #42; CI and physical owner acceptance pending.** Reference:
+  [document panes](document-panes.md) and
+  [UI workflow](user-interface-workflows.md).
 
 ## Undo/Redo — tiered redesign
 
