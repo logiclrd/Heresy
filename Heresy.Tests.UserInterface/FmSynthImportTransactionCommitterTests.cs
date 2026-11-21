@@ -369,6 +369,87 @@ public sealed class FmSynthImportTransactionCommitterTests
         }
     }
 
+    [TestCase(".hm")]
+    [TestCase(".hm.json")]
+    public void SelectedFolderReceivesImportedSynthAndSampleWithOneBatch(string extension)
+    {
+        SongDocument source = new();
+        SampleDefinition sample = SampleDefinition.CreateImported(
+            source.AllocateObjectId(), "Sample", "sample.wav", Wave(123));
+        source.Add(sample);
+        FmSynthDefinition synth = Add(source, "Imported Synth",
+            new FmSynthGraph([new FmSoundSourceNode(0, sample.Id, 440)], 0));
+        FmImportExactMatchSource from = Discover(source, "folder-import.hm", synth);
+
+        SongDocument destination = new();
+        SongTreeFolder root = destination.GetSectionRoot(SongTreeSection.Samples);
+        SongTreeFolder folder = SongTreeEditor.CreateFolder(destination, root, "Library");
+        SongTreeFolder nested = SongTreeEditor.CreateFolder(destination, folder, "Selected");
+        int events = 0;
+        destination.Changed += (_, _) => events++;
+        FmImportCommitResult committed = FmSynthImportTransactionCommitter.Commit(
+            Plan(destination, from), [from], destination, nested);
+        Assert.That(committed.IsCommitted, Is.True, committed.Error);
+        Assert.That(events, Is.EqualTo(1));
+        Assert.That(committed.Edit!.ImportedObjectIds, Has.Count.EqualTo(2));
+        Assert.That(nested.Children.OfType<SongTreeObject>()
+            .Select(node => node.ObjectId),
+            Is.EquivalentTo(committed.Edit.ImportedObjectIds));
+        Assert.That(root.Children.OfType<SongTreeObject>(), Is.Empty);
+        Assert.That(committed.SelectedRootIds, Has.Count.EqualTo(1));
+        committed.Edit.Undo();
+        Assert.That(nested.Children, Is.Empty);
+        committed.Edit.Redo();
+        Assert.That(nested.Children, Has.Count.EqualTo(2));
+
+        string directory = Path.Combine(Path.GetTempPath(),
+            "heresy-folder-synth-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string path = Path.Combine(directory, "destination" + extension);
+            SongDocumentStorage.Save(path, destination);
+            SongDocument reopened = SongDocumentStorage.Load(path);
+            SongTreeFolder loaded = reopened.GetSectionRoot(SongTreeSection.Samples)
+                .Children.OfType<SongTreeFolder>().Single()
+                .Children.OfType<SongTreeFolder>().Single();
+            Assert.That(loaded.Children.OfType<SongTreeObject>()
+                .Select(node => node.ObjectId),
+                Is.EquivalentTo(committed.Edit.ImportedObjectIds));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void InvalidSelectedSynthImportFolderRefusesAtomically()
+    {
+        SongDocument source = new();
+        FmSynthDefinition synth = Add(source, "Synth",
+            new FmSynthGraph([new FmConstantNode(0, 1)], 0));
+        FmImportExactMatchSource from = Discover(source, "invalid-folder.hm", synth);
+        SongDocument destination = new();
+        SongTreeFolder wrong = destination.GetSectionRoot(SongTreeSection.Patterns);
+        SongTreeFolder detached = new("Not attached");
+        string baseline = SongDocumentJson.SerializeAuthoringSnapshot(destination);
+        ObjectId cursor = destination.NextUnallocatedObjectId;
+        uint revision = destination.DocumentRevision;
+
+        foreach (SongTreeFolder invalid in new[] { wrong, detached, destination.Root })
+        {
+            FmImportCommitResult result = FmSynthImportTransactionCommitter.Commit(
+                Plan(destination, from), [from], destination, invalid);
+            Assert.That(result.IsCommitted, Is.False);
+            Assert.That(result.Error, Does.Contain("placement").Or.Contain("folder"));
+            Assert.That(destination.NextUnallocatedObjectId, Is.EqualTo(cursor));
+            Assert.That(destination.DocumentRevision, Is.EqualTo(revision));
+            Assert.That(SongDocumentJson.SerializeAuthoringSnapshot(destination),
+                Is.EqualTo(baseline));
+        }
+    }
+
     private static FmSynthDefinition Add(SongDocument song, string name,
         FmSynthGraph graph)
     {
