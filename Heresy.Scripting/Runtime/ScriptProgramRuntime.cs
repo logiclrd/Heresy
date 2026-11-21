@@ -641,4 +641,21 @@ public abstract class SequenceScriptProgram : ISequenceEntryProvider
 		Checkpoint();
 		return new SequenceEntry(patternId, startRow);
 	}
+
+	/// <summary>Called only by a specially compiled editor-audition script.
+	/// The leading metadata parameter cannot displace existing optional
+	/// arguments. Normal Play calls never enter this method or its hook.</summary>
+	protected SequenceEntry Play(SequenceCallsite callsite,
+		ObjectId patternId, int startRow = 0)
+	{
+		SequenceEntry entry = Play(patternId, startRow)
+			with { EditorCallsite = callsite };
+		OnInstrumentedPlay(callsite, entry);
+		return entry;
+	}
+
+	/// <summary>Optional probe for immediate call execution. The UI's basic
+	/// highlight uses the returned entry's scheduled activation instead.</summary>
+	protected virtual void OnInstrumentedPlay(
+		SequenceCallsite callsite, SequenceEntry entry) { }
 }

@@ -77,6 +77,12 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	/// No future orders are traversed to construct this feed.</summary>
 	public event Action<ObjectId, int, ObjectId?, int?, TimeSpan>? RowBegan;
 
+	/// <summary>Optional, editor-only positions with the source span of the
+	/// Play invocation whose returned SequenceEntry became the active order.
+	/// The ordinary RowBegan event remains unchanged.</summary>
+	public event Action<ObjectId, int, ObjectId?, int?, TimeSpan,
+		SequenceCallsite?>? EditorRowBegan;
+
 	/// <summary>Playback-loop boundary for a directly played root Pattern.
 	/// A flattened child completing its rows cannot restart its parent;
 	/// a child remaining active cannot postpone the root's boundary.</summary>
@@ -97,6 +103,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			return;
 		ObjectId? sequenceId = null;
 		int? order = null;
+		SequenceCallsite? callsite = null;
 		if (frame.ParentId is long parent)
 		{
 			// Only a direct order of a root Sequence is part of the
@@ -108,8 +115,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 				return;
 			sequenceId = ancestor.SourceId;
 			order = ancestor.Order;
+			callsite = ancestor.ActiveEntry?.EditorCallsite;
 		}
 		RowBegan?.Invoke(frame.SourceId, row, sequenceId, order, time);
+		EditorRowBegan?.Invoke(frame.SourceId, row, sequenceId, order,
+			time, callsite);
 	}
 
 	/// <summary>Optional live playback source of remembered note volume.

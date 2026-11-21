@@ -167,13 +167,27 @@ public static class ScriptCompiler
 	/// function and never buffer a generated list of orders.
 	/// </summary>
 	public static ScriptCompilationResult<ISequenceEntrySourceFactory>
-		CompileIncrementalSequence(ScriptSequenceDefinition definition)
+		CompileIncrementalSequence(ScriptSequenceDefinition definition,
+		bool instrumentPlayCallsites = false)
 	{
 		ArgumentNullException.ThrowIfNull(definition);
+		// Author-written code is always checked in its canonical form,
+		// before any trusted metadata constructors are generated.
+		if (instrumentPlayCallsites)
+		{
+			IReadOnlyList<ScriptAnalysisDiagnostic> authored =
+				AnalyzeSequenceSource(definition.Source);
+			if (HasErrors(authored))
+				return new(null, authored);
+		}
+
 		string className = "__HeresySequenceLookup_" + Guid.NewGuid().ToString("N");
+		string source = instrumentPlayCallsites
+			? InstrumentSequencePlayCallsites(definition.Source)
+			: definition.Source;
 		ScriptCompilationResult<Type> compiled = CompileType(
 			definition.Source, className,
-			BuildSequenceWrapper(className, InstrumentLoops(definition.Source)),
+			BuildSequenceWrapper(className, InstrumentLoops(source)),
 			typeof(SequenceScriptProgram));
 
 		if (!compiled.Success || compiled.Program is null)
@@ -880,6 +894,42 @@ public static class ScriptCompiler
 				new ScriptSourceSpan(invocation.Span.Start, invocation.Span.Length)));
 		}
 		return diagnostics;
+	}
+
+	/// <summary>Only the editor-F6 Sequence compiler uses this pass.
+	/// Tokens use offsets from the ORIGINAL author source, never the
+	/// loop-checkpoint-expanded source. The ordinary compiler never runs it.</summary>
+	private static string InstrumentSequencePlayCallsites(string source)
+	{
+		SyntaxNode root = CSharpSyntaxTree.ParseText(
+			source, ScriptParseOptions).GetRoot();
+		return new SequencePlayCallsiteRewriter().Visit(root)
+			?.ToFullString() ?? source;
+	}
+
+	private sealed class SequencePlayCallsiteRewriter : CSharpSyntaxRewriter
+	{
+		public override SyntaxNode? VisitInvocationExpression(
+			InvocationExpressionSyntax node)
+		{
+			InvocationExpressionSyntax rewritten =
+				(InvocationExpressionSyntax)(base.VisitInvocationExpression(node)
+					?? node);
+			if (node.Expression is not IdentifierNameSyntax name
+				|| name.Identifier.ValueText != "Play")
+				return rewritten;
+
+			// The user wrote Play(x[, row]); inject a new *first* argument
+			// without shifting optional arguments or persisting code changes.
+			int start = node.Expression.SpanStart;
+			int length = node.Expression.Span.Length;
+			ArgumentSyntax callsite = SyntaxFactory.Argument(
+				SyntaxFactory.ParseExpression(
+					$"new SequenceCallsite({start}, {length})"));
+			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
+				rewritten.ArgumentList.Arguments.Insert(0, callsite)))
+				.WithTriviaFrom(node);
+		}
 	}
 
 	private static string InstrumentIncrementalPattern(string source)

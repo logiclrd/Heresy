@@ -29,10 +29,17 @@ public sealed class RoslynIncrementalScriptSourceCompiler
 
 	public ISequenceEntrySourceFactory CompileSequence(
 		ScriptSequenceDefinition source)
+		=> CompileSequence(source, instrumentPlayCallsites: false);
+
+	/// <summary>Internal preparation choice; ordinary IIncrementalScriptSourceCompiler
+	/// usage always uses the original, uninstrumented script.</summary>
+	public ISequenceEntrySourceFactory CompileSequence(
+		ScriptSequenceDefinition source, bool instrumentPlayCallsites)
 	{
 		ArgumentNullException.ThrowIfNull(source);
 		ScriptCompilationResult<ISequenceEntrySourceFactory> result =
-			ScriptCompiler.CompileIncrementalSequence(source);
+			ScriptCompiler.CompileIncrementalSequence(
+				source, instrumentPlayCallsites);
 		if (!result.Success || result.Program is null)
 			throw CompilationFailure("Sequence", result.Diagnostics);
 		return result.Program;
