@@ -27,14 +27,19 @@ public sealed class FmSynthImportSelectionDialog : Window
 	private readonly List<(FmSynthDefinition Synth, CheckBox CheckBox)> _choices = [];
 	private readonly SongFmSynthImportSource _source;
 	private readonly SongDocument? _destination;
+	private readonly SongTreeFolder? _destinationFolder;
 	private bool _openingPlan;
 
 	public FmSynthImportSelectionDialog(
-		SongFmSynthImportSource source, SongDocument? destination = null)
+		SongFmSynthImportSource source, SongDocument? destination = null,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(source);
 		_source = source;
 		_destination = destination;
+		_destinationFolder = destination is null ? null
+			: destination.ResolveObjectDestination(
+				SongTreeSection.Samples, destinationFolder);
 
 		Title = "Import synths from Heresy song";
 		Width = 540;
@@ -235,7 +240,8 @@ public sealed class FmSynthImportSelectionDialog : Window
 			return null;
 
 		FmSynthImportPlanPreviewDialog plan = new(
-			_source, selected, _destination, enableCommit: true);
+			_source, selected, _destination, enableCommit: true,
+			destinationFolder: _destinationFolder);
 		FmImportCommitResult? accepted = await present(plan);
 		if (accepted?.IsCommitted != true ||
 			!ReferenceEquals(accepted, plan.CommittedResult))
