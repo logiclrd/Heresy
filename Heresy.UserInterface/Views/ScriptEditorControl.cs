@@ -132,6 +132,7 @@ public sealed class ScriptEditorControl : UserControl
 				Height = 420,
 				MinWidth = 520,
 			};
+		ScriptEditorFonts.ApplyTo(_source);
 		_source.TextArea.TextView.ElementGenerators.Add(
 			_referenceGenerator);
 		_source.TextArea.TextView.LineTransformers.Add(

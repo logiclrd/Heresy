@@ -45,6 +45,7 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 			MinHeight = 110,
 			MinWidth = 350,
 		};
+		ScriptEditorFonts.ApplyTo(_source);
 		_release = new TextBox
 		{
 			Text = envelope.ReleaseDuration?.TotalSeconds.ToString(
