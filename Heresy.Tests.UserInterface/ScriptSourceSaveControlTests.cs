@@ -46,10 +46,13 @@ public sealed class ScriptSourceSaveControlTests
         Assert.That(sequence.Source, Is.EqualTo(source.Text));
         Assert.That(save.IsEnabled, Is.False);
 
+        // Incomplete Sequence/Pattern source must remain saveable:
+        // compilation diagnostics are not an authoring persistence gate.
         source.Text += "\nMissingUnknownFunction();";
-        Assert.That(editor.TrySaveScriptSource(), Is.False);
-        Assert.That(save.IsEnabled, Is.True);
-        Assert.That(sequence.Source, Does.Not.Contain("MissingUnknownFunction"));
+        Assert.That(editor.TrySaveScriptSource(), Is.True);
+        Assert.That(save.IsEnabled, Is.False);
+        Assert.That(sequence.Source, Does.Contain("MissingUnknownFunction"));
+        source.Text += "\n// unsaved again";
         editor.DiscardUnsavedScriptSource();
         Assert.That(editor.HasUnsavedScriptSource, Is.False);
         Assert.That(source.Text, Is.EqualTo(sequence.Source));
@@ -96,6 +99,14 @@ public sealed class ScriptSourceSaveControlTests
             .Invoke(editor, null);
         Assert.That(envelope.ReleaseDuration,
             Is.EqualTo(TimeSpan.FromSeconds(8.5)));
+
+        source.Text = "System.Environment.TickCount";
+        Assert.That(editor.TrySaveScriptSource(), Is.False);
+        Assert.That(envelope.Source, Is.EqualTo("0.25"));
+        Assert.That(editor.HasUnsavedScriptSource, Is.True);
+        editor.DiscardUnsavedScriptSource();
+        Assert.That(source.Text, Is.EqualTo("0.25"));
+        Assert.That(save.IsEnabled, Is.False);
     }
 
     [AvaloniaTest]
