@@ -24,7 +24,7 @@ namespace Heresy.UserInterface.Views;
 /// The TextDocument always contains canonical restricted-C# source; semantic
 /// object references are replaced only in the visual-line layer.
 /// </summary>
-public sealed class ScriptEditorControl : UserControl
+public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor
 {
 	private readonly DocumentWorkspace _workspace;
 	private readonly ScriptPatternDefinition? _pattern;
@@ -34,6 +34,14 @@ public sealed class ScriptEditorControl : UserControl
 	private readonly string _backLabel;
 
 	private readonly TextEditor _source;
+	private string _appliedSource = string.Empty;
+	private readonly Button _saveSource = new()
+	{
+		Content = "Save",
+		MinWidth = 120,
+		HorizontalAlignment = HorizontalAlignment.Left,
+		IsEnabled = false,
+	};
 	private readonly ScriptObjectReferenceElementGenerator _referenceGenerator =
 		new();
 	private readonly ScriptSyntaxColorizer _syntaxColorizer =
@@ -122,6 +130,7 @@ public sealed class ScriptEditorControl : UserControl
 		string source =
 			pattern?.Source
 				?? sequence!.Source;
+		_appliedSource = source;
 
 		_source =
 			new TextEditor
@@ -147,7 +156,11 @@ public sealed class ScriptEditorControl : UserControl
 			RoutingStrategies.Tunnel,
 			handledEventsToo: true);
 		_source.TextChanged += (_, _) =>
+		{
 			RefreshAnalysis();
+			_saveSource.IsEnabled = HasUnsavedScriptSource;
+		};
+		_saveSource.Click += (_, _) => TrySaveScriptSource();
 		_source.PointerMoved += OnSourcePointerMoved;
 		_source.PointerExited += (_, _) =>
 			ClearDiagnosticHover();
@@ -179,6 +192,18 @@ public sealed class ScriptEditorControl : UserControl
 	private SongObject ScriptObject =>
 		(SongObject?)_pattern
 			?? _sequence!;
+
+	public string ScriptSourceDisplayName => ScriptObject.Name;
+
+	public bool HasUnsavedScriptSource =>
+		!string.Equals(_source.Text ?? string.Empty,
+			_appliedSource, StringComparison.Ordinal);
+
+	public void DiscardUnsavedScriptSource()
+	{
+		_source.Text = _appliedSource;
+		_saveSource.IsEnabled = false;
+	}
 
 	private Control BuildContent()
 	{
@@ -251,15 +276,7 @@ public sealed class ScriptEditorControl : UserControl
 				? ScriptEditorHelp.PatternReference
 				: ScriptEditorHelp.SequenceReference));
 
-		Button apply =
-			new()
-			{
-				Content = "Apply source",
-				MinWidth = 120,
-				HorizontalAlignment = HorizontalAlignment.Left,
-			};
-		apply.Click += (_, _) => ApplySource();
-		body.Children.Add(apply);
+		body.Children.Add(_saveSource);
 
 		Border messageBorder =
 			new()
@@ -641,8 +658,10 @@ public sealed class ScriptEditorControl : UserControl
 		_source.Focus();
 	}
 
-	private void ApplySource()
+	public bool TrySaveScriptSource()
 	{
+		if (!HasUnsavedScriptSource)
+			return true;
 		try
 		{
 			string source =
@@ -663,13 +682,17 @@ public sealed class ScriptEditorControl : UserControl
 					source);
 			}
 
-			_message.Text = "Script source updated.";
+			_appliedSource = source;
+			_saveSource.IsEnabled = false;
+			_message.Text = "Script source saved to the song.";
 			_changed(
 				$"Updated script source for {ScriptObject.Name}");
+			return true;
 		}
 		catch (Exception ex)
 		{
 			_message.Text = ex.Message;
+			return false;
 		}
 	}
 
