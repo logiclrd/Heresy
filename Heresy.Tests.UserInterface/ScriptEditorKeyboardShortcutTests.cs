@@ -156,12 +156,14 @@ public sealed class ScriptEditorKeyboardShortcutTests
                 Assert.That(editor.HasUnsavedScriptSource, Is.False);
                 Assert.That(save.IsEnabled, Is.False);
 
-                KeyEventArgs clean = Press(source, Key.S, KeyModifiers.Control);
-                Assert.That(clean.Handled, Is.True,
-                    "clean source must consume Ctrl+S, not fall through to Save Document");
+                Assert.That(editor.TryHandleSourceSaveShortcut(source),
+                    Is.EqualTo(ScriptSourceSaveShortcutRoute.SaveDocument));
+                Assert.That(editor.TryHandleSourceSaveShortcut(save),
+                    Is.EqualTo(ScriptSourceSaveShortcutRoute.SaveDocument));
 
                 ComboBox elsewhere = Field<ComboBox>(editor, "_reference");
-                Assert.That(editor.TryHandleSourceSaveShortcut(elsewhere), Is.False);
+                Assert.That(editor.TryHandleSourceSaveShortcut(elsewhere),
+                    Is.EqualTo(ScriptSourceSaveShortcutRoute.NotApplicable));
                 Assert.That(FileMenuKeyboard.TryGetCommand(
                     Key.S, KeyModifiers.Control, false, out FileMenuCommand file),
                     Is.True);
@@ -231,10 +233,17 @@ public sealed class ScriptEditorKeyboardShortcutTests
                 Is.EqualTo("InstrumentNnaAction.Inherit"));
             Assert.That(saveExpressions.IsEnabled, Is.False);
             Assert.That(saveNna.IsEnabled, Is.True);
+            Assert.That(editor.TryHandleSourceSaveShortcut(selector),
+                Is.EqualTo(ScriptSourceSaveShortcutRoute.SaveLocally),
+                "a clean group must not save while another source group is dirty");
 
             Assert.That(Press(saveNna, Key.S, KeyModifiers.Control).Handled, Is.True);
             Assert.That(definition.NnaExpression, Is.EqualTo("InstrumentNnaAction.Cut"));
             Assert.That(saveNna.IsEnabled, Is.False);
+            Assert.That(editor.TryHandleSourceSaveShortcut(saveExpressions),
+                Is.EqualTo(ScriptSourceSaveShortcutRoute.SaveDocument));
+            Assert.That(editor.TryHandleSourceSaveShortcut(saveNna),
+                Is.EqualTo(ScriptSourceSaveShortcutRoute.SaveDocument));
 
             nna.Text = "System.Environment.TickCount";
             Assert.That(Press(nna, Key.S, KeyModifiers.Control).Handled, Is.True);
@@ -243,7 +252,8 @@ public sealed class ScriptEditorKeyboardShortcutTests
                 "invalid source must remain in the editable buffer");
             Assert.That(Press(saveNna, Key.S, KeyModifiers.Control).Handled, Is.True);
             Assert.That(editor.TryHandleSourceSaveShortcut(
-                Field<TextBox>(editor, "_nnaFadeMilliseconds")), Is.False);
+                Field<TextBox>(editor, "_nnaFadeMilliseconds")),
+                Is.EqualTo(ScriptSourceSaveShortcutRoute.NotApplicable));
         }
         finally
         {
@@ -279,7 +289,10 @@ public sealed class ScriptEditorKeyboardShortcutTests
             source.Text = "0.25";
             Assert.That(Press(save, Key.S, KeyModifiers.Control).Handled, Is.True);
             Assert.That(definition.Source, Is.EqualTo("0.25"));
-            Assert.That(editor.TryHandleSourceSaveShortcut(release), Is.False);
+            Assert.That(editor.TryHandleSourceSaveShortcut(save),
+                Is.EqualTo(ScriptSourceSaveShortcutRoute.SaveDocument));
+            Assert.That(editor.TryHandleSourceSaveShortcut(release),
+                Is.EqualTo(ScriptSourceSaveShortcutRoute.NotApplicable));
         }
         finally
         {
