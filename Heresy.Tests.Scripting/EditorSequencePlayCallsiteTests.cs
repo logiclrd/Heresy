@@ -53,7 +53,7 @@ public sealed class EditorSequencePlayCallsiteTests
                     StringComparison.Ordinal);
                 Assert.That(b?.EditorCallsite,
                     Is.EqualTo(new SequenceCallsite(start,
-                        source.IndexOf(')', start) - start + 1)));
+                        source.IndexOf(");", start, StringComparison.Ordinal) - start + 1)));
             }
             else
                 Assert.That(b?.EditorCallsite, Is.Null);
@@ -91,10 +91,10 @@ public sealed class EditorSequencePlayCallsiteTests
             Assert.That(second.PatternId, Is.EqualTo((ObjectId)1U));
             Assert.That(first.EditorCallsite,
                 Is.EqualTo(new SequenceCallsite(firstOffset,
-                    source.IndexOf(')', firstOffset) - firstOffset + 1)));
+                    source.IndexOf(");", firstOffset, StringComparison.Ordinal) - firstOffset + 1)));
             Assert.That(second.EditorCallsite,
                 Is.EqualTo(new SequenceCallsite(secondOffset,
-                    source.IndexOf(')', secondOffset) - secondOffset + 1)));
+                    source.IndexOf(");", secondOffset, StringComparison.Ordinal) - secondOffset + 1)));
             Assert.That(provider.GetSequenceEntry(2, 2, 1), Is.Null);
         });
     }
@@ -129,10 +129,10 @@ public sealed class EditorSequencePlayCallsiteTests
             Assert.That(third.PatternId, Is.EqualTo((ObjectId)17U));
             Assert.That(first.EditorCallsite,
                 Is.EqualTo(new SequenceCallsite(firstChosen,
-                    source.IndexOf(')', firstChosen) - firstChosen + 1)));
+                    source.IndexOf(");", firstChosen, StringComparison.Ordinal) - firstChosen + 1)));
             Assert.That(second.EditorCallsite,
                 Is.EqualTo(new SequenceCallsite(lastChosen,
-                    source.IndexOf(')', lastChosen) - lastChosen + 1)));
+                    source.IndexOf(");", lastChosen, StringComparison.Ordinal) - lastChosen + 1)));
             Assert.That(third.EditorCallsite, Is.EqualTo(first.EditorCallsite));
         });
     }
@@ -184,10 +184,10 @@ public sealed class EditorSequencePlayCallsiteTests
         int sourceOffset = source.IndexOf("Play(", StringComparison.Ordinal);
         Assert.That(provider.GetSequenceEntry(0, 0, -1)?.EditorCallsite,
             Is.EqualTo(new SequenceCallsite(sourceOffset,
-                source.IndexOf(')', sourceOffset) - sourceOffset + 1)));
+                source.IndexOf(");", sourceOffset, StringComparison.Ordinal) - sourceOffset + 1)));
         Assert.That(provider.GetSequenceEntry(1, 1, 0)?.EditorCallsite,
             Is.EqualTo(new SequenceCallsite(sourceOffset,
-                source.IndexOf(')', sourceOffset) - sourceOffset + 1)));
+                source.IndexOf(");", sourceOffset, StringComparison.Ordinal) - sourceOffset + 1)));
         Assert.That(provider.GetSequenceEntry(2, 2, 1), Is.Null);
     }
 
