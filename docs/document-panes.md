@@ -33,6 +33,30 @@ button and the **Edit Filter...** tree activation, with stage ordering,
 rename/type selection and parameter defaults in the standalone editor.
 Existing song types retain their current activation and creation actions.
 
+## Selected-folder creation and import (issue #41)
+
+Each pane's **+ Create** and **+ Import** commands use the current tree
+selection in that same section: a selected folder receives the new objects;
+a selected object causes creation in its **immediate parent folder** (using
+the selected tree occurrence, not the ObjectId's first occurrence); with no
+relevant selection, the command appends at that section's root. Selection
+in a different pane is irrelevant to the destination. This applies to
+Sequence/Script Sequence, Pattern/Script Pattern, Instrument/Script Instrument,
+Filter, Node/Script Envelope, Synth, and audio Sample creation/import.
+
+The Patches pane's **Import Synths** carries its selected folder across the
+file picker, selector and graph-aware import plan. Every newly copied object
+belonging to Patches (including copied Synth and Sample dependencies) is
+placed in the same destination folder; imported Filter, Envelope and
+Instrument dependencies retain their respective section roots. The
+existing graph-aware batch commit validates all placements before publishing
+anything and preserves its one-step import receipt. Multi-Sample imports
+keep the source song's deterministic ObjectId order. The destination is
+validated before object-ID allocation for ordinary creation/import, and
+the Core `SongDocument.Add` boundary rejects detached or cross-section
+folders without touching object identity, revisions or tree contents.
+Nested placements persist unchanged in both `.hm` and `.hm.json`.
+
 ## Song-object type colour foundation (first UI slice)
 
 Song names in all six main document trees now use the shared
