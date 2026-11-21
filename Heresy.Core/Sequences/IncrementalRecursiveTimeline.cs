@@ -426,10 +426,10 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								"Incremental emitted event has no owning invocation.");
 						// Only direct root Pattern audition reports authored actions.
 						if (frame.ParentId is null
-							&& emit.Note.EditorCallsite is SequenceCallsite action)
+							&& emit.Note.EditorCallsite is SequenceCallsite callsite)
 							EditorPatternActionBegan?.Invoke(frame.SourceId,
 								(int)Math.Floor(emit.Note.Offset.RowOffset),
-								emit.Time, action);
+								emit.Time, callsite);
 						List<NoteCommand> retained = [];
 						foreach (NoteCommand command in emit.Note.Commands)
 						{
