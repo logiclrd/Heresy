@@ -167,8 +167,37 @@ public sealed class LazySongPlaybackTransportTests
 		probe!.SharedPublished.Should().Equal(filterId);
 	}
 
+	[Test]
+	public async Task F6EditorTracePassesThroughLazyDesktopFacadeWithoutNormalFallback()
+	{
+		int created = 0;
+		ProbeTransport? probe = null;
+		using LazySongPlaybackTransport lazy = new(() =>
+		{
+			created++;
+			return probe = new ProbeTransport();
+		});
+		IEditorSequencePlaybackTransport editor = lazy;
+		created.Should().Be(0,
+			"the interface check itself must not initialize the audio system");
+
+		Guid session = Guid.NewGuid();
+		SongDocument song = new();
+		await editor.PlayEditorSequenceAsync(song, (ObjectId)2U, session);
+
+		created.Should().Be(1);
+		probe!.EditorSequenceId.Should().Be((ObjectId)2U);
+		probe.EditorTraceId.Should().Be(session);
+		probe.SequenceCalls.Should().Be(0,
+			"normal playback loses the editor-only callsite metadata");
+
+		await lazy.PlaySequenceAsync(song, (ObjectId)2U);
+		probe.SequenceCalls.Should().Be(1);
+	}
+
 	private sealed class ProbeTransport
-		: ISongPlaybackTransport, IPlaybackRuntimeDiagnosticsTransport,
+		: ISongPlaybackTransport, IEditorSequencePlaybackTransport,
+			IPlaybackRuntimeDiagnosticsTransport,
 			IPlaybackAudioHealthTransport, IPlaybackSnapshotTransport,
 			ILiveSynthEditTransport
 	{
@@ -213,7 +242,17 @@ public sealed class LazySongPlaybackTransportTests
 			=> Task.CompletedTask;
 
 		public int PatternCalls { get; private set; }
+		public int SequenceCalls { get; private set; }
+		public ObjectId? EditorSequenceId { get; private set; }
+		public Guid? EditorTraceId { get; private set; }
 		public int StopCalls { get; private set; }
+		public Task PlayEditorSequenceAsync(
+			SongDocument document, ObjectId sequenceId, Guid editorCallsiteSession)
+		{
+			EditorSequenceId = sequenceId;
+			EditorTraceId = editorCallsiteSession;
+			return Task.CompletedTask;
+		}
 
 		public Task PlaySongAsync(
 			SongDocument document)
@@ -223,7 +262,10 @@ public sealed class LazySongPlaybackTransportTests
 			SongDocument document,
 			ObjectId sequenceId,
 			SequencePlaybackPosition? startPosition = null)
-			=> Task.CompletedTask;
+		{
+			SequenceCalls++;
+			return Task.CompletedTask;
+		}
 
 		public Task PlayPatternAsync(
 			SongDocument document,

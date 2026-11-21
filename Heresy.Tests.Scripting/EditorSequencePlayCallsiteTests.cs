@@ -62,6 +62,41 @@ public sealed class EditorSequencePlayCallsiteTests
     }
 
     [Test]
+    public void OwnerReproIdenticalPatternInTwoOrdersHasDistinctPlayIdentifiers()
+    {
+        const string source = """
+            switch (sequenceIndex)
+            {
+                case 0: return Play(_O(1));
+                case 1: return Play(_O(1));
+                default: return default;
+            }
+            """;
+        ScriptSequenceDefinition definition = new((ObjectId)2U, "Repro")
+            { Source = source };
+        var compiled = ScriptCompiler.CompileIncrementalSequence(definition,
+            instrumentPlayCallsites: true);
+        Assert.That(compiled.Success, Is.True,
+            string.Join("; ", compiled.Diagnostics.Select(d => d.Message)));
+        var provider = compiled.Program!.Create(new SequencingContext());
+        SequenceEntry first = provider.GetSequenceEntry(0, 0, -1)!;
+        SequenceEntry second = provider.GetSequenceEntry(1, 1, 0)!;
+        int firstOffset = source.IndexOf("Play(", StringComparison.Ordinal);
+        int secondOffset = source.IndexOf("Play(", firstOffset + 4,
+            StringComparison.Ordinal);
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.PatternId, Is.EqualTo((ObjectId)1U));
+            Assert.That(second.PatternId, Is.EqualTo((ObjectId)1U));
+            Assert.That(first.EditorCallsite,
+                Is.EqualTo(new SequenceCallsite(firstOffset, 4)));
+            Assert.That(second.EditorCallsite,
+                Is.EqualTo(new SequenceCallsite(secondOffset, 4)));
+            Assert.That(provider.GetSequenceEntry(2, 2, 1), Is.Null);
+        });
+    }
+
+    [Test]
     public void ChosenBranchRetainsItsOwnCallsiteDespiteIgnoredPlayAndRepeatedOrders()
     {
         const string source = """

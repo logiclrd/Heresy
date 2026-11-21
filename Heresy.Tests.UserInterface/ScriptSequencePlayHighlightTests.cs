@@ -105,7 +105,8 @@ public sealed class ScriptSequencePlayHighlightTests
     public async Task F6UsesOptionalEditorTraceTransportAndStopsOnPositionClear()
     {
         RecordingTransport transport = new();
-        MainWindow window = new(transport);
+        using LazySongPlaybackTransport lazy = new(() => transport);
+        MainWindow window = new(lazy);
         DocumentWorkspace workspace = Field<DocumentWorkspace>(window, "_workspace");
         var sequence = ScriptDocumentEditor.CreateScriptSequence(workspace, "Test");
         sequence.Source = "return Play(_O(17));";
