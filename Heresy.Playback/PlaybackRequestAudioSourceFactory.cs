@@ -123,7 +123,9 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				PatternPlaybackRequest pattern => factory.Create(
 					pattern.Snapshot, pattern.PatternId,
 					startRow: pattern.StartRow,
-					repeatPattern: pattern.Repeat),
+					repeatPattern: pattern.Repeat,
+					instrumentedPatternId: pattern.EditorCallsiteSession.HasValue
+						? pattern.PatternId : null),
 				AdHocPlaybackRequest adHoc =>
 					factory.CreateAdHoc(adHoc.Snapshot, adHoc.Schedule,
 						reserveSynthMultiHeadroom: adHoc.ReserveSynthMultiHeadroom),
@@ -156,6 +158,29 @@ public sealed class PlaybackRequestAudioSourceFactory :
 								EditorCallsiteSession = session,
 								EditorPlayCallsite = callsite,
 							}));
+			}
+			else if (request is PatternPlaybackRequest
+				{ EditorCallsiteSession: Guid patternSession } patternTrace)
+			{
+				// A row boundary clears the prior action without implying
+				// that its note or voice has finished sounding.
+				plan.Timeline.RowBegan += (id, row, sequence, order, at) =>
+					positions.Append(new PlaybackPositionTimelineEntry(at,
+						new PlaybackPatternPosition(id, row, sequence, order)
+						{
+							EditorCallsiteSession = patternSession,
+						}));
+				plan.Timeline.EditorPatternActionBegan += (id, row, at, callsite) =>
+				{
+					if (id != patternTrace.PatternId)
+						return;
+					positions.Append(new PlaybackPositionTimelineEntry(at,
+						new PlaybackPatternPosition(id, row, null, null)
+						{
+							EditorCallsiteSession = patternSession,
+							EditorPatternCallsite = callsite,
+						}));
+				};
 			}
 			else
 			{

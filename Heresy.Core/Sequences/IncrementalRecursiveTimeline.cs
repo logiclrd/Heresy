@@ -83,6 +83,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	public event Action<ObjectId, int, ObjectId?, int?, TimeSpan,
 		SequenceCallsite?>? EditorRowBegan;
 
+	/// <summary>Editor-only root Script Pattern action observed at its
+	/// resolved musical deadline, never at Roslyn helper evaluation time.</summary>
+	public event Action<ObjectId, int, TimeSpan, SequenceCallsite>?
+		EditorPatternActionBegan;
+
 	/// <summary>Playback-loop boundary for a directly played root Pattern.
 	/// A flattened child completing its rows cannot restart its parent;
 	/// a child remaining active cannot postpone the root's boundary.</summary>
@@ -419,6 +424,12 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							|| !_frames.TryGetValue(frameId, out Invocation? frame))
 							throw new InvalidOperationException(
 								"Incremental emitted event has no owning invocation.");
+						// Only direct root Pattern audition reports authored actions.
+						if (frame.ParentId is null
+							&& emit.Note.EditorCallsite is SequenceCallsite action)
+							EditorPatternActionBegan?.Invoke(frame.SourceId,
+								(int)Math.Floor(emit.Note.Offset.RowOffset),
+								emit.Time, action);
 						List<NoteCommand> retained = [];
 						foreach (NoteCommand command in emit.Note.Commands)
 						{

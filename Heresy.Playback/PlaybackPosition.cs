@@ -50,6 +50,7 @@ public sealed record PlaybackPatternPosition
 	/// sessions even if the same source is recompiled or edited in place.</summary>
 	public Guid? EditorCallsiteSession { get; init; }
 	public SequenceCallsite? EditorPlayCallsite { get; init; }
+	public SequenceCallsite? EditorPatternCallsite { get; init; }
 }
 
 public sealed record PlaybackPositionTimelineEntry(

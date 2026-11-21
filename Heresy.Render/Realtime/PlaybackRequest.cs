@@ -62,6 +62,10 @@ public sealed record PatternPlaybackRequest(
 	bool Repeat)
 	: PlaybackRequest(Snapshot)
 {
+	/// <summary>Only a Script Pattern's F6 audition opts into authored
+	/// action provenance.</summary>
+	public Guid? EditorCallsiteSession { get; init; }
+
 	public static PatternPlaybackRequest Create(
 		SongDocument document,
 		ObjectId patternId,
