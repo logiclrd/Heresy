@@ -19,7 +19,8 @@ public sealed class LazySongPlaybackTransport
 		IPlaybackAudioHealthTransport,
 		IPlaybackSnapshotTransport,
 		ILiveSynthEditTransport,
-		IEditorSequencePlaybackTransport
+		IEditorSequencePlaybackTransport,
+		IEditorPatternPlaybackTransport
 {
 	private readonly object _gate = new();
 	private readonly Func<ISongPlaybackTransport> _factory;
@@ -196,6 +197,18 @@ public sealed class LazySongPlaybackTransport
 			?? throw new NotSupportedException(
 					"The playback transport does not support editor Sequence tracing."))
 			.PlayEditorSequenceAsync(document, sequenceId, editorCallsiteSession);
+	}
+
+	public Task PlayEditorPatternAsync(
+		SongDocument document, ObjectId patternId, Guid editorCallsiteSession)
+	{
+		if (editorCallsiteSession == Guid.Empty)
+			throw new ArgumentException("Editor trace ID cannot be empty.",
+				nameof(editorCallsiteSession));
+		return (GetInner() as IEditorPatternPlaybackTransport
+			?? throw new NotSupportedException(
+				"The playback transport does not support editor Pattern tracing."))
+			.PlayEditorPatternAsync(document, patternId, editorCallsiteSession);
 	}
 
 	public Task PlayPatternAsync(

@@ -3708,9 +3708,21 @@ public sealed class MainWindow : Window
 
 			if (script.ScriptPatternId is ObjectId scriptPatternId)
 			{
-				await _playbackTransport.PlayPatternAsync(
-					_workspace.Document, scriptPatternId,
-					startRow: 0, repeat: true);
+				if (_playbackTransport is IEditorPatternPlaybackTransport patternTracing)
+				{
+					Guid session = Guid.NewGuid();
+					script.BeginEditorPatternTrace(session);
+					await patternTracing.PlayEditorPatternAsync(
+						_workspace.Document, scriptPatternId, session);
+					script.SetPlaybackPosition(
+						_playbackPositionTransport?.CurrentPlaybackPosition);
+				}
+				else
+				{
+					await _playbackTransport.PlayPatternAsync(
+						_workspace.Document, scriptPatternId,
+						startRow: 0, repeat: true);
+				}
 				SetStatus($"Playing script pattern {script.ScriptSourceDisplayName} repeatedly.");
 				return;
 			}

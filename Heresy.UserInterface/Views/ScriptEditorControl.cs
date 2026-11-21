@@ -238,6 +238,17 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		SetPlaybackPosition(null);
 	}
 
+	/// <summary>F6 traces one source snapshot and one fresh playback session.</summary>
+	public void BeginEditorPatternTrace(Guid session)
+	{
+		if (_pattern is null || session == Guid.Empty)
+			throw new InvalidOperationException(
+				"Only a Script Pattern editor can trace F6 actions.");
+		_editorTraceSession = session;
+		_editorTraceSource = _source.Text ?? string.Empty;
+		SetPlaybackPosition(null);
+	}
+
 	public void SetPlaybackPosition(PlaybackPatternPosition? position)
 	{
 		Heresy.Core.Sequences.SequenceCallsite? span = null;
@@ -248,6 +259,13 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			&& string.Equals(_editorTraceSource, _source.Text,
 					StringComparison.Ordinal))
 			span = position.EditorPlayCallsite;
+		else if (_pattern is not null
+			&& _editorTraceSession is Guid patternSession
+			&& position?.EditorCallsiteSession == patternSession
+			&& position.PatternId == _pattern.Id
+			&& string.Equals(_editorTraceSource, _source.Text,
+					StringComparison.Ordinal))
+			span = position.EditorPatternCallsite;
 		_playbackRenderer.SetSpan(span, _source.Document.TextLength);
 		_source.TextArea.TextView.Redraw();
 	}
