@@ -321,8 +321,9 @@ Do not reintroduce completed-task checklists here.
   `Random` and **all other currently supported methods** with
   working call signatures. Match the actual runtime and incremental
   compiler, not illustrative invented APIs. In particular `Note`
-  currently receives `pitchMultiplier` (no built-in
-  `Semitone(p)` helper), and `VolumeVirtual` sets note/voice volume
+  receives `pitchMultiplier` and can use the shared
+  `Semitone(n)`/`Cent(n)`/`Octave(n)` pitch conversions, while
+  `VolumeVirtual` sets note/voice volume
   on its scoped virtual channel rather than generalized song volume.
   Do not present optional bracket notation as copy/pasteable C#;
   distinguish signatures from usage samples. Script Envelope and
@@ -357,7 +358,7 @@ Do not reintroduce completed-task checklists here.
   currently implements only the signed `_O(int)` compatibility fix for
   D6-G, not this broader script-editor redesign.
 
-- [ ] **Discover intuitive pitch-multiplier helper APIs for scripts.**
+- [x] **Discover and implement intuitive pitch-multiplier helper APIs for scripts.**
   Begin with a design/discovery pass, not implementation. Candidate
   `Semitone(n)` converts a signed semitone offset to the corresponding
   positive frequency multiplier (`2^(n / 12)`). Explore nearby useful
@@ -372,10 +373,11 @@ Do not reintroduce completed-task checklists here.
   with restricted compiler support and tests. **Once added, update
   the full read-only Script Pattern reference displayed in the editor**
   (and other affected script editors) with exact signatures and examples;
-  until then document the current API using the parameter name
-  `pitchMultiplier` and valid numeric values/expressions, not
-  `Semitone` as though it already exists. Separate from script-editor
-  reference/help UI and from physical/virtual channel parity.
+  prior to implementation document the actual API (without implying
+  that `Semitone` already existed). This is now implemented with
+  exact `pitchMultiplier` usage and four verified helper names in
+  the editor references. Separate from Script Pattern physical/virtual
+  channel parity.
   **Implementation and acceptance (2026-11-21):** Owner-approved
   [script pitch helper API design](script-pitch-helper-design.md) is
   implemented by PR #47 with one shared implementation exposed through
