@@ -649,6 +649,14 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void RebuildInspector()
 	{
+		// Other graph updates may rebuild this panel without a selection
+		// transition. Preserve an unfinished shared Script Envelope buffer.
+		if (ActiveScriptSourceEditor is { HasUnsavedScriptSource: true })
+		{
+			_message.Text = "Save or discard the embedded Script Envelope "
+				+ "source before rebuilding its inspector.";
+			return;
+		}
 		_activeFilterInspectorNodeId = null;
 		_activeFilterInstanceEditor = null;
 		_activeFilterStageSummary = null;
