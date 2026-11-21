@@ -25,6 +25,7 @@ public sealed class ScriptEditorHelpTests
             "OffVirtualInScope", "CutVirtualInScope", "OffAllVirtual",
             "CutAllVirtual", "Off", "Cut", "Tempo", "Speed", "Seek",
             "Pan", "Surround", "Filter", "FilterCutoff", "FilterResonance",
+            "Semitone", "Cent", "Octave", "SemitoneOffset",
         ];
         foreach (string method in methods)
             Assert.That(reference,
@@ -33,8 +34,9 @@ public sealed class ScriptEditorHelpTests
 
         Assert.That(reference, Does.Contain(
             "double pitchMultiplier = 1.0"));
-        Assert.That(reference,
-            Does.Contain("Semitone(...) is NOT currently an implemented"));
+        Assert.That(reference, Does.Contain("Semitone(7)"));
+        Assert.That(reference, Does.Contain("Cent(-25)"));
+        Assert.That(reference, Does.Contain("Octave(-1)"));
         Assert.That(reference,
             Does.Contain("native source frames"));
         Assert.That(reference,
@@ -66,6 +68,18 @@ public sealed class ScriptEditorHelpTests
             Does.Contain("pitchMultiplier"));
         Assert.That(instrumentReference,
             Does.Contain("declared ToneSpecifications"));
+        foreach (string reference in new[]
+        {
+            ScriptEditorHelp.SequenceReference,
+            ScriptEditorHelp.PatternReference,
+            envelopeReference,
+            instrumentReference,
+        })
+        {
+            foreach (string helper in new[]
+                { "Semitone", "Cent", "Octave", "SemitoneOffset" })
+                Assert.That(reference, Does.Contain(helper + "("));
+        }
     }
 
     [AvaloniaTest]
