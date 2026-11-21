@@ -22,11 +22,12 @@ public sealed class ScriptDocumentEditorTests
 	[Test]
 	public void InitialSourcesAreValidWhenSongContainsNoCompatibleObjects()
 	{
-		DocumentWorkspace workspace = new();
+		DocumentWorkspace sequences = new();
+		DocumentWorkspace patterns = new();
 		ScriptSequenceDefinition sequence =
-			ScriptDocumentEditor.CreateScriptSequence(workspace, "Empty Sequence");
+			ScriptDocumentEditor.CreateScriptSequence(sequences, "Empty Sequence");
 		ScriptPatternDefinition pattern =
-			ScriptDocumentEditor.CreateScriptPattern(workspace, "Empty Pattern");
+			ScriptDocumentEditor.CreateScriptPattern(patterns, "Empty Pattern");
 		sequence.Source.Should().Contain("return default;");
 		pattern.Source.Should().Contain("Add a Sample");
 		ScriptCompiler.CompileIncrementalSequence(sequence).Success.Should().BeTrue();
