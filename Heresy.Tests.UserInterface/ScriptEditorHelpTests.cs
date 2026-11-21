@@ -15,6 +15,7 @@ public sealed class ScriptEditorHelpTests
     [Test]
     public void PatternReferenceCoversAllCurrentAuthorCallableHelpers()
     {
+        string reference = ScriptEditorHelp.PatternReference;
         string[] methods =
         [
             "_O", "Random", "Checkpoint", "Note", "NoteVirtual",
@@ -26,41 +27,45 @@ public sealed class ScriptEditorHelpTests
             "Pan", "Surround", "Filter", "FilterCutoff", "FilterResonance",
         ];
         foreach (string method in methods)
-            Assert.That(ScriptEditorHelp.PatternReference,
+            Assert.That(reference,
                 Does.Contain(method + "("),
                 $"The current runtime helper {method} needs editor documentation.");
 
-        Assert.That(ScriptEditorHelp.PatternReference, Does.Contain(
+        Assert.That(reference, Does.Contain(
             "double pitchMultiplier = 1.0"));
-        Assert.That(ScriptEditorHelp.PatternReference,
+        Assert.That(reference,
             Does.Contain("Semitone(...) is NOT currently an implemented"));
-        Assert.That(ScriptEditorHelp.PatternReference,
+        Assert.That(reference,
             Does.Contain("native source frames"));
-        Assert.That(ScriptEditorHelp.PatternReference,
+        Assert.That(reference,
             Does.Contain("playback in seconds"));
     }
 
     [Test]
     public void SequenceReferenceDescribesActualPatternOrderContract()
     {
-        Assert.That(ScriptEditorHelp.SequenceReference, Does.Contain(
+        string reference = ScriptEditorHelp.SequenceReference;
+        string introduction = ScriptEditorHelp.SequenceIntroduction;
+        Assert.That(reference, Does.Contain(
             "Play(ObjectId patternId, int startRow = 0)"));
-        Assert.That(ScriptEditorHelp.SequenceReference, Does.Contain(
+        Assert.That(reference, Does.Contain(
             "previousSequenceIndex"));
-        Assert.That(ScriptEditorHelp.SequenceIntroduction, Does.Contain(
+        Assert.That(introduction, Does.Contain(
             "reaching the end without returning"));
-        Assert.That(ScriptEditorHelp.SequenceReference, Does.Contain(
+        Assert.That(reference, Does.Contain(
             "not a Sequence ID"));
     }
 
     [Test]
     public void ScalarScriptReferencesDoNotPromiseProceduralToneConstruction()
     {
-        Assert.That(ScriptEditorHelp.EnvelopeReference,
+        string envelopeReference = ScriptEditorHelp.EnvelopeReference;
+        string instrumentReference = ScriptEditorHelp.InstrumentReference;
+        Assert.That(envelopeReference,
             Does.Contain("releaseSeconds"));
-        Assert.That(ScriptEditorHelp.InstrumentReference,
+        Assert.That(instrumentReference,
             Does.Contain("pitchMultiplier"));
-        Assert.That(ScriptEditorHelp.InstrumentReference,
+        Assert.That(instrumentReference,
             Does.Contain("predeclared"));
     }
 
