@@ -3717,8 +3717,20 @@ public sealed class MainWindow : Window
 
 			if (script.ScriptSequenceId is ObjectId scriptSequenceId)
 			{
-				await _playbackTransport.PlaySequenceAsync(
-					_workspace.Document, scriptSequenceId);
+				if (_playbackTransport is IEditorSequencePlaybackTransport tracing)
+				{
+					Guid session = Guid.NewGuid();
+					script.BeginEditorSequenceTrace(session);
+					await tracing.PlayEditorSequenceAsync(
+						_workspace.Document, scriptSequenceId, session);
+					script.SetPlaybackPosition(
+						_playbackPositionTransport?.CurrentPlaybackPosition);
+				}
+				else
+				{
+					await _playbackTransport.PlaySequenceAsync(
+						_workspace.Document, scriptSequenceId);
+				}
 				SetStatus($"Playing script sequence {script.ScriptSourceDisplayName} from the beginning.");
 				return;
 			}
@@ -3820,6 +3832,8 @@ public sealed class MainWindow : Window
 					editor.SetPlaybackPosition(position);
 				else if (_mainContent.Content is SequenceEditorControl sequence)
 					sequence.SetPlaybackPosition(position);
+				else if (_mainContent.Content is ScriptEditorControl script)
+					script.SetPlaybackPosition(position);
 			});
 	}
 

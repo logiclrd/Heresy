@@ -13,6 +13,7 @@ using AvaloniaEdit;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
+using Heresy.Playback;
 using Heresy.Core.Sequences;
 using Heresy.Scripting.Analysis;
 using Heresy.UserInterface.Documents;
@@ -49,6 +50,10 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		new();
 	private readonly ScriptDiagnosticRenderer _diagnosticRenderer =
 		new();
+	private readonly ScriptSequencePlayCallsiteRenderer _playbackRenderer =
+		new();
+	private Guid? _editorTraceSession;
+	private string? _editorTraceSource;
 	private readonly ComboBox _reference;
 	private readonly TextBlock _message = new()
 	{
@@ -154,6 +159,8 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		_source.TextArea.TextView.LineTransformers.Add(
 			_syntaxColorizer);
 		_source.TextArea.TextView.BackgroundRenderers.Add(
+			_playbackRenderer);
+		_source.TextArea.TextView.BackgroundRenderers.Add(
 			_diagnosticRenderer);
 		// Intercept token-edge deletion before AvaloniaEdit treats a whole
 		// one-column visual reference as an indivisible character.
@@ -173,6 +180,10 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			handledEventsToo: true);
 		_source.TextChanged += (_, _) =>
 		{
+			if (_editorTraceSource is not null
+				&& !string.Equals(_editorTraceSource, _source.Text,
+					StringComparison.Ordinal))
+				SetPlaybackPosition(null);
 			RefreshAnalysis();
 			_saveSource.IsEnabled = HasUnsavedScriptSource;
 		};
@@ -213,6 +224,33 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 
 	public ObjectId? ScriptPatternId => _pattern?.Id;
 	public ObjectId? ScriptSequenceId => _sequence?.Id;
+
+	/// <summary>Only an editor-F6 request can enable this visual trace.
+	/// The source snapshot is captured separately from the mutable editor
+	/// buffer, so an edit during playback cannot highlight stale offsets.</summary>
+	public void BeginEditorSequenceTrace(Guid session)
+	{
+		if (_sequence is null || session == Guid.Empty)
+			throw new InvalidOperationException(
+				"Only a Script Sequence editor can trace F6 Play calls.");
+		_editorTraceSession = session;
+		_editorTraceSource = _source.Text ?? string.Empty;
+		SetPlaybackPosition(null);
+	}
+
+	public void SetPlaybackPosition(PlaybackPatternPosition? position)
+	{
+		Heresy.Core.Sequences.SequenceCallsite? span = null;
+		if (_sequence is not null
+			&& _editorTraceSession is Guid session
+			&& position?.EditorCallsiteSession == session
+			&& position.SequenceId == _sequence.Id
+			&& string.Equals(_editorTraceSource, _source.Text,
+					StringComparison.Ordinal))
+			span = position.EditorPlayCallsite;
+		_playbackRenderer.SetSpan(span, _source.Document.TextLength);
+		_source.TextArea.TextView.Redraw();
+	}
 
 	public bool TryHandleSourceSaveShortcut(Visual? keySource)
 	{
