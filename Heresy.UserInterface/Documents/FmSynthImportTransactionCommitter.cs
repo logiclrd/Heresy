@@ -42,7 +42,8 @@ public static class FmSynthImportTransactionCommitter
 {
     public static FmImportCommitResult Commit(FmSynthImportPlan plan,
         IReadOnlyList<FmImportExactMatchSource> sources,
-        SongDocument destination)
+        SongDocument destination,
+        SongTreeFolder? destinationFolder = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(sources);
@@ -86,9 +87,19 @@ public static class FmSynthImportTransactionCommitter
 
         try
         {
+            // Only imports into the selected Patches folder use that folder.
+            // Cross-section Envelope/Filter/Instrument dependencies retain
+            // their own section-root defaults.
+            SongTreeFolder target = destination.ResolveObjectDestination(
+                SongTreeSection.Samples, destinationFolder);
+            SongImportTreePlacement?[] placements = prepared.PreparedObjects
+                .Select(x => SongTreeSections.ForKind(x.Object.Kind)
+                    == SongTreeSection.Samples
+                    ? new SongImportTreePlacement(target)
+                    : null).ToArray();
             SongImportBatchEdit edit = destination.CommitImportedObjects(
                 prepared.PreparedObjects.Select(x => x.Object).ToArray(),
-                prepared.ExpectedNextId, FreshAtPublication);
+                prepared.ExpectedNextId, FreshAtPublication, placements);
             return new(prepared, edit, null);
         }
         catch (Exception error) when (error is InvalidOperationException
