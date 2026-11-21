@@ -78,6 +78,9 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         {
             Text = definition.NnaExpression, MinWidth = 420,
         };
+        ScriptEditorFonts.ApplyTo(_expression);
+        ScriptEditorFonts.ApplyTo(_pitchExpression);
+        ScriptEditorFonts.ApplyTo(_nnaExpression);
         _nnaFadeMilliseconds = new TextBox
         {
             Text = InstrumentNnaEditorValues.FormatMilliseconds(definition.NnaFadeDuration),

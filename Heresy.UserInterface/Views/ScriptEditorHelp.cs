@@ -242,14 +242,19 @@ member access or free-form procedural tone construction is supported yet.
 
     /// <summary>A dedicated, text-selectable viewport for copying API text.
     /// The outer document view must not be responsible for scrolling it.</summary>
-    public static TextBox CreateReferenceViewer(string reference) => new()
+    public static TextBox CreateReferenceViewer(string reference)
     {
-        Text = reference,
-        AcceptsReturn = true,
-        IsReadOnly = true,
-        TextWrapping = TextWrapping.NoWrap,
-        Height = 260,
-        MinHeight = 180,
-        MinWidth = 360,
-    };
+        TextBox viewer = new()
+        {
+            Text = reference,
+            AcceptsReturn = true,
+            IsReadOnly = true,
+            TextWrapping = TextWrapping.NoWrap,
+            Height = 260,
+            MinHeight = 180,
+            MinWidth = 360,
+        };
+        ScriptEditorFonts.ApplyTo(viewer);
+        return viewer;
+    }
 }
