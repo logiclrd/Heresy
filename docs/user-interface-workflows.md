@@ -76,6 +76,30 @@ load directly. Saving writes six sections, and migration itself does not
 increment audio or document revisions. See
 [document panes](document-panes.md).
 
+## New-object and import destination
+
+All six panes use the same creation-parent rule (issue #41): if the
+relevant pane's selected occurrence is a folder, create/import inside that
+folder; if an object occurrence is selected, append to its immediate
+parent folder; with no selection in the pane, append at the fixed
+section root. A selection from another pane must not affect this action.
+This rule applies to both data/script variants and to Patches' Synth
+and Audio imports, not just to **+ Folder**. The full destination folder
+is retained across import dialogs instead of querying a potentially
+changed selection after accepting the import.
+
+Creation validates the selected destination's membership in the
+correct section **before** allocating ObjectIds, and `SongDocument.Add`
+also validates before adding an object. A detached or wrong-section
+destination is rejected rather than silently falling back to root.
+Graph-aware Synth imports validate the destination as part of the
+existing all-or-nothing `CommitImportedObjects` transaction, placing
+copied Patches/Sample/Synth objects in the selected Patches folder while
+other-kind dependencies stay in their own section roots. The imported
+root Synth is selected, as before; multi-file Audio imports retain
+deterministic source-song ordering and single-object editor activation.
+Both song formats persist the chosen nested tree placement unchanged.
+
 ## Object-type colour presentation
 
 The six main document trees use a canonical shared object-type colour around
