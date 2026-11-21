@@ -376,6 +376,9 @@ Do not reintroduce completed-task checklists here.
   `pitchMultiplier` and valid numeric values/expressions, not
   `Semitone` as though it already exists. Separate from script-editor
   reference/help UI and from physical/virtual channel parity.
+  **Discovery proposal (2026-11-21):** [script pitch helper API design](script-pitch-helper-design.md)
+  compares candidates, audits all compilation contexts, and proposes a
+  four-helper v1 surface. **Awaiting owner approval; not implemented.**
 
 - [ ] **Audit Script Pattern physical/virtual channel helper parity.**
   The current `PatternScriptProgram` exposes `VolumeVirtual`,
