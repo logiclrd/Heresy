@@ -400,6 +400,44 @@ Do not reintroduce completed-task checklists here.
   and uses the same theme-blended color as Pattern playback.
   **Implementation in draft PR #48; pending desktop acceptance.**
 
+- [ ] **Discover source-call activity and active-note overlays in Script
+  Sequence/Pattern editors (design first, separate PR).** Investigate
+  live, source-span-aware highlighting for `Play`, `Note`/
+  `NoteVirtual`, `NoteFilter`/`NoteFilterVirtual`,
+  `ChannelFilter`/`ChannelFilterVirtual`, and the complete
+  direct-statement playback-control helper surface (`Off`, `Cut`,
+  `VolumeVirtual`, `SourceFrameVirtual`, `DisplacementVirtual`,
+  `PastVirtual`, `Tempo`, `Speed`, `Seek`, `Pan`,
+  `Surround`, `Filter`, etc.). Distinguish **script execution**
+  (a call runs on the preparation/producer worker), **scheduled effect
+  time** (its resulting event becomes audible), and **note-active
+  lifetime** (the actual sounding voice(s) remain active). These are
+  different clocks and must not be conflated.
+
+  Design an optional debug/provenance side channel from the Roslyn
+  syntax span of the actual callsite into the sequence entry or
+  scheduled action. Preserve source identity/revision and unique
+  invocation IDs so repeated loops, reused patterns, virtual voice
+  scopes, multiple same-line calls and multiple simultaneous notes
+  cannot be mistaken for one another. Use a bounded, allocation-aware
+  producer-to-UI event stream, never UI callbacks from the PCM thread;
+  respect queued playback snapshot identity when the editor has pending
+  or subsequently changed source. Render via a separate AvaloniaEdit
+  background layer over canonical raw source spans (not syntax color
+  changes or destructive editor selection).
+
+  Start with an instrumented **Script Sequence `Play` call tied to
+  the current Sequence order**, then short-lived pattern-control
+  activations tied to their *scheduled* event times, then investigate
+  **sustained note highlights** from explicit voice/Note Off/Cut,
+  retrigger, natural completion, release-tail and nested-source
+  lifecycle notifications. Define UI semantics for overlapping,
+  repeating and silent/invalid calls, visibility/scroll-follow, and
+  cleanup on Stop/document change; keep realtime overhead negligible.
+  Provide a bounded prototype and measurements before adopting a
+  full instrumentation mechanism. **Do not bundle into the Data
+  Sequence F6/highlight shortcut work (PR #48).**
+
 - [ ] **Support F6 test/audition in the Script Pattern and Script
   Sequence editors.** Owner's natural F6 gesture works in the Data
   Pattern editor but was not wired in either scripted editor
