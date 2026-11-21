@@ -21,12 +21,15 @@ public static class InstrumentDocumentEditor
 		DocumentWorkspace workspace,
 		string name,
 		double divisions = 12.0,
-		int offset = 0)
+		int offset = 0,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		ValidateDivisions(divisions);
 
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Instruments, destinationFolder);
 		ObjectId id = workspace.Document.AllocateObjectId();
 		InstrumentDefinition instrument =
 			new(id, name.Trim())
@@ -34,7 +37,8 @@ public static class InstrumentDocumentEditor
 				Divisions = divisions,
 				Offset = offset,
 			};
-		workspace.Document.Add(instrument, affectsAudio: true);
+		workspace.Document.Add(instrument, affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return instrument;
 	}
 

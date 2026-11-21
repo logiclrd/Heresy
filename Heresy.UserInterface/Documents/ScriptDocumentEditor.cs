@@ -35,7 +35,8 @@ public static class ScriptDocumentEditor
 		DocumentWorkspace workspace,
 		string name,
 		int rowCount = 64,
-		int channelCount = 8)
+		int channelCount = 8,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -45,6 +46,8 @@ public static class ScriptDocumentEditor
 			minorHighlightRows: 4,
 			majorHighlightRows: 16);
 
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Patterns, destinationFolder);
 		ObjectId id = workspace.Document.AllocateObjectId();
 		ScriptPatternDefinition pattern =
 			new(id, name.Trim())
@@ -52,21 +55,26 @@ public static class ScriptDocumentEditor
 				RowCount = rowCount,
 				ChannelCount = channelCount,
 			};
-		workspace.Document.Add(pattern, affectsAudio: true);
+		workspace.Document.Add(pattern, affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return pattern;
 	}
 
 	public static ScriptSequenceDefinition CreateScriptSequence(
 		DocumentWorkspace workspace,
-		string name)
+		string name,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Sequences, destinationFolder);
 		ObjectId id = workspace.Document.AllocateObjectId();
 		ScriptSequenceDefinition sequence =
 			new(id, name.Trim());
-		workspace.Document.Add(sequence, affectsAudio: true);
+		workspace.Document.Add(sequence, affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return sequence;
 	}
 

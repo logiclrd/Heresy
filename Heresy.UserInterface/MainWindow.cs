@@ -1292,7 +1292,8 @@ public sealed class MainWindow : Window
 			DataSequenceDefinition sequence =
 				SequenceDocumentEditor.CreateDataSequence(
 					_workspace,
-					name);
+					name,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Sequences));
 			SongTreeObject? node =
 				FindTreeObject(
 					_workspace.Document.GetSectionRoot(SongTreeSection.Sequences),
@@ -1322,7 +1323,8 @@ public sealed class MainWindow : Window
 			ScriptSequenceDefinition sequence =
 				ScriptDocumentEditor.CreateScriptSequence(
 					_workspace,
-					name);
+					name,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Sequences));
 			SongTreeObject? node =
 				FindTreeObject(
 					_workspace.Document.GetSectionRoot(
@@ -1353,7 +1355,8 @@ public sealed class MainWindow : Window
 			DataPatternDefinition pattern =
 				PatternDocumentEditor.CreateDataPattern(
 					_workspace,
-					name);
+					name,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Patterns));
 			SongTreeObject? node =
 				FindTreeObject(
 					_workspace.Document.GetSectionRoot(SongTreeSection.Patterns),
@@ -1383,7 +1386,8 @@ public sealed class MainWindow : Window
 			ScriptPatternDefinition pattern =
 				ScriptDocumentEditor.CreateScriptPattern(
 					_workspace,
-					name);
+					name,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Patterns));
 			SongTreeObject? node =
 				FindTreeObject(
 					_workspace.Document.GetSectionRoot(
@@ -1414,7 +1418,8 @@ public sealed class MainWindow : Window
 			InstrumentDefinition instrument =
 				InstrumentDocumentEditor.CreateInstrument(
 					_workspace,
-					name);
+					name,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Instruments));
 			SongTreeObject? node =
 				FindTreeObject(
 					_workspace.Document.GetSectionRoot(SongTreeSection.Instruments),
@@ -1439,7 +1444,8 @@ public sealed class MainWindow : Window
 		try
 		{
 			ScriptInstrumentDefinition instrument =
-				ScriptInstrumentDocumentEditor.Create(_workspace, name);
+				ScriptInstrumentDocumentEditor.Create(_workspace, name,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Instruments));
 			SongTreeObject? node =
 				FindTreeObject(
 					_workspace.Document.GetSectionRoot(SongTreeSection.Instruments),
@@ -1465,7 +1471,8 @@ public sealed class MainWindow : Window
 		try
 		{
 			FilterDefinition filter = FilterDocumentEditor.CreateFilter(
-				_workspace, name);
+				_workspace, name,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Filters));
 			SongTreeObject? node = FindTreeObject(
 				_workspace.Document.GetSectionRoot(SongTreeSection.Filters),
 				filter.Id);
@@ -1491,7 +1498,8 @@ public sealed class MainWindow : Window
 			NodeEnvelopeDefinition envelope =
 				EnvelopeDocumentEditor.CreateNodeEnvelope(
 					_workspace,
-					name);
+					name,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Envelopes));
 			SongTreeObject? node =
 				FindTreeObject(
 					_workspace.Document.GetSectionRoot(SongTreeSection.Envelopes),
@@ -1517,7 +1525,8 @@ public sealed class MainWindow : Window
 		{
 			ScriptEnvelopeDefinition envelope =
 				EnvelopeDocumentEditor.CreateScriptEnvelope(
-					_workspace, name, releaseDuration: TimeSpan.Zero);
+					_workspace, name, releaseDuration: TimeSpan.Zero,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Envelopes));
 			SongTreeObject? node =
 				FindTreeObject(
 					_workspace.Document.GetSectionRoot(SongTreeSection.Envelopes),
@@ -1544,7 +1553,8 @@ public sealed class MainWindow : Window
 			FmSynthDefinition synth =
 				FmSynthDocumentEditor.CreateFmSynth(
 					_workspace,
-					name);
+					name,
+					destinationFolder: GetFolderForNewChild(SongTreeSection.Samples));
 			SongTreeObject? node =
 				FindTreeObject(
 					_workspace.Document.GetSectionRoot(
@@ -1566,6 +1576,16 @@ public sealed class MainWindow : Window
 
 	private async Task ImportFmSynthsAsync()
 	{
+		SongTreeFolder destinationFolder;
+		try
+		{
+			destinationFolder = GetFolderForNewChild(SongTreeSection.Samples);
+		}
+		catch (InvalidOperationException error)
+		{
+			SetStatus($"Cannot import Synths: {error.Message}");
+			return;
+		}
 		if (!StorageProvider.CanOpen)
 		{
 			SetStatus("This platform does not provide an open-file picker.");
@@ -1613,7 +1633,7 @@ public sealed class MainWindow : Window
 				}
 
 				FmSynthImportSelectionDialog dialog =
-					new(source, _workspace.Document);
+					new(source, _workspace.Document, destinationFolder);
 				FmSynthImportSelectionResult? accepted =
 					await dialog.ShowDialog<FmSynthImportSelectionResult?>(this);
 				if (accepted is null)
@@ -1671,6 +1691,16 @@ public sealed class MainWindow : Window
 
 	private async Task ImportSamplesAsync()
 	{
+		SongTreeFolder destinationFolder;
+		try
+		{
+			destinationFolder = GetFolderForNewChild(SongTreeSection.Samples);
+		}
+		catch (InvalidOperationException error)
+		{
+			SetStatus($"Cannot import audio: {error.Message}");
+			return;
+		}
 		if (!StorageProvider.CanOpen)
 		{
 			SetStatus("This platform does not provide an open-file picker.");
@@ -1728,7 +1758,8 @@ public sealed class MainWindow : Window
 						SampleDocumentEditor.ImportFromSong(
 							_workspace,
 							source,
-							selected);
+							selected,
+							destinationFolder);
 					foreach (SampleDefinition songSample in songSamples)
 					{
 						firstSample ??= songSample;
@@ -1742,7 +1773,8 @@ public sealed class MainWindow : Window
 				}
 
 				SampleDefinition sample =
-					SampleDocumentEditor.Import(_workspace, path);
+					SampleDocumentEditor.Import(_workspace, path,
+						destinationFolder: destinationFolder);
 				firstSample ??= sample;
 				selectNode ??= FindTreeObject(
 					_workspace.Document.GetSectionRoot(SongTreeSection.Samples),
@@ -1976,20 +2008,8 @@ public sealed class MainWindow : Window
 	}
 
 	private SongTreeFolder GetFolderForNewChild(SongTreeSection section)
-	{
-		SongTreeFolder sectionRoot = _workspace.Document.GetSectionRoot(section);
-		if (_selectedItem is null
-			|| SongTreeEditor.GetSection(_workspace.Document, _selectedItem.Node) != section)
-		{
-			return sectionRoot;
-		}
-
-		if (_selectedItem.Node is SongTreeFolder selectedFolder)
-			return selectedFolder;
-
-		return SongTreeEditor.GetParent(_workspace.Document, _selectedItem.Node)
-			?? sectionRoot;
-	}
+		=> SongTreeEditor.ResolveCreationFolder(
+			_workspace.Document, section, _selectedItem?.Node);
 
 	private string BuildDeleteMessage(
 		string displayName,

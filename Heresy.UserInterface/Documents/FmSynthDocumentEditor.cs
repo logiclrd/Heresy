@@ -25,11 +25,14 @@ public static class FmSynthDocumentEditor
 {
 	public static FmSynthDefinition CreateFmSynth(
 		DocumentWorkspace workspace,
-		string name)
+		string name,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Samples, destinationFolder);
 		ObjectId id = workspace.Document.AllocateObjectId();
 		FmSynthDefinition synth =
 			new(
@@ -47,7 +50,8 @@ public static class FmSynthDocumentEditor
 				80.0));
 		workspace.Document.Add(
 			synth,
-			affectsAudio: true);
+			affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return synth;
 	}
 

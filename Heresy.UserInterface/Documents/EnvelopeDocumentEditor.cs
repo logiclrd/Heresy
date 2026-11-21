@@ -23,7 +23,8 @@ public static class EnvelopeDocumentEditor
 		IEnumerable<EnvelopeNode>? nodes = null,
 		int sustainStartIndex = 2,
 		int sustainEndIndex = 2,
-		EnvelopeSustainLoopMode sustainLoopMode = EnvelopeSustainLoopMode.Forward)
+		EnvelopeSustainLoopMode sustainLoopMode = EnvelopeSustainLoopMode.Forward,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -37,11 +38,14 @@ public static class EnvelopeDocumentEditor
 			|| sustainLoopMode != EnvelopeSustainLoopMode.Forward)
 			candidate.ReplaceCurve(candidate.Nodes, sustainStartIndex,
 				sustainEndIndex, sustainLoopMode);
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Envelopes, destinationFolder);
 		NodeEnvelopeDefinition created = new(
 			workspace.Document.AllocateObjectId(), name.Trim());
 		created.ReplaceCurve(candidate.Nodes, candidate.SustainStartIndex,
 			candidate.SustainEndIndex, candidate.SustainLoopMode);
-		workspace.Document.Add(created, affectsAudio: true);
+		workspace.Document.Add(created, affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return created;
 	}
 
@@ -109,18 +113,22 @@ public static class EnvelopeDocumentEditor
 	public static ScriptEnvelopeDefinition CreateScriptEnvelope(
 		DocumentWorkspace workspace, string name,
 		string source = "releaseSeconds < 0 ? 1.0 : 0.0",
-		TimeSpan? releaseDuration = null)
+		TimeSpan? releaseDuration = null,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		ValidateScript(source, releaseDuration);
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Envelopes, destinationFolder);
 		ScriptEnvelopeDefinition envelope =
 			new(workspace.Document.AllocateObjectId(), name.Trim())
 			{
 				Source = source,
 				ReleaseDuration = releaseDuration,
 			};
-		workspace.Document.Add(envelope, affectsAudio: true);
+		workspace.Document.Add(envelope, affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return envelope;
 	}
 

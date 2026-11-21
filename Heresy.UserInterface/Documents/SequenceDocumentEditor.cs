@@ -14,15 +14,19 @@ public static class SequenceDocumentEditor
 {
 	public static DataSequenceDefinition CreateDataSequence(
 		DocumentWorkspace workspace,
-		string name)
+		string name,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Sequences, destinationFolder);
 		ObjectId id = workspace.Document.AllocateObjectId();
 		DataSequenceDefinition sequence =
 			new(id, name.Trim());
-		workspace.Document.Add(sequence, affectsAudio: true);
+		workspace.Document.Add(sequence, affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return sequence;
 	}
 
