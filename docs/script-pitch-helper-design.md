@@ -1,6 +1,6 @@
 # Script pitch-multiplier helpers — discovery and proposed API
 
-**Status:** Design proposal for owner review (2026-11-21). **No helper in this document is currently callable.** Implementation, compiler allowlisting, tests, and editor reference updates require explicit approval in a separate PR.
+**Status:** Owner-approved design (2026-11-21). The four helpers have been implemented in the separate draft implementation branch; they become available to users when that PR is accepted and merged. This document preserves the original discovery rationale and numerical contract.
 
 **Scope:** the intuitive pitch-multiplier helper TODO in [todo.md](todo.md). Separate from Script Pattern physical/virtual control parity, the Script Instrument tone-authoring redesign, and tiered Undo/Redo.
 
@@ -17,7 +17,7 @@ Source touchpoints: `Heresy.Scripting/Runtime/ScriptProgramRuntime.cs`, `Heresy.
 
 ## Proposed minimal v1 surface
 
-All signatures are **proposed**, not implemented. Expose as unqualified restricted-script functions returning `double`:
+Approved signatures, implemented in the separate implementation branch as unqualified restricted-script functions returning `double`:
 
 | Helper | Meaning | Formula |
 | --- | --- | --- |
@@ -30,7 +30,7 @@ All signatures are **proposed**, not implemented. Expose as unqualified restrict
 
 **Names are for approval.** Singular `Semitone`, `Cent`, `Octave` describe a conversion of an *amount* rather than a class of notes. `SemitoneOffset` explicitly signals an inverse producing an offset, not a multiplier. No unqualified `Note` or `Pitch` alias: those names already have other script meanings.
 
-### Proposed examples (will compile only after implementation)
+### Examples (compile on the implementation branch)
 
 ```csharp
 // Script Pattern: same ratios for physical and virtual channels.
@@ -84,7 +84,7 @@ Reference test vectors (approximate except unity and powers of two):
 - **Instrument `Divisions`-aware conversion:** fundamentally different from 12-TET. Any future custom-scale helper should state its division count explicitly (not inspect mutable Instrument state), e.g. a separately designed `DivisionOffset(n, divisionsPerOctave)`.
 - **Frequency-in-Hz conversions:** require explicit reference-frequency semantics and are not necessary to express `pitchMultiplier`. Can be studied later if Script Instrument authoring evolves.
 
-## Exposure and implementation approach (after approval only)
+## Exposure and implementation approach (approved)
 
 **Recommendation: uniformly expose the four pure functions in every restricted scripting context**—Script Pattern (eager and incremental), Script Sequence, Script Instrument tone selector, pitch scaling, NNA expression, Script Envelope expression, and native parametric-effect expression. Contexts without a pitch parameter may still use them for ordinary numeric calculations. The function's meaning never changes with context.
 
@@ -105,4 +105,4 @@ Reference test vectors (approximate except unity and powers of two):
 2. **Scope:** permit the same methods in all eight script compilation contexts (recommended), or only pitch-bearing contexts?
 3. **Failure policy:** invalid/non-finite inputs and invalid multiplier results throw `ArgumentOutOfRangeException` instead of clamping (recommended).
 
-**No implementation is authorized by this design document alone.**
+**Implementation proceeds in a separate PR following owner approval.**

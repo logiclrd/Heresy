@@ -58,6 +58,43 @@ These principles establish *constraints*, not a promise of unrestricted
 C# inside per-sample rendering. Extending the allow-list should be a
 deliberate, testable design decision.
 
+## Shared restricted-script pitch conversion helpers (November 2026)
+
+All eight restricted script compiler wrappers now expose the same pure
+12-tone-equal-temperament conversions from the one
+`Heresy.Scripting.Runtime.ScriptPitchMath` implementation, imported
+unqualified into generated script code:
+
+- `Semitone(double semitones)`: positive frequency ratio
+  `2^(semitones / 12)`;
+- `Cent(double cents)`: ratio `2^(cents / 1200)`;
+- `Octave(double octaves)`: ratio `2^octaves`;
+- `SemitoneOffset(double pitchMultiplier)`: signed semitone offset
+  `12 * log2(pitchMultiplier)`, for a **positive finite** input ratio.
+
+Fractional and negative offsets are supported, without rounding. Inputs
+must be finite; output ratios must be positive and finite, including after
+any multiplication at the ordinary Note/tone boundary. Invalid values
+throw `ArgumentOutOfRangeException`; underflow to zero and overflow
+to infinity are not silently clamped. Custom data Instrument `Divisions`
+and absolute tuning frequencies are unrelated to these 12-TET ratios.
+
+For Script Patterns (physical and virtual), a note may use
+`pitchMultiplier: Semitone(7)`, `Cent(-25)` or
+`Octave(-1) * Semitone(4)`; emitting `Note` itself must still be a
+direct statement under incremental compilation. For Script Instrument
+selectors, the incoming `pitchMultiplier` is a relative C4 frequency
+ratio, so `SemitoneOffset(pitchMultiplier) >= 12 ? 1 : 0` compares
+against the octave boundary. The Script Instrument `PitchExpression`
+returns an **additional** multiplier, so `Semitone(-7)` transposes the
+selected tone down seven semitones. NNA, Sequence, Envelope and native
+parametric expressions can use the same conversions as pure arithmetic.
+
+The compiler allowlists **only these four static method signatures**
+from the shared implementation, not the whole class, namespace, or arbitrary
+framework API. The compiled script editor reference provides the exact
+author-facing signatures. See [the approved numerical API design](script-pitch-helper-design.md).
+
 ## 1. Pattern script access to virtual voices
 
 `ChannelTarget` already supports `Virtual(uint id)`,

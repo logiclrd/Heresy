@@ -185,7 +185,7 @@ public static class NativePatternEffectEditor
 						Enum.GetNames<ParametricEffectParameter>()),
 					Field("duration", "Wall duration (seconds)",
 						Format(value.Duration.TotalSeconds)),
-					Field("expression", "C# delta expression (elapsedSeconds, rowTime)",
+					Field("expression", "C# delta expression (elapsedSeconds, rowTime; pitch conversions available)",
 						value.Expression),
 					new NativePatternEffectField(
 						"commit", "Commit on expiry",

@@ -677,6 +677,10 @@ public static class ScriptCompiler
 					?? throw new InvalidOperationException());
 		INamedTypeSymbol? mathType =
 			compilation.GetTypeByMetadataName("System.Math");
+		INamedTypeSymbol? pitchMathType =
+			compilation.GetTypeByMetadataName(
+				typeof(ScriptPitchMath).FullName
+					?? throw new InvalidOperationException());
 		INamedTypeSymbol? displacementType =
 			compilation.GetTypeByMetadataName(
 				typeof(NoteDisplacementAction).FullName
@@ -706,7 +710,8 @@ public static class ScriptCompiler
 					method,
 					patternBase,
 					sequenceBase,
-					mathType))
+					mathType,
+					pitchMathType))
 			{
 				continue;
 			}
@@ -748,7 +753,8 @@ public static class ScriptCompiler
 		IMethodSymbol method,
 		INamedTypeSymbol? patternBase,
 		INamedTypeSymbol? sequenceBase,
-		INamedTypeSymbol? mathType)
+		INamedTypeSymbol? mathType,
+		INamedTypeSymbol? pitchMathType)
 	{
 		INamedTypeSymbol containingType = method.ContainingType;
 		return SymbolEqualityComparer.Default.Equals(
@@ -759,8 +765,27 @@ public static class ScriptCompiler
 				sequenceBase)
 			|| SymbolEqualityComparer.Default.Equals(
 				containingType,
-				mathType);
+				mathType)
+			|| IsApprovedPitchMathMethod(method, pitchMathType);
 	}
+
+	/// <summary>
+	/// Only these four numerical conversions are callable from scripts.
+	/// Do not implicitly allow all public methods on the shared utility type.
+	/// </summary>
+	private static bool IsApprovedPitchMathMethod(
+		IMethodSymbol method, INamedTypeSymbol? pitchMathType)
+		=> pitchMathType is not null
+			&& SymbolEqualityComparer.Default.Equals(
+					method.ContainingType, pitchMathType)
+			&& method.IsStatic
+			&& method.Name is
+				("Semitone" or "Cent" or "Octave" or "SemitoneOffset")
+			&& method.Parameters.Length == 1
+			&& method.Parameters[0].Type.SpecialType
+				== SpecialType.System_Double
+			&& method.ReturnType.SpecialType
+				== SpecialType.System_Double;
 
 	private static bool IsAllowedMathMember(
 		ISymbol? symbol,
@@ -874,6 +899,7 @@ public static class ScriptCompiler
 			using System.Collections.Generic;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
+			using static Heresy.Scripting.Runtime.ScriptPitchMath;
 
 			public sealed class {{className}} : PatternScriptProgram
 			{
@@ -907,6 +933,7 @@ public static class ScriptCompiler
 			using System;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
+			using static Heresy.Scripting.Runtime.ScriptPitchMath;
 
 			public sealed class {{className}} : PatternScriptProgram
 			{
@@ -933,6 +960,7 @@ public static class ScriptCompiler
 		=> """
 			using System;
 			using Heresy.Scripting.Runtime;
+			using static Heresy.Scripting.Runtime.ScriptPitchMath;
 
 			public sealed class __PITCH_CLASS__ : IScriptInstrumentPitchEvaluator
 			{
@@ -952,6 +980,7 @@ public static class ScriptCompiler
             using System;
             using Heresy.Core.Instruments;
             using Heresy.Scripting.Runtime;
+            using static Heresy.Scripting.Runtime.ScriptPitchMath;
 
             public sealed class __NNA_CLASS__ : IScriptInstrumentNnaEvaluator
             {
@@ -971,6 +1000,7 @@ public static class ScriptCompiler
 		=> """
 			using System;
 			using Heresy.Scripting.Runtime;
+			using static Heresy.Scripting.Runtime.ScriptPitchMath;
 
 			public sealed class __INSTRUMENT_CLASS__ : IScriptInstrumentToneEvaluator
 			{
@@ -989,6 +1019,7 @@ public static class ScriptCompiler
 		=> """
 			using System;
 			using Heresy.Scripting.Runtime;
+			using static Heresy.Scripting.Runtime.ScriptPitchMath;
 			public sealed class __PARAMETRIC_CLASS__ : IScriptParametricEvaluator
 			{
 				public double Evaluate(double elapsedSeconds, double rowTime)
@@ -1007,6 +1038,7 @@ public static class ScriptCompiler
 		=> """
 			using System;
 			using Heresy.Scripting.Runtime;
+			using static Heresy.Scripting.Runtime.ScriptPitchMath;
 
 			public sealed class __ENVELOPE_CLASS__ : IScriptEnvelopeEvaluator
 			{
@@ -1028,6 +1060,7 @@ public static class ScriptCompiler
 			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
+			using static Heresy.Scripting.Runtime.ScriptPitchMath;
 
 			#nullable enable
 			public sealed class {{className}} : SequenceScriptProgram

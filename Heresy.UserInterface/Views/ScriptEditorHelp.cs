@@ -38,6 +38,16 @@ Functions:
   void Checkpoint()
     Explicit execution-budget checkpoint for computation-heavy scripts.
 
+PITCH CONVERSIONS (12-TET; available in all restricted scripts)
+  double Semitone(double semitones)             2^(semitones / 12)
+  double Cent(double cents)                     2^(cents / 1200)
+  double Octave(double octaves)                 2^octaves
+  double SemitoneOffset(double pitchMultiplier) 12*log2(pitchMultiplier)
+  Signed/fractional offsets are valid. Forward results must be positive
+  finite ratios; inverse input must be a positive finite ratio.
+  Invalid inputs or unrepresentable results throw ArgumentOutOfRangeException.
+  These functions do not change playbackSpeedMultiplier or use Instrument Divisions.
+
 Examples (replace 35 and 36 with existing Pattern IDs):
   if (sequenceIndex == 0)
       return Play(_O(35));
@@ -76,8 +86,16 @@ OBJECT REFERENCES, PITCH AND UTILITIES
 
   Pitch is specified as pitchMultiplier, a positive finite frequency ratio:
   1.0 = unshifted; 2.0 = +12 semitones; 0.5 = -12 semitones.
-  For now use Math.Pow(2.0, semitoneOffset / 12.0) for an offset in semitones.
-  Semitone(...) is NOT currently an implemented Heresy script helper.
+
+PITCH CONVERSIONS (12-TET; available in all restricted scripts)
+  double Semitone(double semitones)             2^(semitones / 12)
+  double Cent(double cents)                     2^(cents / 1200)
+  double Octave(double octaves)                 2^octaves
+  double SemitoneOffset(double pitchMultiplier) 12*log2(pitchMultiplier)
+  Signed/fractional offsets are valid. Forward results must be positive
+  finite ratios; inverse input must be a positive finite ratio.
+  Invalid inputs or unrepresentable results throw ArgumentOutOfRangeException.
+  These functions do not change playbackSpeedMultiplier or use Instrument Divisions.
 
 PHYSICAL NOTE START
   Note(double row, int channel, ObjectId sourceId,
@@ -172,16 +190,17 @@ PHYSICAL-CHANNEL CONTROLS
 
 COPYABLE EXAMPLES (substitute actual object IDs)
   Note(0, 0, _O(35), pitchMultiplier: 1.0, volume: 0.75);
-  Note(1, 0, _O(35), pitchMultiplier: Math.Pow(2.0, 7.0 / 12.0));
-  NoteVirtual(0, 7U, _O(35), pitchMultiplier: 0.5);
+  Note(1, 0, _O(35), pitchMultiplier: Semitone(7));
+  NoteVirtual(0, 7U, _O(35), pitchMultiplier: Cent(-25));
+  Note(2, 0, _O(35), pitchMultiplier: Octave(-1) * Semitone(4));
   VolumeVirtual(1, 7U, 0.5);
   NoteFilter(2, 0, _O(36));
   ChannelFilterVirtual(2, 7U, _O(36));
   OffVirtual(4, 7U);
 
 RESTRICTIONS
-Only script helpers, System.Math, and named voice-action enum constants
-are allowed method/member accesses. No strings, object/array allocation,
+Only script helpers, the four pitch conversions, System.Math, and named
+voice-action enum constants are allowed method/member accesses. No strings, object/array allocation,
 lambdas, foreach, I/O, async, reflection or exception control.
 Emission is streaming; out-of-order events may be dropped. For each note
 pitchMultiplier/playbackSpeedMultiplier must be positive finite numbers.
@@ -202,6 +221,15 @@ Return a finite double (not automatically clamped to [0,1]). An optional
 Release limit in seconds is enforced separately: 0 means immediate end;
 blank means unbounded. Script Envelopes do not expose Pattern note helpers.
 
+PITCH CONVERSIONS (12-TET; available in all restricted scripts)
+  double Semitone(double semitones)             2^(semitones / 12)
+  double Cent(double cents)                     2^(cents / 1200)
+  double Octave(double octaves)                 2^octaves
+  double SemitoneOffset(double pitchMultiplier) 12*log2(pitchMultiplier)
+  Signed/fractional offsets are valid. Forward results must be positive
+  finite ratios; inverse input must be a positive finite ratio.
+  Invalid inputs or unrepresentable results throw ArgumentOutOfRangeException.
+  These functions do not change playbackSpeedMultiplier or use Instrument Divisions.
 Example expression:
   releaseSeconds < 0 ? 0.7 : 0.7 * Math.Max(0, 1 - releaseSeconds / 0.2)
 
@@ -219,25 +247,38 @@ System.Math functions. No statements, allocations, I/O, or arbitrary calls.
 SCRIPT INSTRUMENT — EXPRESSION FIELDS
 All expressions receive:
   double pitchMultiplier   the incoming positive pitch ratio (C4 = 1.0)
+  PitchExpression returns an ADDITIONAL ratio for the chosen tone, not
+  an absolute note pitch.
 
+PITCH CONVERSIONS (12-TET; available in all restricted scripts)
+  double Semitone(double semitones)             2^(semitones / 12)
+  double Cent(double cents)                     2^(cents / 1200)
+  double Octave(double octaves)                 2^octaves
+  double SemitoneOffset(double pitchMultiplier) 12*log2(pitchMultiplier)
+  Signed/fractional offsets are valid. Forward results must be positive
+  finite ratios; inverse input must be a positive finite ratio.
+  Invalid inputs or unrepresentable results throw ArgumentOutOfRangeException.
+  These functions do not change playbackSpeedMultiplier or use Instrument Divisions.
 Tone selection Source:
   Returns an int index into declared ToneSpecifications, or -1 for silence.
-  Example: pitchMultiplier < 2.0 ? 0 : 1
+  Example: SemitoneOffset(pitchMultiplier) >= 12.0 ? 1 : 0
   (Requires at least two declared tones, indices 0 and 1.)
 
 Pitch scaling expression:
   Returns a positive finite double multiplied by the chosen tone's fixed ratio.
-  Example: pitchMultiplier < 2.0 ? 1.0 : 0.5
+  Example: Semitone(-7)
 
 NNA expression:
   Returns InstrumentNnaAction.Inherit, Cut, Continue, Off or Fade.
   Example:
-    pitchMultiplier > 2.0 ? InstrumentNnaAction.Cut : InstrumentNnaAction.Inherit
+    pitchMultiplier >= Semitone(12)
+      ? InstrumentNnaAction.Cut : InstrumentNnaAction.Inherit
   Fade uses the separately configured NNA Fade duration.
 
 These are individual bounded expressions, not Pattern-style statement
-programs. System.Math operations are allowed; no general allocation, I/O,
-member access or free-form procedural tone construction is supported yet.
+programs. System.Math and the four pitch conversions are allowed; no
+general allocation, I/O, other member access or free-form procedural
+tone construction is supported yet.
 """;
 
     /// <summary>A dedicated, text-selectable viewport for copying API text.
