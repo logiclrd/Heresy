@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Sequences;
 using Heresy.Render.Realtime;
 
 namespace Heresy.Playback;
@@ -44,6 +45,11 @@ public sealed record PlaybackPatternPosition
 	public int PatternRow { get; }
 	public ObjectId? SequenceId { get; }
 	public int? SequenceEntryIndex { get; }
+
+	/// <summary>Optional editor-F6 provenance. The ID distinguishes playback
+	/// sessions even if the same source is recompiled or edited in place.</summary>
+	public Guid? EditorCallsiteSession { get; init; }
+	public SequenceCallsite? EditorPlayCallsite { get; init; }
 }
 
 public sealed record PlaybackPositionTimelineEntry(

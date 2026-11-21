@@ -43,6 +43,14 @@ public interface ISongPlaybackTransport
 	Task StopAsync();
 }
 
+/// <summary>Explicit opt-in for an editor-F6 Script Sequence trace.
+	/// Normal ISongPlaybackTransport requests keep their current behavior.</summary>
+public interface IEditorSequencePlaybackTransport
+{
+	Task PlayEditorSequenceAsync(SongDocument document,
+		ObjectId sequenceId, Guid editorCallsiteSession);
+}
+
 /// <summary>Optional committed Synth editor update. No playback session is
 /// created if no audition is already active.</summary>
 public interface ILiveSynthEditTransport
@@ -67,7 +75,8 @@ public sealed class SongPlaybackTransport
 		IPlaybackRuntimeDiagnosticsTransport,
 		IPlaybackAudioHealthTransport,
 		IPlaybackSnapshotTransport,
-		ILiveSynthEditTransport
+		ILiveSynthEditTransport,
+		IEditorSequencePlaybackTransport
 {
 	private readonly BackgroundPlaybackController _controller;
 	private readonly IBackgroundPlaybackSourceFactory _sourceFactory;
@@ -169,6 +178,22 @@ public sealed class SongPlaybackTransport
 				sequenceId,
 				startPosition),
 			document);
+
+	public Task PlayEditorSequenceAsync(
+		SongDocument document,
+		ObjectId sequenceId,
+		Guid editorCallsiteSession)
+	{
+		if (editorCallsiteSession == Guid.Empty)
+			throw new ArgumentException("Editor trace ID cannot be empty.",
+				nameof(editorCallsiteSession));
+		return PlayRequestAsync(
+			SequencePlaybackRequest.Create(document, sequenceId) with
+			{
+				EditorCallsiteSession = editorCallsiteSession,
+			},
+			document);
+	}
 
 	public Task PlayPatternAsync(
 		SongDocument document,

@@ -226,7 +226,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 		SongDocumentSnapshot snapshot, ObjectId? rootSourceId = null,
 		int startOrder = 0, int? startRow = null,
 		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null,
-		bool repeatPattern = false)
+		bool repeatPattern = false,
+		ObjectId? instrumentedSequenceId = null)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -240,7 +241,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 
 		// Restricted Roslyn compilation happens here, before any playback.
 		// The script resolver separately owns the same frozen definitions.
-		PreparedRoslynIncrementalScriptSources scripts = new(frozen);
+		PreparedRoslynIncrementalScriptSources scripts =
+			new(frozen, instrumentedSequenceId);
 		if (!scripts.TryResolve(root, out SongObject? selected)
 			|| selected is not (PatternDefinition or SequenceDefinition))
 			throw new ArgumentException(

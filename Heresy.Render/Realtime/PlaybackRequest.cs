@@ -33,6 +33,10 @@ public sealed record SequencePlaybackRequest(
 	SequencePlaybackPosition? StartPosition)
 	: PlaybackRequest(Snapshot)
 {
+	/// <summary>Present only for a Script Sequence launched by F6 in its
+	/// source editor. Ordinary playback requests never set this property.</summary>
+	public Guid? EditorCallsiteSession { get; init; }
+
 	public static SequencePlaybackRequest Create(
 		SongDocument document,
 		ObjectId sequenceId,

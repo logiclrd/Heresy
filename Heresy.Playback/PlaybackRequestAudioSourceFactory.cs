@@ -117,7 +117,9 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				SequencePlaybackRequest sequence => factory.Create(
 					sequence.Snapshot, sequence.SequenceId,
 					startOrder: sequence.StartPosition?.Order ?? 0,
-					startRow: sequence.StartPosition?.Row),
+					startRow: sequence.StartPosition?.Row,
+					instrumentedSequenceId: sequence.EditorCallsiteSession.HasValue
+						? sequence.SequenceId : null),
 				PatternPlaybackRequest pattern => factory.Create(
 					pattern.Snapshot, pattern.PatternId,
 					startRow: pattern.StartRow,
@@ -141,9 +143,26 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			? null : new PlaybackPositionTimeline();
 		if (positions is not null)
 		{
-			plan.Timeline.RowBegan += (id, row, sequence, order, at) =>
-				positions.Append(new PlaybackPositionTimelineEntry(at,
-					new PlaybackPatternPosition(id, row, sequence, order)));
+			if (request is SequencePlaybackRequest
+				{ EditorCallsiteSession: Guid session })
+			{
+				// Keep source metadata with the actual order's row
+				// activation, not the earlier Roslyn Play evaluation.
+				plan.Timeline.EditorRowBegan +=
+					(id, row, sequence, order, at, callsite) =>
+						positions.Append(new PlaybackPositionTimelineEntry(at,
+							new PlaybackPatternPosition(id, row, sequence, order)
+							{
+								EditorCallsiteSession = session,
+								EditorPlayCallsite = callsite,
+							}));
+			}
+			else
+			{
+				plan.Timeline.RowBegan += (id, row, sequence, order, at) =>
+					positions.Append(new PlaybackPositionTimelineEntry(at,
+						new PlaybackPatternPosition(id, row, sequence, order)));
+			}
 		}
 		LiveRecursiveSource live = new(plan, positions);
 		lock (_gate)
