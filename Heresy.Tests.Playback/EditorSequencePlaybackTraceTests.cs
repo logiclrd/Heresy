@@ -68,7 +68,8 @@ public sealed class EditorSequencePlaybackTraceTests
         Assert.That(traced.EditorCallsiteSession, Is.EqualTo(session));
         Assert.That(traced.EditorPlayCallsite,
             Is.EqualTo(new SequenceCallsite(
-                sequence.Source.IndexOf("Play(", StringComparison.Ordinal), 4)));
+                sequence.Source.IndexOf("Play(", StringComparison.Ordinal),
+                "Play(_O(17))".Length)));
 
         PlaybackPatternPosition? ordinary = Run(
             SequencePlaybackRequest.Create(document, sequence.Id));
