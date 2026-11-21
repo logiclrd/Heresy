@@ -19,16 +19,20 @@ namespace Heresy.UserInterface.Documents;
 public static class ScriptInstrumentDocumentEditor
 {
     public static ScriptInstrumentDefinition Create(
-        DocumentWorkspace workspace, string name, string source = "-1")
+        DocumentWorkspace workspace, string name, string source = "-1",
+        SongTreeFolder? destinationFolder = null)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ValidateSource(source);
         ValidatePitchExpression("1.0");
+        workspace.Document.ResolveObjectDestination(
+            SongTreeSection.Instruments, destinationFolder);
         ScriptInstrumentDefinition definition =
             new(workspace.Document.AllocateObjectId(), name.Trim())
             { Source = source };
-        workspace.Document.Add(definition, affectsAudio: true);
+        workspace.Document.Add(definition, affectsAudio: true,
+            destinationFolder: destinationFolder);
         return definition;
     }
 
