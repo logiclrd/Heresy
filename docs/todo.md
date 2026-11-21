@@ -357,6 +357,26 @@ Do not reintroduce completed-task checklists here.
   currently implements only the signed `_O(int)` compatibility fix for
   D6-G, not this broader script-editor redesign.
 
+- [ ] **Discover intuitive pitch-multiplier helper APIs for scripts.**
+  Begin with a design/discovery pass, not implementation. Candidate
+  `Semitone(n)` converts a signed semitone offset to the corresponding
+  positive frequency multiplier (`2^(n / 12)`). Explore nearby useful
+  helpers (octaves, cents, notes or interval ratios, inverses/composition)
+  and their names, accepted units, temperament assumptions, numerical
+  stability, finite-input validation, negative/fractional offsets and
+  deterministic behavior before selecting the API. Audit all relevant
+  script contexts (especially Script Patterns' `Note`/
+  `NoteVirtual` pitch-multiplier arguments, and expression-based
+  Script Instruments) so shared helpers have consistent availability
+  where appropriate. Implement only after an approved API contract
+  with restricted compiler support and tests. **Once added, update
+  the full read-only Script Pattern reference displayed in the editor**
+  (and other affected script editors) with exact signatures and examples;
+  until then document the current API using the parameter name
+  `pitchMultiplier` and valid numeric values/expressions, not
+  `Semitone` as though it already exists. Separate from script-editor
+  reference/help UI and from physical/virtual channel parity.
+
 - [ ] **Audit Script Pattern physical/virtual channel helper parity.**
   The current `PatternScriptProgram` exposes `VolumeVirtual`,
   `SourceFrameVirtual`, `DisplacementVirtual` and `PastVirtual`
