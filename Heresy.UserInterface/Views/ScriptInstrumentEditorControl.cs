@@ -137,24 +137,38 @@ public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEd
 
     public string ScriptSourceDisplayName => _definition.Name;
 
-    public bool TryHandleSourceSaveShortcut(Visual? keySource)
+    public ScriptSourceSaveShortcutRoute TryHandleSourceSaveShortcut(Visual? keySource)
     {
         if (ScriptSourceShortcutRouting.IsWithin(keySource, _expression)
             || ScriptSourceShortcutRouting.IsWithin(keySource, _pitchExpression)
             || ScriptSourceShortcutRouting.IsWithin(keySource, _saveExpressions))
         {
-            TrySaveExpressions();
-            return true;
+            if (ExpressionsDirty)
+            {
+                TrySaveExpressions();
+                return ScriptSourceSaveShortcutRoute.SaveLocally;
+            }
+            // Another source group may still have unsaved content. Never
+            // send that incomplete instrument to disk from a clean group.
+            return HasUnsavedScriptSource
+                ? ScriptSourceSaveShortcutRoute.SaveLocally
+                : ScriptSourceSaveShortcutRoute.SaveDocument;
         }
 
         if (ScriptSourceShortcutRouting.IsWithin(keySource, _nnaExpression)
             || ScriptSourceShortcutRouting.IsWithin(keySource, _saveNnaExpression))
         {
-            TrySaveNnaExpression();
-            return true;
+            if (NnaExpressionDirty)
+            {
+                TrySaveNnaExpression();
+                return ScriptSourceSaveShortcutRoute.SaveLocally;
+            }
+            return HasUnsavedScriptSource
+                ? ScriptSourceSaveShortcutRoute.SaveLocally
+                : ScriptSourceSaveShortcutRoute.SaveDocument;
         }
 
-        return false;
+        return ScriptSourceSaveShortcutRoute.NotApplicable;
     }
 
     private bool ExpressionsDirty =>

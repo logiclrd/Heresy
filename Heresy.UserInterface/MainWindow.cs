@@ -2760,7 +2760,8 @@ public sealed class MainWindow : Window
 					SetStatus(message);
 				},
 				backLabel,
-				() => _ = HandlePlaybackKeyAsync(Key.F6));
+				() => _ = HandlePlaybackKeyAsync(Key.F6),
+				() => _ = HandleFileMenuCommandAsync(FileMenuCommand.Save));
 		if (!TrySetEditorContent(editor))
 			return;
 		UpdateWindowTitle();
@@ -2787,7 +2788,8 @@ public sealed class MainWindow : Window
 					SetStatus(message);
 				},
 				backLabel,
-				() => _ = HandlePlaybackKeyAsync(Key.F6));
+				() => _ = HandlePlaybackKeyAsync(Key.F6),
+				() => _ = HandleFileMenuCommandAsync(FileMenuCommand.Save));
 		if (!TrySetEditorContent(editor))
 			return;
 		UpdateWindowTitle();
@@ -3567,11 +3569,17 @@ public sealed class MainWindow : Window
 			return;
 
 		if (e.Key == Key.S && e.KeyModifiers == KeyModifiers.Control
-			&& CurrentScriptSourceEditor is IScriptSourceShortcutTarget script
-			&& script.TryHandleSourceSaveShortcut(e.Source as Visual))
+			&& CurrentScriptSourceEditor is IScriptSourceShortcutTarget script)
 		{
-			e.Handled = true;
-			return;
+			ScriptSourceSaveShortcutRoute route =
+				script.TryHandleSourceSaveShortcut(e.Source as Visual);
+			if (route != ScriptSourceSaveShortcutRoute.NotApplicable)
+			{
+				e.Handled = true;
+				if (route == ScriptSourceSaveShortcutRoute.SaveDocument)
+					_ = HandleFileMenuCommandAsync(FileMenuCommand.Save);
+				return;
+			}
 		}
 
 		if (e.Key == Key.F6 && e.KeyModifiers == KeyModifiers.None
