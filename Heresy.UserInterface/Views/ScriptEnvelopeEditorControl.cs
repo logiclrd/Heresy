@@ -16,13 +16,15 @@ namespace Heresy.UserInterface.Views;
 /// before a workspace edit; failures preserve both the old revision and the
 /// active renderer snapshot. Blank release means genuinely unbounded.
 /// </summary>
-public sealed class ScriptEnvelopeEditorControl : UserControl
+public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEditor
 {
 	private readonly DocumentWorkspace _workspace;
 	private readonly ScriptEnvelopeDefinition _envelope;
 	private readonly Action _close;
 	private readonly Action<string> _changed;
 	private readonly TextBox _source;
+	private string _appliedSource = string.Empty;
+	private readonly Button _saveSource = new() { Content = "Save", IsEnabled = false };
 	private readonly TextBox _release;
 	private readonly TextBlock _message = new()
 	{
@@ -37,6 +39,7 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 		_envelope = envelope ?? throw new ArgumentNullException(nameof(envelope));
 		_close = close ?? throw new ArgumentNullException(nameof(close));
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
+		_appliedSource = envelope.Source;
 		_source = new TextBox
 		{
 			Text = envelope.Source,
@@ -46,6 +49,12 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 			MinWidth = 350,
 		};
 		ScriptEditorFonts.ApplyTo(_source);
+		_source.PropertyChanged += (_, change) =>
+		{
+			if (change.Property == TextBox.TextProperty)
+				_saveSource.IsEnabled = HasUnsavedScriptSource;
+		};
+		_saveSource.Click += (_, _) => TrySaveScriptSource();
 		_release = new TextBox
 		{
 			Text = envelope.ReleaseDuration?.TotalSeconds.ToString(
@@ -56,10 +65,47 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 		Content = Build();
 	}
 
+	public string ScriptSourceDisplayName => _envelope.Name;
+
+	public bool HasUnsavedScriptSource =>
+		!string.Equals(_source.Text ?? string.Empty,
+			_appliedSource, StringComparison.Ordinal);
+
+	public void DiscardUnsavedScriptSource()
+	{
+		_source.Text = _appliedSource;
+		_saveSource.IsEnabled = false;
+	}
+
+	public bool TrySaveScriptSource()
+	{
+		if (!HasUnsavedScriptSource)
+			return true;
+		try
+		{
+			string source = _source.Text ?? string.Empty;
+			EnvelopeDocumentEditor.UpdateScriptEnvelope(
+				_workspace, _envelope, source, _envelope.ReleaseDuration);
+			_appliedSource = source;
+			_saveSource.IsEnabled = false;
+			_message.Text = "Script Envelope source saved to the song.";
+			_changed("Updated script Envelope " + _envelope.Name);
+			return true;
+		}
+		catch (Exception error)
+		{
+			_message.Text = "Cannot save Envelope source: " + error.Message;
+			return false;
+		}
+	}
+
 	private Control Build()
 	{
 		Button back = new() { Content = "← Document" };
 		back.Click += (_, _) => _close();
+		// Applying an expression together with its release limit remains an
+		// atomic, existing authoring action. The new source-only Save above
+		// is independent of the release metadata.
 		Button apply = new() { Content = "Apply expression" };
 		apply.Click += (_, _) => Apply();
 		StackPanel fields = new()
@@ -82,6 +128,7 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 			TextWrapping = TextWrapping.Wrap,
 		});
 		fields.Children.Add(_source);
+		fields.Children.Add(_saveSource);
 		fields.Children.Add(new TextBlock
 		{
 			Text = "Release limit (seconds). A finite limit forces silence " +
@@ -109,8 +156,11 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 			TimeSpan? release = text.Length == 0
 				? null : TimeSpan.FromSeconds(
 					double.Parse(text, CultureInfo.InvariantCulture));
+			string source = _source.Text ?? string.Empty;
 			EnvelopeDocumentEditor.UpdateScriptEnvelope(
-				_workspace, _envelope, _source.Text ?? string.Empty, release);
+				_workspace, _envelope, source, release);
+			_appliedSource = source;
+			_saveSource.IsEnabled = false;
 			_message.Text = "Expression updated.";
 			_changed("Updated script Envelope " + _envelope.Name);
 		}

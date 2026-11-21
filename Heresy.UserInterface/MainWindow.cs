@@ -182,6 +182,7 @@ public sealed class MainWindow : Window
 	private SongTreeDropPlacement? _dropHighlightPlacement;
 	private bool _closeApproved;
 	private bool _closePromptInProgress;
+	private bool _scriptSourcePromptInProgress;
 	private CancellationTokenSource? _exportCancellation;
 	private bool _renderAudioPending;
 	private bool _renamePromptInProgress;
@@ -861,6 +862,8 @@ public sealed class MainWindow : Window
 	private async Task<bool> SaveDocumentAsync()
 	{
 		CommitPendingPatternVolume();
+		if (!TrySaveCurrentScriptSource())
+			return false;
 		if (!TryCommitPendingEnvelopeFields())
 			return false;
 		if (_workspace.FilePath is null)
@@ -882,6 +885,8 @@ public sealed class MainWindow : Window
 	private async Task<bool> SaveDocumentAsAsync()
 	{
 		CommitPendingPatternVolume();
+		if (!TrySaveCurrentScriptSource())
+			return false;
 		if (!TryCommitPendingEnvelopeFields())
 			return false;
 		if (!StorageProvider.CanSave)
@@ -1208,8 +1213,76 @@ public sealed class MainWindow : Window
 		return false;
 	}
 
-	private bool TrySetEditorContent(Control editor)
+	private IScriptSourceEditor? CurrentScriptSourceEditor =>
+		_mainContent.Content switch
+		{
+			IScriptSourceEditor script => script,
+			FmSynthEditorControl synth => synth.ActiveScriptSourceEditor,
+			_ => null,
+		};
+
+	private bool TrySaveCurrentScriptSource()
 	{
+		if (CurrentScriptSourceEditor is not { HasUnsavedScriptSource: true } script)
+			return true;
+		if (script.TrySaveScriptSource())
+			return true;
+		SetStatus("Correct the script source error before saving the song.");
+		return false;
+	}
+
+	private async Task<bool> ConfirmCanLeaveScriptSourceAsync()
+	{
+		IScriptSourceEditor? source = CurrentScriptSourceEditor;
+		if (source is null || !source.HasUnsavedScriptSource)
+			return true;
+		return await ScriptSourceLeaveGuard.CanProceedAsync(
+			source,
+			async () =>
+			{
+				UnsavedScriptSourceDialog dialog =
+					new(source.ScriptSourceDisplayName);
+				return await dialog.ShowDialog<UnsavedChangesChoice?>(this)
+					?? UnsavedChangesChoice.Cancel;
+			});
+	}
+
+	private async Task RetryEditorTransitionAfterScriptPromptAsync(
+		IScriptSourceEditor source, Control editor, Action? retry)
+	{
+		_scriptSourcePromptInProgress = true;
+		try
+		{
+			if (!await ConfirmCanLeaveScriptSourceAsync()
+				|| !ReferenceEquals(CurrentScriptSourceEditor, source))
+				return;
+
+			if (retry is not null)
+			{
+				retry();
+			}
+			else if (TrySetEditorContent(editor))
+			{
+				UpdateWindowTitle();
+				SetStatus("Editor opened.");
+			}
+		}
+		finally
+		{
+			_scriptSourcePromptInProgress = false;
+		}
+	}
+
+	private bool TrySetEditorContent(Control editor, Action? retry = null)
+	{
+		if (!ReferenceEquals(_mainContent.Content, editor)
+			&& CurrentScriptSourceEditor is { HasUnsavedScriptSource: true } source)
+		{
+			if (!_scriptSourcePromptInProgress)
+				_ = RetryEditorTransitionAfterScriptPromptAsync(source, editor, retry);
+			return false;
+		}
+
 		CommitPendingPatternVolume();
 		if (!TryCommitPendingEnvelopeFields() || !TryLeaveSynthEditor())
 			return false;
@@ -1223,8 +1296,10 @@ public sealed class MainWindow : Window
 		CommitPendingPatternVolume();
 		if (!TryCommitPendingEnvelopeFields())
 			return false;
-		// Commit in-editor drafts before deciding whether the document
-		// needs saving or is safe to replace.
+		if (!await ConfirmCanLeaveScriptSourceAsync())
+			return false;
+		// The script-source prompt runs before the song-level Save guard:
+		// saving source applies to the song; discarding does not.
 		if (!TryLeaveSynthEditor())
 			return false;
 		return await UnsavedChangesGuard.CanProceedAsync(
@@ -1247,16 +1322,21 @@ public sealed class MainWindow : Window
 		WindowClosingEventArgs e)
 	{
 		_ = sender;
+		if (_closeApproved)
+			return;
+
 		CommitPendingPatternVolume();
-		if (!TryCommitPendingEnvelopeFields() || !TryLeaveSynthEditor())
+		if (!TryCommitPendingEnvelopeFields())
 		{
 			e.Cancel = true;
 			return;
 		}
 
-		if (_closeApproved
-			|| !_workspace.IsModified)
+		if (!_workspace.IsModified
+			&& CurrentScriptSourceEditor is not { HasUnsavedScriptSource: true })
 		{
+			if (!TryLeaveSynthEditor())
+				e.Cancel = true;
 			return;
 		}
 
@@ -2093,7 +2173,8 @@ public sealed class MainWindow : Window
 		string status,
 		SongTreeNode? selectNode = null)
 	{
-		if (_documentView is not null && !TrySetEditorContent(_documentView))
+		if (_documentView is not null && !TrySetEditorContent(_documentView,
+			() => RefreshDocumentView(status, selectNode)))
 			return;
 		TrackWorkspaceDocument();
 		ClearTreeDropHighlight();

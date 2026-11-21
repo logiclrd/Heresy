@@ -79,6 +79,40 @@ public static class ScriptInstrumentDocumentEditor
         workspace.Document.MarkChanged(affectsAudio: true);
     }
 
+    /// <summary>
+    /// Atomically validate and commit all three scripted expression fields.
+    /// Used for a leave-prompt Save so a valid selector cannot be applied
+    /// while an invalid NNA draft remains unsaved (or vice versa).
+    /// </summary>
+    public static void SetAllExpressions(
+        DocumentWorkspace workspace, ScriptInstrumentDefinition definition,
+        string source, string pitchExpression,
+        string nnaExpression, TimeSpan nnaFadeDuration)
+    {
+        ValidateOwner(workspace, definition);
+        ValidateSource(source);
+        ValidatePitchExpression(pitchExpression);
+        if (nnaFadeDuration <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(nnaFadeDuration));
+        var diagnostics = ScriptCompiler.AnalyzeInstrumentNnaSource(nnaExpression);
+        if (diagnostics.Any(d => d.Severity == ScriptDiagnosticSeverity.Error))
+            throw new ArgumentException(
+                string.Join("; ", diagnostics.Select(d => d.Message)),
+                nameof(nnaExpression));
+
+        if (definition.Source == source &&
+            definition.PitchExpression == pitchExpression &&
+            definition.NnaExpression == nnaExpression &&
+            definition.NnaFadeDuration == nnaFadeDuration)
+            return;
+
+        definition.Source = source;
+        definition.PitchExpression = pitchExpression;
+        definition.NnaExpression = nnaExpression;
+        definition.NnaFadeDuration = nnaFadeDuration;
+        workspace.Document.MarkChanged(affectsAudio: true);
+    }
+
     public static int AddTone(
         DocumentWorkspace workspace, ScriptInstrumentDefinition definition,
         ObjectId soundId, double pitchMultiplier = 1.0,

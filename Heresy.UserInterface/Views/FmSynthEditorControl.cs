@@ -44,6 +44,10 @@ public sealed class FmSynthEditorControl : UserControl
 	private readonly PianoPreviewPlaybackController _previewPlayback;
 	private readonly PianoTestControl _pianoTest;
 	private readonly Dictionary<ObjectId, Window> _sharedVolumeEditors = [];
+	private bool _embeddedScriptPromptInProgress;
+	public IScriptSourceEditor? ActiveScriptSourceEditor =>
+		_inspector.Children.OfType<ScriptEnvelopeEditorControl>().FirstOrDefault();
+
 	private readonly StackPanel _inspector =
 		new()
 		{
@@ -142,6 +146,12 @@ public sealed class FmSynthEditorControl : UserControl
 			};
 		back.Click += (_, _) =>
 		{
+			if (TryDeferScriptSourceNavigation(() =>
+			{
+				if (TryCommitPendingFilterChanges())
+					_close();
+			}))
+				return;
 			if (TryCommitPendingFilterChanges())
 				_close();
 		};
@@ -440,6 +450,12 @@ public sealed class FmSynthEditorControl : UserControl
 	/// before switching editors, nodes, or closing the owning window.</summary>
 	public bool TryCommitPendingFilterChanges()
 	{
+		if (ActiveScriptSourceEditor is { HasUnsavedScriptSource: true })
+		{
+			_message.Text = "The embedded Script Envelope has unsaved source. "
+				+ "Save it or use its Back button to discard before changing the graph.";
+			return false;
+		}
 		if (_activeFilterInstanceEditor is not FilterInstanceEditorControl editor
 			|| editor.TryCommitPendingChanges())
 			return true;
@@ -449,9 +465,51 @@ public sealed class FmSynthEditorControl : UserControl
 		return false;
 	}
 
+	private bool TryDeferScriptSourceNavigation(Action continueNavigation)
+	{
+		IScriptSourceEditor? editor = ActiveScriptSourceEditor;
+		if (editor is null || !editor.HasUnsavedScriptSource)
+			return false;
+		if (_embeddedScriptPromptInProgress)
+			return true;
+		if (TopLevel.GetTopLevel(this) is not Window owner)
+		{
+			_message.Text = "Save this Script Envelope before changing nodes.";
+			return true;
+		}
+		_ = ConfirmEmbeddedSourceThenContinueAsync(editor, owner, continueNavigation);
+		return true;
+	}
+
+	private async Task ConfirmEmbeddedSourceThenContinueAsync(
+		IScriptSourceEditor editor, Window owner, Action continueNavigation)
+	{
+		_embeddedScriptPromptInProgress = true;
+		try
+		{
+			bool canLeave = await ScriptSourceLeaveGuard.CanProceedAsync(
+				editor,
+				async () =>
+				{
+					UnsavedScriptSourceDialog dialog =
+						new(editor.ScriptSourceDisplayName);
+					return await dialog.ShowDialog<UnsavedChangesChoice?>(owner)
+						?? UnsavedChangesChoice.Cancel;
+				});
+			if (canLeave && ReferenceEquals(ActiveScriptSourceEditor, editor))
+				continueNavigation();
+		}
+		finally
+		{
+			_embeddedScriptPromptInProgress = false;
+		}
+	}
+
 	private void SelectNode(
 		int nodeId)
 	{
+		if (TryDeferScriptSourceNavigation(() => SelectNode(nodeId)))
+			return;
 		if (!TryCommitPendingFilterChanges())
 		{
 			ApplyGraphSelection();
@@ -465,6 +523,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void SelectConnection(FmSynthConnectionCandidate connection)
 	{
+		if (TryDeferScriptSourceNavigation(() => SelectConnection(connection)))
+			return;
 		if (!TryCommitPendingFilterChanges())
 		{
 			ApplyGraphSelection();
@@ -589,6 +649,14 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void RebuildInspector()
 	{
+		// Other graph updates may rebuild this panel without a selection
+		// transition. Preserve an unfinished shared Script Envelope buffer.
+		if (ActiveScriptSourceEditor is { HasUnsavedScriptSource: true })
+		{
+			_message.Text = "Save or discard the embedded Script Envelope "
+				+ "source before rebuilding its inspector.";
+			return;
+		}
 		_activeFilterInspectorNodeId = null;
 		_activeFilterInstanceEditor = null;
 		_activeFilterStageSummary = null;

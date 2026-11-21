@@ -200,18 +200,18 @@ public sealed class InstrumentNnaEditorControlTests
         Assert.That(expression.Text, Is.EqualTo("InstrumentNnaAction.Inherit"));
         uint revision = workspace.Document.AudioRevision;
         expression.Text = "System.Environment.TickCount";
-        Invoke(editor, "ApplyNnaExpression");
+        Invoke(editor, "TrySaveNnaExpression");
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision));
         Assert.That(Field<TextBlock>(editor, "_message").Text, Is.Not.Empty);
 
         expression.Text =
             "pitchMultiplier < 1.5 ? InstrumentNnaAction.Continue : InstrumentNnaAction.Inherit";
         fade.Text = "47";
-        Invoke(editor, "ApplyNnaExpression");
+        Invoke(editor, "TrySaveNnaExpression");
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1));
         Assert.That(instrument.NnaFadeDuration, Is.EqualTo(TimeSpan.FromMilliseconds(47)));
         Assert.That(instrument.NnaExpression, Is.EqualTo(expression.Text));
-        Invoke(editor, "ApplyNnaExpression");
+        Invoke(editor, "TrySaveNnaExpression");
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1));
 
         ComboBox sound = Field<ComboBox>(editor, "_sound");
@@ -258,7 +258,7 @@ public sealed class InstrumentNnaEditorControlTests
             workspace, instrument, "InstrumentNnaAction.Continue",
             TimeSpan.FromMilliseconds(60));
         uint revision = workspace.Document.AudioRevision;
-        Invoke(editor, "ApplyNnaExpression");
+        Invoke(editor, "TrySaveNnaExpression");
         Assert.That(instrument.NnaExpression, Is.EqualTo("InstrumentNnaAction.Continue"));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision));
         Assert.That(Field<TextBlock>(editor, "_message").Text, Does.Contain("Reopen"));
