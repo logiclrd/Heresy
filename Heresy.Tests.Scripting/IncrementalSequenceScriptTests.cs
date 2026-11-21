@@ -41,11 +41,11 @@ public sealed class IncrementalSequenceScriptTests
 	{
 		const string source = "if (sequenceIndex == 0) return Play(_O(17)); else return default;";
 		var analyzed = ScriptCompiler.AnalyzeSequenceSource(source);
-		analyzed.Should().NotContain(d => d.Code is "CS0161" or "CS0162");
+		analyzed.Should().NotContain(d => d.Code == "CS0161" || d.Code == "CS0162");
 		var compiled = ScriptCompiler.CompileIncrementalSequence(
 			new ScriptSequenceDefinition((ObjectId)1U, "Complete") { Source = source });
 		compiled.Success.Should().BeTrue();
-		compiled.Diagnostics.Should().NotContain(d => d.Code is "CS0161" or "CS0162");
+		compiled.Diagnostics.Should().NotContain(d => d.Code == "CS0161" || d.Code == "CS0162");
 	}
 
 	[Test]
