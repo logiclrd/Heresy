@@ -266,6 +266,9 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor
 			};
 		body.Children.Add(analysisBorder);
 
+		// Keep the source commit action visible before the long reference pane.
+		body.Children.Add(_saveSource);
+
 		body.Children.Add(new TextBlock
 		{
 			Text = "Script API reference",
@@ -275,8 +278,6 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor
 			_pattern is not null
 				? ScriptEditorHelp.PatternReference
 				: ScriptEditorHelp.SequenceReference));
-
-		body.Children.Add(_saveSource);
 
 		Border messageBorder =
 			new()

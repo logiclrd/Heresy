@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Reflection;
 
 using Avalonia.Controls;
@@ -19,6 +20,37 @@ public sealed class ScriptSourceSaveControlTests
         (T)target.GetType()
             .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(target)!;
+
+    [AvaloniaTest]
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ScriptSaveIsAboveReferencePane(bool isPattern)
+    {
+        DocumentWorkspace workspace = new();
+        ScriptEditorControl editor = isPattern
+            ? new(workspace,
+                ScriptDocumentEditor.CreateScriptPattern(workspace, "Test"),
+                () => { }, _ => { })
+            : new(workspace,
+                ScriptDocumentEditor.CreateScriptSequence(workspace, "Test"),
+                () => { }, _ => { });
+
+        DockPanel root = (DockPanel)editor.Content!;
+        ScrollViewer scroll = root.Children.OfType<ScrollViewer>().Single();
+        StackPanel body = (StackPanel)scroll.Content!;
+        Button save = Field<Button>(editor, "_saveSource");
+        int saveIndex = body.Children.IndexOf(save);
+        int referenceIndex = body.Children
+            .Select((child, index) => (child, index))
+            .Where(item => item.child is TextBlock text
+                && text.Text == "Script API reference")
+            .Select(item => item.index)
+            .Single();
+
+        Assert.That(saveIndex, Is.GreaterThan(0));
+        Assert.That(saveIndex, Is.LessThan(referenceIndex));
+        Assert.That(saveIndex, Is.EqualTo(referenceIndex - 1));
+    }
 
     [AvaloniaTest]
     public void ScriptSequenceSaveIsTextOnlyAndReversible()
