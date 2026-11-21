@@ -100,6 +100,28 @@ public sealed class ScriptReferenceAnalyzerTests
 	}
 
 	[Test]
+	public void SignedIntComputedAndNegativeLookupsAreNotNameTokens()
+	{
+		const string source = """
+			int id = 17;
+			var computed = _O(id);
+			var negative = _O(-3);
+			var positiveLiteral = _O(31);
+			var unsignedLiteral = _O(31u);
+			""";
+		ScriptReferenceAnalysis analysis = ScriptReferenceAnalyzer.Analyze(source);
+		analysis.IsReliable.Should().BeTrue();
+		analysis.Diagnostics.Should().BeEmpty();
+		analysis.HasDynamicReferences.Should().BeTrue();
+		analysis.DynamicReferences.Should().HaveCount(2);
+		analysis.References.Select(reference => reference.Id)
+			.Should().Equal((ObjectId)31U, (ObjectId)31U);
+		RoslynScriptObjectReferenceAnalyzer.Instance
+			.AnalyzeObjectReferences(source).IsReliable.Should().BeFalse(
+				"computed signed IDs cannot be rewritten in a deep copy");
+	}
+
+	[Test]
 	public void ShadowingLookupFunctionDoesNotCreateObjectReferences()
 	{
 		string source = """

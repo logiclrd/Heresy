@@ -258,7 +258,7 @@ public sealed class SongObjectDuplicateTreePlacementTests
         ScriptPatternDefinition original = new(
             song.AllocateObjectId(), "Dynamic script")
         {
-            Source = "uint id = 2; var source = _O(id);",
+            Source = "int id = 2; var source = _O(id);",
         };
         song.Add(original);
         uint revision = song.DocumentRevision;
