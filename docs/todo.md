@@ -288,10 +288,48 @@ Do not reintroduce completed-task checklists here.
   the user's text; preserve authored explicit returns and actionable
   diagnostics for unrelated compilation errors. Replace the existing
   introductory placeholder text about `_O()` and implementation technologies
-  with a short, valid, editable example *for each script kind*, matched to
-  the supported API. A Script Sequence example can use a `switch` on
-  `sequenceIndex` (with `Play(_O(...))` for a real case); examples must
-  compile and demonstrate the actual author's entry point.
+  with a short, valid, editable initial source example *for each script
+  kind*, matched to the supported API. Generate examples **once, when the
+  scripted object is first created**, never on reopening or subsequent
+  updates. Prefer existing, compatible song objects for example references:
+  Script Sequences must pick actual Patterns for `Play(_O(id))` (not an
+  arbitrary Sequence or sound source); Script Patterns should use a
+  suitable sound source where available; other expression kinds should
+  use actual allowed operands. Provide valid, meaningful, non-referencing
+  fallbacks for an otherwise empty song. A Script Sequence can use a
+  `switch` on `sequenceIndex` with one actual Pattern and a valid
+  terminal/default branch. The initial source is normal mutable authored
+  text from creation onward; never regenerate it because referenced
+  objects are renamed/deleted. Keep **initial source generation** separate
+  from compiler-injected implicit returns.
+
+  **Explicit help remains independent of example source.** Replace the
+  current literal technical description under the source editor with
+  concise **object-kind-specific explanatory text** plus a full,
+  **separately scrollable, read-only but selectable/copyable reference**
+  for every supported script API (including parameter types/defaults,
+  execution lifecycle, available variables, restrictions, and example
+  statements). This is not a second editable code buffer. Script
+  Sequence intro: `_O(35)` references object 35; each next-order
+  lookup returns `Play(_O(patternId))` or
+  `Play(_O(patternId), startRow)`, with accurate end-of-sequence
+  behavior. Script Pattern intro: `_O(35)` refers to object 35;
+  each Pattern invocation emits note and control commands; document
+  physical and virtual channels, `Note`, `NoteVirtual`,
+  `NoteFilter`/`NoteFilterVirtual`,
+  `ChannelFilter`/`ChannelFilterVirtual`, `VolumeVirtual`,
+  `Random` and **all other currently supported methods** with
+  working call signatures. Match the actual runtime and incremental
+  compiler, not illustrative invented APIs. In particular `Note`
+  currently receives `pitchMultiplier` (no built-in
+  `Semitone(p)` helper), and `VolumeVirtual` sets note/voice volume
+  on its scoped virtual channel rather than generalized song volume.
+  Do not present optional bracket notation as copy/pasteable C#;
+  distinguish signatures from usage samples. Script Envelope and
+  Instrument editors have narrower **expression** contracts and
+  require their own shorter, appropriate help/reference content.
+  Keep long reference content inside its own scroll viewport instead
+  of making the overall document/editor difficult to navigate.
 
   Use a **monospace editor font** via the first installed candidate in
   exactly this preference order: Commit Mono, Hack, Fira Mono, Noto Mono,
@@ -318,6 +356,43 @@ Do not reintroduce completed-task checklists here.
   **Owner refinement (2026-11-21):** Keep this as a separate TODO; PR #38
   currently implements only the signed `_O(int)` compatibility fix for
   D6-G, not this broader script-editor redesign.
+
+- [ ] **Audit Script Pattern physical/virtual channel helper parity.**
+  The current `PatternScriptProgram` exposes `VolumeVirtual`,
+  `SourceFrameVirtual`, `DisplacementVirtual` and `PastVirtual`
+  without direct physical-channel counterparts. The existing
+  physical `Seek` is measured in playback **seconds**, whereas
+  `SourceFrameVirtual` uses native source **frames**, so an apparent
+  name mapping is not semantic parity. Examine whether `Volume`
+  (physical), source-frame seek, per-voice displacement policy,
+  and past-note action helpers should be exposed for physical
+  channels; also audit reverse asymmetries (physical spatial,
+  tracker-filter and control APIs absent for virtual channels).
+  Decide deliberately which differences express real channel
+  semantics and which are missing conveniences. Preserve runtime
+  validation, direct-statement yielding, snapshots, scope and
+  deterministic scheduling. Document accepted intentional gaps and
+  add compilation/PCM parity tests for any new helpers. Keep this
+  separate from a read-only API-reference UI, which must document
+  **only the functions currently available**.
+
+- [ ] **Redesign Script Instrument tone authoring and pitch-dependent
+  tone construction (separate exploratory design).** Existing Script
+  Instruments are restricted expression-based selectors returning
+  integer indices into manually entered `ToneSpecifications`, with a
+  second pitch-ratio expression and NNA expression. Requiring
+  one-at-a-time tone creation and predeclared fixed ratios makes
+  authoring impractical for many pitch-dependent use cases. Explore
+  a higher-level way to dynamically construct/derive a tone
+  definition for an incoming pitch multiplier and whether an
+  appropriately bounded **procedural** authoring model (or
+  declarative construction helpers) is preferable to an integer
+  selector. Preserve deterministic sound dependency discovery,
+  safe import/deep-duplication remapping, sample/filter/envelope
+  bindings, source snapshots, non-realtime compilation, and
+  existing song compatibility; design and acceptance first.
+  **Explicitly out of scope for the script-editor help/example
+  polish.**
 
 - [ ] **Make Script `_O(id)` visual projection edit-local and separately
   undoable.** The semantic Roslyn analysis still checks the complete
