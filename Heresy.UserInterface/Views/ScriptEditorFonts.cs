@@ -95,12 +95,12 @@ public static class ScriptEditorFonts
     {
         var fonts = FontManager.Current.SystemFonts;
         FontFamily[] installed = fonts.ToArray();
-        var glyphFaces = new Dictionary<string, IGlyphTypeface?>(
+        var glyphFaces = new Dictionary<string, GlyphTypeface?>(
             StringComparer.OrdinalIgnoreCase);
 
-        IGlyphTypeface? FindFace(string name)
+        GlyphTypeface? FindFace(string name)
         {
-            if (!glyphFaces.TryGetValue(name, out IGlyphTypeface? face))
+            if (!glyphFaces.TryGetValue(name, out GlyphTypeface? face))
             {
                 fonts.TryGetGlyphTypeface(name, FontStyle.Normal,
                     FontWeight.Normal, FontStretch.Normal, out face);
@@ -112,43 +112,32 @@ public static class ScriptEditorFonts
         string? selectedName = SelectFamilyName(
             installed.Select(family => family.Name),
             name => FindFace(name) is { } face && HasUniformAdvance(face),
-            name => FindFace(name) is { } face && IsSansSerif(name, face));
+            name => IsSansSerif(name));
 
         return selectedName is null ? null : new FontFamily(selectedName);
     }
 
-    private static bool HasUniformAdvance(IGlyphTypeface face)
+    private static bool HasUniformAdvance(GlyphTypeface face)
     {
         int advance = -1;
         foreach (char character in "iWm0. ")
         {
-            ushort glyph = face.GetGlyph(character);
-            if (glyph == 0)
+            if (!face.CharacterToGlyphMap.TryGetGlyph(character, out ushort glyph)
+                || !face.TryGetHorizontalGlyphAdvance(glyph, out ushort width)
+                || width == 0 || (advance >= 0 && width != advance))
+            {
                 return false;
-
-            int width = face.GetGlyphAdvance(glyph);
-            if (width <= 0 || (advance >= 0 && width != advance))
-                return false;
+            }
             advance = width;
         }
         return true;
     }
 
-    private static bool IsSansSerif(string name, IGlyphTypeface face)
+    private static bool IsSansSerif(string name)
     {
-        // The OS/2 PANOSE serif-style byte (index 33) distinguishes Latin
-        // text sans-serif styles 11..15 from serif styles 2..10.
-        const uint os2Tag = 0x4F532F32; // 'OS/2'
-        if (face.TryGetTable(os2Tag, out byte[] table)
-            && table.Length > 33 && table[32] == 2
-            && table[33] is >= 2 and <= 15)
-        {
-            return table[33] >= 11;
-        }
-
-        // Older/underspecified fonts may have no meaningful PANOSE data.
-        // Name hints are a best effort only; equal glyph advances are still
-        // mandatory before any fallback font can be selected.
+        // Avalonia 12.1 exposes glyph metrics, not PANOSE classification.
+        // Use conservative family-name hints for the sans-serif tier;
+        // a verified uniform glyph advance is still required for selection.
         return name.Contains("Sans", StringComparison.OrdinalIgnoreCase)
             || name.Contains("Code", StringComparison.OrdinalIgnoreCase)
             || name.Contains("Console", StringComparison.OrdinalIgnoreCase)
