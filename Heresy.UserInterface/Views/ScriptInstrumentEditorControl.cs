@@ -165,11 +165,38 @@ public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEd
 
     public bool TrySaveScriptSource()
     {
-        if (ExpressionsDirty && !TrySaveExpressions())
+        if (!HasUnsavedScriptSource)
+            return true;
+        try
+        {
+            if (_definition.NnaExpression != _loadedNnaExpression
+                || _definition.NnaFadeDuration != _loadedNnaFade)
+                throw new InvalidOperationException(
+                    "Script Instrument NNA changed elsewhere. Reopen this editor to reload.");
+
+            string expression = _expression.Text ?? string.Empty;
+            string pitch = _pitchExpression.Text ?? string.Empty;
+            string nna = _nnaExpression.Text ?? string.Empty;
+            TimeSpan fade = NnaExpressionDirty
+                ? InstrumentNnaEditorValues.ParseFadeMilliseconds(
+                    _nnaFadeMilliseconds.Text)
+                : _definition.NnaFadeDuration;
+            ScriptInstrumentDocumentEditor.SetAllExpressions(
+                _workspace, _definition, expression, pitch, nna, fade);
+            _appliedExpression = _definition.Source;
+            _appliedPitchExpression = _definition.PitchExpression;
+            _loadedNnaExpression = _definition.NnaExpression;
+            _loadedNnaFade = _definition.NnaFadeDuration;
+            UpdateSaveButtons();
+            _message.Text = "Script Instrument expressions saved to the song.";
+            _changed("Updated script Instrument " + _definition.Name);
+            return true;
+        }
+        catch (Exception error)
+        {
+            _message.Text = error.Message;
             return false;
-        if (NnaExpressionDirty && !TrySaveNnaExpression())
-            return false;
-        return !HasUnsavedScriptSource;
+        }
     }
 
     private bool TrySaveExpressions()
