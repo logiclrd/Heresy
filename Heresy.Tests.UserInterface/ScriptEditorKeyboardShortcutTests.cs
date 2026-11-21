@@ -55,9 +55,9 @@ public sealed class ScriptEditorKeyboardShortcutTests
     {
         foreach (bool patternKind in new[] { true, false })
         {
-            DocumentWorkspace workspace = new();
             RecordingTransport transport = new();
-            MainWindow window = new(workspace, transport);
+            MainWindow window = new(transport);
+            DocumentWorkspace workspace = Field<DocumentWorkspace>(window, "_workspace");
             window.Show();
             try
             {
@@ -128,8 +128,8 @@ public sealed class ScriptEditorKeyboardShortcutTests
     {
         foreach (bool patternKind in new[] { true, false })
         {
-            DocumentWorkspace workspace = new();
-            MainWindow window = new(workspace);
+            MainWindow window = new();
+            DocumentWorkspace workspace = Field<DocumentWorkspace>(window, "_workspace");
             window.Show();
             try
             {
@@ -177,8 +177,8 @@ public sealed class ScriptEditorKeyboardShortcutTests
     [AvaloniaTest]
     public void ControlSInScriptInstrumentCommitsOnlyItsAssociatedSourceGroup()
     {
-        DocumentWorkspace workspace = new();
-        MainWindow window = new(workspace);
+        MainWindow window = new();
+        DocumentWorkspace workspace = Field<DocumentWorkspace>(window, "_workspace");
         window.Show();
         try
         {
@@ -227,8 +227,8 @@ public sealed class ScriptEditorKeyboardShortcutTests
     [AvaloniaTest]
     public void EnvelopeSourceControlSDoesNotApplyOtherFields()
     {
-        DocumentWorkspace workspace = new();
-        MainWindow window = new(workspace);
+        MainWindow window = new();
+        DocumentWorkspace workspace = Field<DocumentWorkspace>(window, "_workspace");
         window.Show();
         try
         {
