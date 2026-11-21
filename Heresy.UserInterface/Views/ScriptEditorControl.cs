@@ -240,15 +240,25 @@ public sealed class ScriptEditorControl : UserControl
 			};
 		body.Children.Add(analysisBorder);
 
-		TextBlock note =
+		TextBlock introduction =
 			new()
 			{
-				Text =
-					"Literal _O(137) references are rendered as single visual object-name tokens without changing the stored C# source. Computed _O(expression) lookups remain plain editable text and cannot be safely deep-duplicated. Live Roslyn analysis drives syntax colors and diagnostic squiggles.",
+				Text = _pattern is not null
+					? ScriptEditorHelp.PatternIntroduction
+					: ScriptEditorHelp.SequenceIntroduction,
 				TextWrapping = TextWrapping.Wrap,
 				MaxWidth = 900,
 			};
-		body.Children.Add(note);
+		body.Children.Add(introduction);
+		body.Children.Add(new TextBlock
+		{
+			Text = "Script API reference — select and copy text",
+			FontWeight = FontWeight.SemiBold,
+		});
+		body.Children.Add(ScriptEditorHelp.CreateReferenceViewer(
+			_pattern is not null
+				? ScriptEditorHelp.PatternReference
+				: ScriptEditorHelp.SequenceReference));
 
 		Button apply =
 			new()

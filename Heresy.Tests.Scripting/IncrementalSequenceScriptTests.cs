@@ -17,6 +17,37 @@ namespace Heresy.Tests.Scripting;
 [TestFixture]
 public sealed class IncrementalSequenceScriptTests
 {
+	[TestCase("")]
+	[TestCase("if (sequenceIndex == 0) return Play(_O(17));")]
+	public void MissingReturnFallsThroughToEndOfSequence(string source)
+	{
+		ScriptSequenceDefinition definition =
+			new((ObjectId)1U, "Fallthrough") { Source = source };
+		var compiled = ScriptCompiler.CompileIncrementalSequence(definition);
+		compiled.Success.Should().BeTrue(
+			string.Join(", ", compiled.Diagnostics.Select(d => d.Message)));
+		ISequenceEntryProvider lookup = compiled.Program!
+			.Create(new SequencingContext());
+		if (source.Length == 0)
+			lookup.GetSequenceEntry(0, 0, -1).Should().BeNull();
+		else
+			lookup.GetSequenceEntry(0, 0, -1).Should().Be(
+				new SequenceEntry((ObjectId)17U, 0));
+		lookup.GetSequenceEntry(1, 1, 0).Should().BeNull();
+	}
+
+	[Test]
+	public void FullyExplicitReturnDoesNotProduceUnreachableCodeDiagnostics()
+	{
+		const string source = "if (sequenceIndex == 0) return Play(_O(17)); else return default;";
+		var analyzed = ScriptCompiler.AnalyzeSequenceSource(source);
+		analyzed.Should().NotContain(d => d.Code == "CS0161" || d.Code == "CS0162");
+		var compiled = ScriptCompiler.CompileIncrementalSequence(
+			new ScriptSequenceDefinition((ObjectId)1U, "Complete") { Source = source });
+		compiled.Success.Should().BeTrue();
+		compiled.Diagnostics.Should().NotContain(d => d.Code == "CS0161" || d.Code == "CS0162");
+	}
+
 	[Test]
 	public void LookupExecutesOnlyTheSelectedCase()
 	{
