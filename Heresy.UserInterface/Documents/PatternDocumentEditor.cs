@@ -16,12 +16,15 @@ public static class PatternDocumentEditor
 		DocumentWorkspace workspace,
 		string name,
 		int rowCount = 64,
-		int channelCount = 8)
+		int channelCount = 8,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		ValidateLayout(rowCount, channelCount, 4, 16);
 
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Patterns, destinationFolder);
 		ObjectId id = workspace.Document.AllocateObjectId();
 		DataPatternDefinition pattern =
 			new(id, name.Trim())
@@ -29,7 +32,8 @@ public static class PatternDocumentEditor
 				RowCount = rowCount,
 				ChannelCount = channelCount,
 			};
-		workspace.Document.Add(pattern, affectsAudio: true);
+		workspace.Document.Add(pattern, affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return pattern;
 	}
 
