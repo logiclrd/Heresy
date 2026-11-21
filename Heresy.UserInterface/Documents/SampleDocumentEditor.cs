@@ -25,7 +25,8 @@ public static class SampleDocumentEditor
 	public static SampleDefinition Import(
 		DocumentWorkspace workspace,
 		string assetPath,
-		string? name = null)
+		string? name = null,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(assetPath);
@@ -40,6 +41,8 @@ public static class SampleDocumentEditor
 		if (string.IsNullOrWhiteSpace(sampleName))
 			sampleName = Path.GetFileName(fullAssetPath);
 
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Samples, destinationFolder);
 		byte[] encoded = File.ReadAllBytes(fullAssetPath);
 		ObjectId id = workspace.Document.AllocateObjectId();
 		SampleDefinition sample =
@@ -48,7 +51,8 @@ public static class SampleDocumentEditor
 				sampleName,
 				Path.GetFileName(fullAssetPath),
 				encoded);
-		workspace.Document.Add(sample, affectsAudio: true);
+		workspace.Document.Add(sample, affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return sample;
 	}
 
@@ -74,12 +78,15 @@ public static class SampleDocumentEditor
 	public static IReadOnlyList<SampleDefinition> ImportFromSong(
 		DocumentWorkspace workspace,
 		SongSampleImportSource source,
-		IEnumerable<ObjectId> sampleIds)
+		IEnumerable<ObjectId> sampleIds,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentNullException.ThrowIfNull(source);
 		ArgumentNullException.ThrowIfNull(sampleIds);
 
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Samples, destinationFolder);
 		HashSet<ObjectId> selected = new(sampleIds);
 		List<SampleDefinition> imported = [];
 		foreach (SampleDefinition sample in source.Samples)
@@ -96,7 +103,8 @@ public static class SampleDocumentEditor
 					sample,
 					encoding.FileName,
 					encoding.Encoded);
-			workspace.Document.Add(copy, affectsAudio: true);
+			workspace.Document.Add(copy, affectsAudio: true,
+				destinationFolder: destinationFolder);
 			imported.Add(copy);
 		}
 
