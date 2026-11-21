@@ -13,6 +13,7 @@ using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
 using Heresy.Playback;
+using Heresy.Render.Realtime;
 using Heresy.UserInterface;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Views;
