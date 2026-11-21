@@ -86,7 +86,7 @@ public sealed class ScriptEditorKeyboardShortcutTests
                 source.Text = updated;
                 Assert.That(editor.HasUnsavedScriptSource, Is.True);
 
-                KeyEventArgs f6 = Press(source.TextArea, Key.F6);
+                KeyEventArgs f6 = Press(source, Key.F6);
                 Assert.That(f6.Handled, Is.True);
                 Assert.That(editor.HasUnsavedScriptSource, Is.False,
                     "F6 must audition current authored source, not the old version");
@@ -145,7 +145,7 @@ public sealed class ScriptEditorKeyboardShortcutTests
                 TextEditor source = Field<TextEditor>(editor, "_source");
                 Button save = Field<Button>(editor, "_saveSource");
                 source.Text += "\n// committed from text focus";
-                KeyEventArgs first = Press(source.TextArea, Key.S, KeyModifiers.Control);
+                KeyEventArgs first = Press(source, Key.S, KeyModifiers.Control);
                 Assert.That(first.Handled, Is.True);
                 Assert.That(editor.HasUnsavedScriptSource, Is.False);
                 Assert.That(save.IsEnabled, Is.False);
@@ -156,7 +156,7 @@ public sealed class ScriptEditorKeyboardShortcutTests
                 Assert.That(editor.HasUnsavedScriptSource, Is.False);
                 Assert.That(save.IsEnabled, Is.False);
 
-                KeyEventArgs clean = Press(source.TextArea, Key.S, KeyModifiers.Control);
+                KeyEventArgs clean = Press(source, Key.S, KeyModifiers.Control);
                 Assert.That(clean.Handled, Is.True,
                     "clean source must consume Ctrl+S, not fall through to Save Document");
 
@@ -172,6 +172,33 @@ public sealed class ScriptEditorKeyboardShortcutTests
                 workspace.New();
                 window.Close();
             }
+        }
+    }
+
+    [AvaloniaTest]
+    public void AvaloniaEditTextAreaDirectShortcutsAreConsumedWithoutWindowRouting()
+    {
+        foreach (bool patternKind in new[] { true, false })
+        {
+            DocumentWorkspace workspace = new();
+            int auditionCalls = 0;
+            ScriptEditorControl editor = patternKind
+                ? new ScriptEditorControl(workspace,
+                    ScriptDocumentEditor.CreateScriptPattern(workspace, "Pattern"),
+                    () => { }, _ => { }, testRequested: () => auditionCalls++)
+                : new ScriptEditorControl(workspace,
+                    ScriptDocumentEditor.CreateScriptSequence(workspace, "Sequence"),
+                    () => { }, _ => { }, testRequested: () => auditionCalls++);
+            TextEditor source = Field<TextEditor>(editor, "_source");
+            source.Text += "\n// new note logic";
+            Assert.That(Press(source.TextArea, Key.S, KeyModifiers.Control).Handled,
+                Is.True);
+            Assert.That(editor.HasUnsavedScriptSource, Is.False);
+
+            Assert.That(Press(source.TextArea, Key.F6).Handled, Is.True);
+            Assert.That(auditionCalls, Is.EqualTo(1));
+            Assert.That(Press(source.TextArea, Key.F6, KeyModifiers.Shift).Handled,
+                Is.False);
         }
     }
 

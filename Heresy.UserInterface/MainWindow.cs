@@ -2756,7 +2756,8 @@ public sealed class MainWindow : Window
 					UpdateWindowTitle();
 					SetStatus(message);
 				},
-				backLabel);
+				backLabel,
+				() => _ = HandlePlaybackKeyAsync(Key.F6));
 		if (!TrySetEditorContent(editor))
 			return;
 		UpdateWindowTitle();
@@ -2782,7 +2783,8 @@ public sealed class MainWindow : Window
 					UpdateWindowTitle();
 					SetStatus(message);
 				},
-				backLabel);
+				backLabel,
+				() => _ = HandlePlaybackKeyAsync(Key.F6));
 		if (!TrySetEditorContent(editor))
 			return;
 		UpdateWindowTitle();

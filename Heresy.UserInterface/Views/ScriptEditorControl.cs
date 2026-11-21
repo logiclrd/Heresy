@@ -32,6 +32,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 	private readonly Action _close;
 	private readonly Action<string> _changed;
 	private readonly string _backLabel;
+	private readonly Action? _testRequested;
 
 	private readonly TextEditor _source;
 	private string _appliedSource = string.Empty;
@@ -75,14 +76,16 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		ScriptPatternDefinition pattern,
 		Action close,
 		Action<string> changed,
-		string backLabel = "← Document")
+		string backLabel = "← Document",
+		Action? testRequested = null)
 		: this(
 			workspace,
 			pattern,
 			null,
 			close,
 			changed,
-			backLabel)
+			backLabel,
+			testRequested)
 	{
 	}
 
@@ -91,14 +94,16 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		ScriptSequenceDefinition sequence,
 		Action close,
 		Action<string> changed,
-		string backLabel = "← Document")
+		string backLabel = "← Document",
+		Action? testRequested = null)
 		: this(
 			workspace,
 			null,
 			sequence,
 			close,
 			changed,
-			backLabel)
+			backLabel,
+			testRequested)
 	{
 	}
 
@@ -108,7 +113,8 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		ScriptSequenceDefinition? sequence,
 		Action close,
 		Action<string> changed,
-		string backLabel)
+		string backLabel,
+		Action? testRequested)
 	{
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
@@ -126,6 +132,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			?? throw new ArgumentNullException(nameof(changed));
 		_backLabel = backLabel
 			?? throw new ArgumentNullException(nameof(backLabel));
+		_testRequested = testRequested;
 
 		string source =
 			pattern?.Source
@@ -153,6 +160,15 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		_source.TextArea.AddHandler(
 			InputElement.KeyDownEvent,
 			OnScriptTokenKeyDown,
+			RoutingStrategies.Tunnel,
+			handledEventsToo: true);
+		// AvaloniaEdit owns an internal TextArea. Its key events can be
+		// consumed before the host sees a bubbling event. The window handles
+		// shortcuts first when attached; this fallback covers the text area
+		// itself without double-dispatching handled keys.
+		_source.TextArea.AddHandler(
+			InputElement.KeyDownEvent,
+			OnSourceShortcutKeyDown,
 			RoutingStrategies.Tunnel,
 			handledEventsToo: true);
 		_source.TextChanged += (_, _) =>
@@ -473,6 +489,24 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 						$"Script analysis failed: {ex.Message}",
 					TextWrapping = TextWrapping.Wrap,
 				});
+		}
+	}
+
+	private void OnSourceShortcutKeyDown(object? sender, KeyEventArgs e)
+	{
+		if (e.Handled)
+			return;
+
+		if (e.Key == Key.S && e.KeyModifiers == KeyModifiers.Control)
+		{
+			e.Handled = true;
+			TrySaveScriptSource();
+		}
+		else if (e.Key == Key.F6 && e.KeyModifiers == KeyModifiers.None
+			&& _testRequested is not null)
+		{
+			e.Handled = true;
+			_testRequested();
 		}
 	}
 
