@@ -376,10 +376,44 @@ Do not reintroduce completed-task checklists here.
   `pitchMultiplier` and valid numeric values/expressions, not
   `Semitone` as though it already exists. Separate from script-editor
   reference/help UI and from physical/virtual channel parity.
-  **Owner approved (2026-11-21):** [script pitch helper API design](script-pitch-helper-design.md)
-  defines the four-helper shared-class implementation across eight wrappers.
-  Implementation in draft PR (not yet merged); keep this item open until
-  release acceptance.
+  **Implementation and acceptance (2026-11-21):** Owner-approved
+  [script pitch helper API design](script-pitch-helper-design.md) is
+  implemented by PR #47 with one shared implementation exposed through
+  all eight restricted-script contexts. Owner physically verified the
+  helper math in a Script Pattern and confirmed Script Instrument
+  expressions recognize the helpers; full real-instrument playback
+  acceptance is deferred because current Script Instrument authoring is
+  cumbersome (see the redesign TODO below). PR #47 CI covers actual
+  selector/pitch/NNA evaluation and Pattern note generation.
+
+- [ ] **Support F6 test/audition in the Script Pattern editor.**
+  Owner's natural F6 gesture currently works in the Data Pattern editor
+  but is not wired in the Script Pattern editor (observed 2026-11-21).
+  Reuse the expected Data Pattern audition workflow where appropriate,
+  with the same focus/keyboard and stop/retrigger semantics; check how
+  a dirty, not-yet-Saved script source is handled and provide sensible
+  compile/runtime diagnostics rather than silently discarding draft
+  text or globally changing what F6 means. Add GUI and playback
+  regression tests for Script Pattern and unchanged Data Pattern F6.
+
+- [ ] **Route Ctrl+S to local Script Save only for script-source focus.**
+  Currently Ctrl+S invokes global Save Document even while the
+  script-source text editor or its Save button is focused (owner
+  observation 2026-11-21). In those two focus contexts, make Ctrl+S
+  invoke that editor's corresponding **local Save Script** action,
+  applying the authored source without implicitly saving the song
+  file; when any other control has focus, preserve the global
+  **Save Document** handler. Handle multiple independently editable
+  Script Instrument expressions and Script Envelope source fields,
+  including embedded inspectors, using the focused field/button's
+  actual local Save operation. If source is clean, a local Ctrl+S
+  should be a local no-op (not fall through to global Save Document);
+  failed validation must preserve pending text and diagnostics.
+  Do not trigger both handlers. Retain the PR #45 source-dirty
+  Save/Discard/Cancel behavior and coordinate eventual Ctrl+S flush
+  boundaries with the approved tiered Undo/Redo design.
+  Test focus on source, on Save button, elsewhere in script editor,
+  and in the main window, plus key routing on supported platforms.
 
 - [ ] **Audit Script Pattern physical/virtual channel helper parity.**
   The current `PatternScriptProgram` exposes `VolumeVirtual`,
@@ -400,23 +434,42 @@ Do not reintroduce completed-task checklists here.
   separate from a read-only API-reference UI, which must document
   **only the functions currently available**.
 
-- [ ] **Redesign Script Instrument tone authoring and pitch-dependent
-  tone construction (separate exploratory design).** Existing Script
-  Instruments are restricted expression-based selectors returning
-  integer indices into manually entered `ToneSpecifications`, with a
-  second pitch-ratio expression and NNA expression. Requiring
-  one-at-a-time tone creation and predeclared fixed ratios makes
-  authoring impractical for many pitch-dependent use cases. Explore
-  a higher-level way to dynamically construct/derive a tone
-  definition for an incoming pitch multiplier and whether an
-  appropriately bounded **procedural** authoring model (or
-  declarative construction helpers) is preferable to an integer
-  selector. Preserve deterministic sound dependency discovery,
-  safe import/deep-duplication remapping, sample/filter/envelope
-  bindings, source snapshots, non-realtime compilation, and
-  existing song compatibility; design and acceptance first.
-  **Explicitly out of scope for the script-editor help/example
-  polish.**
+- [ ] **Revisit Instrument model, common tone editor, and procedural
+  Script Instrument authoring (exploratory design; no implementation yet).**
+  Currently `InstrumentDefinition` (Data Instrument) and
+  `ScriptInstrumentDefinition` are distinct types. Script Instruments
+  use restricted expression-based tone selectors returning indices into
+  manually authored `ToneSpecifications`, a separate pitch-scaling
+  expression, and an NNA expression. One-at-a-time tone creation and
+  fixed predeclared ratios make meaningful physical playback testing
+  cumbersome; this was observed while accepting PR #47 (math helpers
+  compiled in Instrument expressions but were not auditioned through
+  a fully configured Script Instrument).
+
+  Investigate whether a Script Instrument is effectively a **superset**
+  of a Data Instrument, should reuse the **same fully featured editable
+  tone grid**, and whether these can converge into **one Instrument
+  object type** with an **optional front-end mapping script**. Compare
+  shared editor-only reuse, shared underlying tone-model ownership,
+  and complete type consolidation. Do not assume type unification is
+  safe or necessary before reviewing actual persisted types, data
+  Instrument divisions/offset lookup, Script Instrument selector and
+  per-tone NNA/filter/envelope semantics, and compatibility.
+
+  Independently investigate a **procedural Script Instrument program**
+  (akin to Script Sequences) in place of the current isolated scalar
+  expressions: can it choose or construct/derive tone definitions based
+  on incoming `pitchMultiplier`, express dynamic pitch/NNA policy,
+  and remain bounded, safe, deterministic and understandable? Compare
+  it with declarative helpers and the current indexed tone table.
+  Account explicitly for static sound dependency discovery, source
+  selection/remapping under import and deep duplicate, snapshot
+  isolation, compilation outside realtime playback, audio publication,
+  historical song deserialization, upgrades and compatibility for
+  existing Script Instruments and Data Instruments. Produce a design
+  and acceptance contract **before** modifying either Instrument
+  editor or model. Schedule a practical real-instrument test of the
+  PR #47 pitch helpers once tone authoring is improved.
 
 - [ ] **Make Script `_O(id)` visual projection edit-local and separately
   undoable.** The semantic Roslyn analysis still checks the complete
