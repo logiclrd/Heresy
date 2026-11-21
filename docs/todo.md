@@ -217,16 +217,88 @@ Do not reintroduce completed-task checklists here.
   not change the Synth import acceptance result. PR #34 is approved
   for merge by the owner.
 
-- [ ] **Add Duplicate Object to every main-window object list.**
-  Provide a consistent **Duplicate Object** action in each object list,
-  creating a new independently identifiable object of the same kind with
-  the selected object's content and settings copied according to that
-  object's existing reference/ownership semantics. Keep the original
-  unchanged, give the copy a usable name and selection, and maintain valid
-  internal IDs, references, document persistence and undo/redo where
-  applicable. Audit each list rather than implementing just one object
-  type; check both complex objects and objects referenced elsewhere.
-  See [UI workflow](user-interface-workflows.md).
+- [ ] **Add shallow and deep Duplicate to every main-window object list.**
+  **Duplicate** is always a shallow clone of exactly one new definition:
+  owned authoring data is independent, while same-song references retain
+  the original ObjectIds. Add **Duplicate (deep)** only for Instruments,
+  Synths, and **all scripted object subtypes** (Script Sequence, Pattern,
+  Envelope and Instrument), even if a given script currently references
+  nothing. Ordinary Data Sequences, Data Patterns, Node Envelopes, Filters
+  and Samples have no deep menu item.
+  Instrument deep follows tone **source** references recursively but not
+  its ordinary Envelope/Filter references. Synth deep follows graph sources,
+  instruments, Envelopes and Filters recursively; reached objects obey
+  their own per-type traversal rule. Scripted deep recursively follows
+  semantically parsed `_O(id)` references and all explicit typed references.
+  Build one global original-to-duplicate-ID map for the entire reached graph:
+  multiple uses share one duplicate, including self-references and cycles.
+  Translate references **inside** cloned objects only; originals are
+  unchanged. Refuse unreliable script reference analysis or missing targets
+  atomically instead of guessing. Use Roslyn-aware spans for script rewrite,
+  not string substitution.
+  **D1 complete, headless (PR #38):** Shallow Data/Script Sequence and Pattern,
+  Node/Script Envelope and Filter copies, numbered names, independent
+  owned content, detached preparation and guarded atomic commit/undo.
+  **D2 complete, headless:** Shallow Sample/Instrument/Script
+  Instrument/Synth copies, owned encoded Sample bytes and fresh source-file
+  verification at commit, independent tone Filter overrides and Synth graph
+  nodes including disconnected/stale paths. Sample save/reopen tests cover
+  both .hm and .hm.json; original reference IDs remain intact.
+  **D3 complete, headless:** Cycle-safe iterative traversal of Instrument
+  tone sources and Synth graph source/Envelope/Filter dependencies (including
+  disconnected nodes), with one global original-to-duplicate map, provisional
+  contiguous IDs, batch name collision avoidance, shared-target deduplication,
+  whole-graph typed reference remapping, correctly rebound copied Filter uses,
+  atomic commit with final Sample-asset validation, and Undo/Redo as one batch.
+  Cross-Synth/self cycles, diamonds, missing references, stale edits and
+  .hm/.hm.json save/reopen have regression coverage.
+  **D4 complete, headless:** All scripted Sequence, Pattern, Envelope and
+  Instrument fields are semantically analyzed by Roslyn. Script Instrument
+  deep also traverses every typed tone reference. Recognized `_O(id)` source
+  spans are rewritten against the global duplicate ID mapping, preserving
+  comments, strings and shadowed calls; result references are revalidated.
+  Missing, malformed or nonliteral intrinsic targets refuse the entire
+  operation. Script cycles and shared targets are cloned once and re-linked,
+  and scripted roots with no references are supported.
+  **D5 implemented and owner-verified (PR #38):** The six-pane
+  tree context menus now expose shallow Duplicate for every live object,
+  and Duplicate (deep) for Instruments, Synths and all scripted definitions.
+  No commands appear on folders or missing references. Each root clone is
+  atomically placed immediately after its clicked tree occurrence and selected;
+  deep dependencies follow their first existing tree placement or section
+  root. New object definitions, tree positions and ID allocator commit as one
+  transaction. Core transaction receipts retain Undo/Redo internally, but
+  **no new temporary history UI is added**.
+  **D6 owner acceptance complete (2026-11-21):** A–F and H passed on
+  2026-11-19; G passed on 2026-11-21 after adding executable computed
+  `_O(int)` support. The owner tested G's token-edge behavior with a
+  reference not followed by another closing parenthesis, and verified both
+  shallow preservation of the script and atomic refusal of deep duplication
+  for computed IDs. The known edge case where deleting the inner `)` in
+  `_O(1))` immediately reprojects the reference using the outer `)` is
+  **understood and explicitly deferred** to the separate token-projection
+  TODO below; it is not a D6 blocker. Existing diagnostic accelerator and
+  token-edge fixes were also accepted. PR #38 still requires **explicit
+  owner merge approval**. The former ad hoc duplicate-history integration
+  is superseded by the [tiered Undo/Redo design](tiered-undo-redo-design.md).
+  See [Duplicate Object specification](duplicate-object-plan.md).
+  Keep this separate from [implemented UI workflow](user-interface-workflows.md).
+
+
+## Undo/Redo — tiered redesign
+
+- [ ] **Implement two-tier Undo/Redo** as specified in
+  [tiered Undo/Redo design](tiered-undo-redo-design.md): song-level view
+  boundary checkpoints plus editor-session-local domain snapshots with
+  five-second idle batching, forced grid/source flush boundaries,
+  complete state restoration, focus metadata and dirty-state
+  saved-content identity. A Pattern-grid interaction outside the grid
+  closes the note batch even if it changes only Octave/Skip; those settings
+  themselves remain outside Pattern Undo state. A script text timer
+  checkpoints its *buffer* only and never auto-applies to the song.
+  Replace the old one-level Synth import history rather than extending it,
+  and integrate tree-level Duplicate/import as ordinary song checkpoints.
+  **Separate future project, not part of PR #38.**
 
 ## Script objects and editor UX
 
@@ -252,16 +324,72 @@ Do not reintroduce completed-task checklists here.
   named font exists on Windows, Linux or macOS.
 
   Rename the script editor's **Apply source** button to **Save**. Keep
-  Save disabled until the text has been edited relative to the applied
-  source, and do not silently lose pending edits: closing/canceling the
-  dialog with unsaved text must offer Save, Discard and Cancel (stay in
-  editor). Reconcile the new caption/commit boundary with the approved
-  [tiered Undo/Redo design](tiered-undo-redo-design.md), including pending
-  5-second text-undo batches and preserving editor-local history rather
-  than introducing an unrelated history mechanism. Regression/GUI checks
-  should cover fallthrough vs explicit return, example compilation,
-  font fallbacks on all desktop platforms, Save enablement and each
+  Save disabled until the text differs from the last applied/saved source
+  (and disable it again if the edits are reverted); enabling is driven by
+  text changes rather than other object settings. Do not silently lose
+  pending edits: attempting to dismiss the editor through Back/navigation,
+  close or Cancel with unsaved source text must offer **Save**, **Discard**
+  and **Cancel (stay in editor)**. Reconcile the new caption/commit boundary
+  with the approved [tiered Undo/Redo design](tiered-undo-redo-design.md),
+  including pending 5-second text-undo batches and preserving editor-local
+  history rather than introducing an unrelated history mechanism.
+  Regression/GUI checks should cover fallthrough vs explicit return,
+  valid editable initial examples for each script type, font fallbacks on
+  all desktop platforms, Save dirty-state enable/disable and each
   unsaved-dismissal choice.
+  **Owner refinement (2026-11-21):** Keep this as a separate TODO; PR #38
+  currently implements only the signed `_O(int)` compatibility fix for
+  D6-G, not this broader script-editor redesign.
+
+- [ ] **Make Script `_O(id)` visual projection edit-local and separately
+  undoable.** The semantic Roslyn analysis still checks the complete
+  underlying source; visual object-name tokens are **stateful presentation
+  projections**, not replacements for the canonical `_O(id)` source.
+  Retain the set of currently projected tokens and source-anchored spans,
+  rather than rebuilding the token list from every full-document analysis.
+  A **caret move alone** must not create, remove, or re-create tokens, even
+  when a previously caret-blocked match becomes unblocked. Do not maintain
+  a blacklist of ineligible spans: an otherwise valid but undisplayed
+  reference remains plain text until a **directly adjacent** qualifying
+  text edit or a complete editor reload. A candidate containing the
+  current caret is not translated.
+  
+  Only an **insertion**, including Paste or replacing text with nonempty
+  inserted characters, may create new visual tokens. The candidate must
+  contain inserted characters or be completed by an insertion directly
+  at its boundary; unrelated insertions, even elsewhere on the same line,
+  must not re-tokenize it. **Deletion and Cut never create tokens.**
+  Deleting inside an existing visual token removes the affected projection
+  and reveals canonical source. Adjust unaffected token positions across
+  document edits. Re-evaluate projected tokens for semantic invalidation
+  (e.g., intrinsic shadowing) without interpreting semantic analysis as
+  permission to create new projections. Opening/reloading the editor may
+  perform a complete initial projection pass.
+
+  **Known accepted edge case from PR #38:** displayed
+  `return Play(New Pattern|);` represents
+  `return Play(_O(1)|);`. Backspace on the token's right edge removes
+  its own closing `)`, yielding raw `return Play(_O(1|);`.
+  Currently the outer `)` immediately re-forms a token and moves the
+  caret incorrectly. With this improvement, the expression remains
+  unprojected after Backspace, after caret movement, and after unrelated
+  edits; re-inserting `)` adjacent to the expression can re-project it.
+
+  **Undo/Redo contract:** Automatic projection is a **separate visual
+  Undo checkpoint** after the triggering text edit. Typing the final
+  `)` makes a token; first Ctrl+Z undoes **only the translation**,
+  revealing the same `_O(1)` source with the caret, and must not
+  re-project it; second Ctrl+Z undoes the typed `)`. Redo reverses
+  both operations. **Group all token translations caused by one Paste
+  into a single visual Undo checkpoint**, not one per reference. A
+  visual-only Undo/Redo must never masquerade as a document text edit
+  or trigger retranslation. Coordinate these operations with the
+  separate [tiered Undo/Redo design](tiered-undo-redo-design.md);
+  preserve text-Undo batching boundaries and caret/selection placement.
+  Test nested `))`, edits elsewhere on the same line, insert/paste/cut,
+  multi-token Paste, caret-only moves, initial reload, semantic invalidation,
+  and Undo/Redo ordering. **Separate future work; accepted PR #38 D6-G
+  must not be reopened solely for this known issue.**
 
 ## Playback preparation feedback
 

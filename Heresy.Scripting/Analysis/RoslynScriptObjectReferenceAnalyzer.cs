@@ -28,6 +28,6 @@ public sealed class RoslynScriptObjectReferenceAnalyzer
 			analysis.References
 				.Select(reference => reference.Id)
 				.ToArray(),
-			analysis.IsReliable);
+			analysis.IsReliable && !analysis.HasDynamicReferences);
 	}
 }

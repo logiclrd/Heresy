@@ -42,8 +42,13 @@ public sealed record ScriptReferenceAnalysisSnapshot(
 
 public sealed record ScriptReferenceAnalysis(
 	IReadOnlyList<ScriptObjectReference> References,
-	IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics)
+	IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics,
+	IReadOnlyList<ScriptSourceSpan>? DynamicReferences = null)
 {
+	/// <summary>Computed _O(expression) calls remain legal script text but
+	/// cannot become name tokens or participate in static deep duplication.</summary>
+	public bool HasDynamicReferences => DynamicReferences is { Count: > 0 };
+
 	public bool IsReliable
 	{
 		get
@@ -70,6 +75,11 @@ public sealed class ScriptAnalysisGlobals
 	public object _O(uint id)
 		=> throw new NotSupportedException(
 			$"Object lookup {id} is an analysis-only intrinsic.");
+
+	// Mirror the runtime overloads so Roslyn resolves _O(int) variables
+	// and ordinary signed literals as intrinsic calls, not unknown methods.
+	public object _O(int id)
+		=> _O(unchecked((uint)id));
 }
 
 /// <summary>
@@ -135,6 +145,7 @@ public static class ScriptReferenceAnalyzer
 						"Script analysis globals type has no metadata name."));
 
 		List<ScriptObjectReference> references = [];
+		List<ScriptSourceSpan> dynamicReferences = [];
 		SyntaxNode root = syntaxTree.GetRoot();
 		foreach (InvocationExpressionSyntax invocation
 			in root.DescendantNodes()
@@ -165,11 +176,22 @@ public static class ScriptReferenceAnalyzer
 
 			if (!TryGetObjectId(invocation, out ObjectId id))
 			{
+				// Computed IDs are valid source expressions if the script
+				// compiler accepts their types. Only literal IDs become named
+				// visual tokens; deep duplication separately refuses dynamic IDs.
+				if (invocation.ArgumentList.Arguments.Count == 1
+					&& invocation.ArgumentList.Arguments[0].Expression
+						is not LiteralExpressionSyntax)
+				{
+					dynamicReferences.Add(new ScriptSourceSpan(
+						invocation.SpanStart, invocation.Span.Length));
+					continue;
+				}
 				diagnostics.Add(
 					new ScriptAnalysisDiagnostic(
 						MalformedReferenceCode,
 						ScriptDiagnosticSeverity.Error,
-						"Object references must use one non-zero 32-bit integer literal, for example _O(137).",
+						"An object lookup needs one argument. Literal IDs must be non-zero 32-bit integers, for example _O(137); computed int and uint expressions are also allowed.",
 						new ScriptSourceSpan(
 							invocation.SpanStart,
 							invocation.Span.Length)));
@@ -189,7 +211,8 @@ public static class ScriptReferenceAnalyzer
 			syntaxTree,
 			new ScriptReferenceAnalysis(
 				references,
-				diagnostics));
+				diagnostics,
+				dynamicReferences));
 	}
 
 	private static bool IsIntrinsicLookup(

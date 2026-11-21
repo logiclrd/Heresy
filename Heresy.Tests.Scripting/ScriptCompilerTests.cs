@@ -183,6 +183,77 @@ public sealed class ScriptCompilerTests
 	}
 
 	[Test]
+	public void ComputedObjectLookupCompilesNormallyWithoutStaticToken()
+	{
+		ScriptPatternDefinition definition =
+			new((ObjectId)1U, "Dynamic source")
+			{
+				Source = """
+					uint id = 17;
+					Note(0, 0, _O(id));
+					""",
+			};
+		ScriptCompilationResult<IRawPatternNoteGenerator> compilation =
+			ScriptCompiler.CompilePattern(definition);
+		compilation.Success.Should().BeTrue();
+		compilation.Diagnostics.Should().NotContain(
+			diagnostic => diagnostic.Severity == ScriptDiagnosticSeverity.Error);
+	}
+
+	[Test]
+	public void SignedScriptLookupsUseExistingUnsignedIdsAndDoNotRejectNegativeUnknowns()
+	{
+		ScriptPatternDefinition definition =
+			new((ObjectId)1U, "Signed lookup")
+			{
+				RowCount = 8,
+				Source = """
+					int positive = 17;
+					int absent = -3;
+					Note(0, 0, _O(positive));
+					Note(1, 0, _O(absent));
+					Note(2, 0, _O(4294967293u));
+					""",
+			};
+		var compilation = ScriptCompiler.CompilePattern(definition);
+		compilation.Success.Should().BeTrue();
+		NoteScheduleBuilder output = new();
+		compilation.Program!.GenerateRawNotes(
+			new SequencingContext(), output, out _);
+		output.Freeze().Select(note =>
+			note.Commands.Single()
+				.Should().BeOfType<StartNoteCommand>().Subject.SourceId)
+			.Should().Equal((ObjectId)17U,
+				(ObjectId)4294967293U, (ObjectId)4294967293U);
+	}
+
+	[Test]
+	public void SequenceScriptAcceptsSignedLookupIncludingNegativeUnknownId()
+	{
+		ScriptSequenceDefinition definition =
+			new((ObjectId)1U, "Signed sequence")
+			{
+				Source = """
+					switch (sequenceIndex)
+					{
+						case 0:
+							int absent = -5;
+							return Play(_O(absent));
+						case 1: return Play(_O(17));
+						default: return null;
+					}
+					""",
+			};
+		RecordingResolver resolver = new();
+		var compiled = ScriptCompiler.CompileSequence(definition, resolver);
+		compiled.Success.Should().BeTrue();
+		compiled.Program!.GenerateNotes(
+			new SequencingContext(), new NoteScheduleBuilder(), out _);
+		resolver.RequestedPatternIds.Should().Equal(
+			(ObjectId)4294967291U, (ObjectId)17U);
+	}
+
+	[Test]
 	public void SequenceScriptCompilesIntoExistingSequencerContract()
 	{
 		ScriptSequenceDefinition definition =

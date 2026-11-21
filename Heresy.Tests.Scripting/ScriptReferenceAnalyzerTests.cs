@@ -62,9 +62,9 @@ public sealed class ScriptReferenceAnalyzerTests
 	public void MalformedLookupCallsProduceDiagnosticsRatherThanGuessedReferences()
 	{
 		string source =
-			"_O(1 + 2);\n"
+			"_O(0);\n"
 			+ "_O();\n"
-			+ "_O(-3);";
+			+ "_O(4294967296UL);";
 
 		ScriptReferenceAnalysis analysis =
 			ScriptReferenceAnalyzer.Analyze(source);
@@ -76,6 +76,49 @@ public sealed class ScriptReferenceAnalyzerTests
 			.Should().OnlyContain(diagnostic =>
 				diagnostic.Code == "HRS1001"
 				&& diagnostic.Severity == ScriptDiagnosticSeverity.Error);
+	}
+
+	[Test]
+	public void ComputedObjectIdsAreLegalTextButExplicitlyNotStaticallyTraceable()
+	{
+		const string source = """
+			uint id = 17;
+			var dynamicTarget = _O(id);
+			var arithmetic = _O(1 + 2);
+			var staticTarget = _O(31);
+			""";
+		ScriptReferenceAnalysis analysis = ScriptReferenceAnalyzer.Analyze(source);
+		analysis.IsReliable.Should().BeTrue();
+		analysis.Diagnostics.Should().BeEmpty();
+		analysis.HasDynamicReferences.Should().BeTrue();
+		analysis.DynamicReferences.Should().HaveCount(2);
+		analysis.References.Select(x => x.Id)
+			.Should().Equal((ObjectId)31U);
+		RoslynScriptObjectReferenceAnalyzer.Instance
+			.AnalyzeObjectReferences(source)
+			.IsReliable.Should().BeFalse("graph traversal cannot determine computed IDs");
+	}
+
+	[Test]
+	public void SignedIntComputedAndNegativeLookupsAreNotNameTokens()
+	{
+		const string source = """
+			int id = 17;
+			var computed = _O(id);
+			var negative = _O(-3);
+			var positiveLiteral = _O(31);
+			var unsignedLiteral = _O(31u);
+			""";
+		ScriptReferenceAnalysis analysis = ScriptReferenceAnalyzer.Analyze(source);
+		analysis.IsReliable.Should().BeTrue();
+		analysis.Diagnostics.Should().BeEmpty();
+		analysis.HasDynamicReferences.Should().BeTrue();
+		analysis.DynamicReferences.Should().HaveCount(2);
+		analysis.References.Select(reference => reference.Id)
+			.Should().Equal((ObjectId)31U, (ObjectId)31U);
+		RoslynScriptObjectReferenceAnalyzer.Instance
+			.AnalyzeObjectReferences(source).IsReliable.Should().BeFalse(
+				"computed signed IDs cannot be rewritten in a deep copy");
 	}
 
 	[Test]

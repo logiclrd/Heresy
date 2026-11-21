@@ -139,6 +139,16 @@ public abstract class PatternScriptProgram
 		return (ObjectId)id;
 	}
 
+	/// <summary>
+	/// Signed computed IDs follow the same unresolved-reference path as
+	/// unknown unsigned IDs. Negative values wrap to nonzero UInt32 IDs;
+	/// nonnegative values delegate to the existing unsigned lookup.
+	/// </summary>
+	protected ObjectId _O(int id)
+		=> id < 0
+			? (ObjectId)unchecked((uint)id)
+			: _O((uint)id);
+
 	protected double Random()
 	{
 		Checkpoint();
@@ -602,6 +612,15 @@ public abstract class SequenceScriptProgram : ISequenceEntryProvider
 			throw new ArgumentOutOfRangeException(nameof(id));
 		return (ObjectId)id;
 	}
+
+	/// <summary>
+	/// Negative signed IDs are unresolved in the same way as unknown
+	/// unsigned IDs; other values delegate to the established UInt32 lookup.
+	/// </summary>
+	protected ObjectId _O(int id)
+		=> id < 0
+			? (ObjectId)unchecked((uint)id)
+			: _O((uint)id);
 
 	protected double Random()
 	{

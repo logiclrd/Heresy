@@ -5,6 +5,14 @@ using System.Linq;
 namespace Heresy.Core.Objects;
 
 /// <summary>
+/// Optional placement of a newly committed object relative to an existing
+/// organizational tree occurrence. The parent and anchor must belong to the
+/// correct fixed section in the destination song at commit time.
+/// </summary>
+public sealed record SongImportTreePlacement(
+    SongTreeFolder Parent, SongTreeNode? InsertAfter = null);
+
+/// <summary>
 /// A single guarded undo/redo unit for an atomic imported-object batch.
 ///
 /// It can be placed on a future document-wide undo stack. Until that stack
@@ -15,7 +23,8 @@ namespace Heresy.Core.Objects;
 public sealed class SongImportBatchEdit
 {
     internal sealed record Placement(
-        SongObject Object, SongTreeFolder Section, SongTreeObject TreeNode);
+        SongObject Object, SongTreeFolder Section, SongTreeObject TreeNode,
+        SongTreeNode? InsertAfter);
 
     private readonly SongDocument _document;
     private readonly IReadOnlyList<Placement> _placements;
