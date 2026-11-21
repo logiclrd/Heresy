@@ -73,7 +73,12 @@ public sealed class ScriptSequencePlayHighlightTests
         Assert.That(source.Text, Is.EqualTo(sequence.Source),
             "the overlay cannot rewrite or select the user's source");
 
-        editor.SetPlaybackPosition(active with { SequenceId = (ObjectId)99U });
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(
+            (ObjectId)17U, 0, (ObjectId)99U, 0)
+        {
+            EditorCallsiteSession = first,
+            EditorPlayCallsite = callsite,
+        });
         Assert.That(ShownCallsite(editor), Is.Null);
         editor.SetPlaybackPosition(active);
         Assert.That(ShownCallsite(editor), Is.EqualTo(callsite));
