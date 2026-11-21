@@ -195,8 +195,32 @@ public sealed class LazySongPlaybackTransportTests
 		probe.SequenceCalls.Should().Be(1);
 	}
 
+	[Test]
+	public async Task F6PatternTraceForwardsThroughLazyFacadeWithoutNormalFallback()
+	{
+		int created = 0;
+		ProbeTransport? probe = null;
+		using LazySongPlaybackTransport lazy = new(() =>
+		{
+			created++;
+			return probe = new ProbeTransport();
+		});
+		IEditorPatternPlaybackTransport editor = lazy;
+		created.Should().Be(0);
+		Guid session = Guid.NewGuid();
+		SongDocument song = new();
+		await editor.PlayEditorPatternAsync(song, (ObjectId)5U, session);
+		created.Should().Be(1);
+		probe!.EditorPatternId.Should().Be((ObjectId)5U);
+		probe.EditorPatternSession.Should().Be(session);
+		probe.PatternCalls.Should().Be(0);
+		await lazy.PlayPatternAsync(song, (ObjectId)5U);
+		probe.PatternCalls.Should().Be(1);
+	}
+
 	private sealed class ProbeTransport
 		: ISongPlaybackTransport, IEditorSequencePlaybackTransport,
+			IEditorPatternPlaybackTransport,
 			IPlaybackRuntimeDiagnosticsTransport,
 			IPlaybackAudioHealthTransport, IPlaybackSnapshotTransport,
 			ILiveSynthEditTransport
@@ -244,6 +268,8 @@ public sealed class LazySongPlaybackTransportTests
 		public int PatternCalls { get; private set; }
 		public int SequenceCalls { get; private set; }
 		public ObjectId? EditorSequenceId { get; private set; }
+		public ObjectId? EditorPatternId { get; private set; }
+		public Guid? EditorPatternSession { get; private set; }
 		public Guid? EditorTraceId { get; private set; }
 		public int StopCalls { get; private set; }
 		public Task PlayEditorSequenceAsync(
@@ -251,6 +277,14 @@ public sealed class LazySongPlaybackTransportTests
 		{
 			EditorSequenceId = sequenceId;
 			EditorTraceId = editorCallsiteSession;
+			return Task.CompletedTask;
+		}
+
+		public Task PlayEditorPatternAsync(
+			SongDocument document, ObjectId patternId, Guid editorCallsiteSession)
+		{
+			EditorPatternId = patternId;
+			EditorPatternSession = editorCallsiteSession;
 			return Task.CompletedTask;
 		}
 

@@ -159,11 +159,87 @@ public sealed class ScriptSequencePlayHighlightTests
         }
     }
 
+    [AvaloniaTest]
+    public async Task PatternF6ThroughLazyFacadeHighlightsOnlyCurrentSourceSession()
+    {
+        RecordingTransport transport = new();
+        using LazySongPlaybackTransport lazy = new(() => transport);
+        MainWindow window = new(lazy);
+        DocumentWorkspace workspace = Field<DocumentWorkspace>(window, "_workspace");
+        var pattern = ScriptDocumentEditor.CreateScriptPattern(workspace, "Test");
+        pattern.Source = "ChannelFilter(0, 0);";
+        ScriptEditorControl editor = new(workspace, pattern,
+            () => { }, _ => { });
+        window.Show();
+        try
+        {
+            Field<ContentControl>(window, "_mainContent").Content = editor;
+            window.UpdateLayout();
+            TextEditor source = Field<TextEditor>(editor, "_source");
+            Assert.That(Press(source, Key.F6).Handled, Is.True);
+            Assert.That(transport.TracePattern, Is.EqualTo(pattern.Id));
+            Assert.That(transport.TracePatternSession, Is.Not.Null);
+            Assert.That(transport.NormalPatternPlays, Is.Zero,
+                "the production lazy facade must not downgrade a traced F6 audition");
+
+            SequenceCallsite span = new(0, "ChannelFilter(0, 0)".Length);
+            PlaybackPatternPosition active = new(pattern.Id, 0, null, null)
+            {
+                EditorCallsiteSession = transport.TracePatternSession,
+                EditorPatternCallsite = span,
+            };
+            transport.Publish(active);
+            await Dispatcher.UIThread.InvokeAsync(() => { },
+                DispatcherPriority.Background);
+            Assert.That(ShownCallsite(editor), Is.EqualTo(span));
+
+            transport.Publish(active with { PatternId = (ObjectId)999U });
+            await Dispatcher.UIThread.InvokeAsync(() => { },
+                DispatcherPriority.Background);
+            Assert.That(ShownCallsite(editor), Is.Null);
+            transport.Publish(active);
+            await Dispatcher.UIThread.InvokeAsync(() => { },
+                DispatcherPriority.Background);
+            Assert.That(ShownCallsite(editor), Is.EqualTo(span));
+
+            Guid oldSession = transport.TracePatternSession!.Value;
+            Assert.That(Press(source, Key.F6).Handled, Is.True);
+            Assert.That(transport.TracePatternSession, Is.Not.EqualTo(oldSession));
+            transport.Publish(active);
+            await Dispatcher.UIThread.InvokeAsync(() => { },
+                DispatcherPriority.Background);
+            Assert.That(ShownCallsite(editor), Is.Null);
+
+            transport.Publish(active with
+            {
+                EditorCallsiteSession = transport.TracePatternSession,
+            });
+            await Dispatcher.UIThread.InvokeAsync(() => { },
+                DispatcherPriority.Background);
+            Assert.That(ShownCallsite(editor), Is.EqualTo(span));
+            source.Text += "// modified";
+            Assert.That(ShownCallsite(editor), Is.Null,
+                "old spans cannot survive a changed author source buffer");
+            transport.Publish(null);
+            await Dispatcher.UIThread.InvokeAsync(() => { },
+                DispatcherPriority.Background);
+            Assert.That(ShownCallsite(editor), Is.Null);
+        }
+        finally
+        {
+            workspace.New();
+            window.Close();
+        }
+    }
+
     private sealed class RecordingTransport :
         ISongPlaybackTransport, IEditorSequencePlaybackTransport,
-        IPlaybackPositionTransport
+        IEditorPatternPlaybackTransport, IPlaybackPositionTransport
     {
         public ObjectId? TraceSequence { get; private set; }
+        public ObjectId? TracePattern { get; private set; }
+        public Guid? TracePatternSession { get; private set; }
+        public int NormalPatternPlays { get; private set; }
         public Guid? TraceSession { get; private set; }
         public int NormalSequencePlays { get; private set; }
         public PlaybackPatternPosition? CurrentPlaybackPosition { get; private set; }
@@ -185,6 +261,15 @@ public sealed class ScriptSequencePlayHighlightTests
             return Task.CompletedTask;
         }
 
+        public Task PlayEditorPatternAsync(
+            SongDocument document, ObjectId patternId, Guid editorCallsiteSession)
+        {
+            TracePattern = patternId;
+            TracePatternSession = editorCallsiteSession;
+            Publish(null);
+            return Task.CompletedTask;
+        }
+
         public Task PlaySongAsync(SongDocument document) => Task.CompletedTask;
 
         public Task PlaySequenceAsync(
@@ -199,7 +284,10 @@ public sealed class ScriptSequencePlayHighlightTests
         public Task PlayPatternAsync(
             SongDocument document, ObjectId patternId,
             int startRow = 0, bool repeat = false)
-            => Task.CompletedTask;
+        {
+            NormalPatternPlays++;
+            return Task.CompletedTask;
+        }
 
         public Task PlayAdHocAsync(
             SongDocument document, NoteSchedule schedule) => Task.CompletedTask;
