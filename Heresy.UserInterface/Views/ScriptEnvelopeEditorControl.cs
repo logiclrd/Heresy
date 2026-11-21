@@ -77,8 +77,7 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 		});
 		fields.Children.Add(new TextBlock
 		{
-			Text = "Scalar C# expression: elapsedSeconds is active-envelope time. " +
-				"releaseSeconds is -1 before Note Off and elapsed release time afterwards.",
+			Text = ScriptEditorHelp.EnvelopeIntroduction,
 			TextWrapping = TextWrapping.Wrap,
 		});
 		fields.Children.Add(_source);
@@ -89,6 +88,13 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 			TextWrapping = TextWrapping.Wrap,
 		});
 		fields.Children.Add(_release);
+		fields.Children.Add(new TextBlock
+		{
+			Text = "Script Envelope reference",
+			FontWeight = FontWeight.SemiBold,
+		});
+		fields.Children.Add(ScriptEditorHelp.CreateReferenceViewer(
+			ScriptEditorHelp.EnvelopeReference));
 		fields.Children.Add(apply);
 		fields.Children.Add(_message);
 		return new ScrollViewer { Content = fields };

@@ -140,8 +140,7 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         });
         panel.Children.Add(new TextBlock
         {
-            Text = "Restricted C# integer expression of pitchMultiplier (C4 = 1). " +
-                "Return a zero-based tone index, or -1 for silence.",
+            Text = ScriptEditorHelp.InstrumentIntroduction,
             TextWrapping = TextWrapping.Wrap,
         });
         panel.Children.Add(_expression);
@@ -171,6 +170,13 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         applyNna.Click += (_, _) => ApplyNnaExpression();
         nnaDuration.Children.Add(applyNna);
         panel.Children.Add(nnaDuration);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Script Instrument reference",
+            FontWeight = FontWeight.SemiBold,
+        });
+        panel.Children.Add(ScriptEditorHelp.CreateReferenceViewer(
+            ScriptEditorHelp.InstrumentReference));
         panel.Children.Add(new TextBlock
         {
             Text = "Declared tones (the index is returned by the selector)",
