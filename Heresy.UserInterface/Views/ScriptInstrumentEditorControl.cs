@@ -22,7 +22,7 @@ namespace Heresy.UserInterface.Views;
 /// of source/pitch/Envelope tone definitions. Referenced song objects remain
 /// discoverable even when the expression does not select them.
 /// </summary>
-public sealed class ScriptInstrumentEditorControl : UserControl
+public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEditor
 {
     private sealed record Choice(ObjectId? Id, string Text)
     {
@@ -41,6 +41,10 @@ public sealed class ScriptInstrumentEditorControl : UserControl
     private readonly TextBox _pitchExpression;
     private readonly TextBox _nnaExpression;
     private readonly TextBox _nnaFadeMilliseconds;
+    private string _appliedExpression = string.Empty;
+    private string _appliedPitchExpression = string.Empty;
+    private readonly Button _saveExpressions = new() { Content = "Save", IsEnabled = false };
+    private readonly Button _saveNnaExpression = new() { Content = "Save NNA expression", IsEnabled = false };
     private string _loadedNnaExpression;
     private TimeSpan _loadedNnaFade;
     private readonly ComboBox _toneNna;
@@ -64,6 +68,8 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         _definition = definition ?? throw new ArgumentNullException(nameof(definition));
         _close = close ?? throw new ArgumentNullException(nameof(close));
         _changed = changed ?? throw new ArgumentNullException(nameof(changed));
+        _appliedExpression = definition.Source;
+        _appliedPitchExpression = definition.PitchExpression;
         _expression = new TextBox
         {
             Text = definition.Source, MinWidth = 420, MinHeight = 75,
@@ -88,6 +94,11 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         };
         _loadedNnaExpression = definition.NnaExpression;
         _loadedNnaFade = definition.NnaFadeDuration;
+        _expression.TextChanged += (_, _) => UpdateSaveButtons();
+        _pitchExpression.TextChanged += (_, _) => UpdateSaveButtons();
+        _nnaExpression.TextChanged += (_, _) => UpdateSaveButtons();
+        _saveExpressions.Click += (_, _) => TrySaveExpressions();
+        _saveNnaExpression.Click += (_, _) => TrySaveNnaExpression();
         _toneNna = new ComboBox
         {
             MinWidth = 175,
@@ -124,6 +135,67 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         RefreshRows();
     }
 
+    public string ScriptSourceDisplayName => _definition.Name;
+
+    private bool ExpressionsDirty =>
+        !string.Equals(_expression.Text ?? string.Empty, _appliedExpression,
+            StringComparison.Ordinal)
+        || !string.Equals(_pitchExpression.Text ?? string.Empty,
+            _appliedPitchExpression, StringComparison.Ordinal);
+
+    private bool NnaExpressionDirty =>
+        !string.Equals(_nnaExpression.Text ?? string.Empty,
+            _loadedNnaExpression, StringComparison.Ordinal);
+
+    public bool HasUnsavedScriptSource => ExpressionsDirty || NnaExpressionDirty;
+
+    private void UpdateSaveButtons()
+    {
+        _saveExpressions.IsEnabled = ExpressionsDirty;
+        _saveNnaExpression.IsEnabled = NnaExpressionDirty;
+    }
+
+    public void DiscardUnsavedScriptSource()
+    {
+        _expression.Text = _appliedExpression;
+        _pitchExpression.Text = _appliedPitchExpression;
+        _nnaExpression.Text = _loadedNnaExpression;
+        UpdateSaveButtons();
+    }
+
+    public bool TrySaveScriptSource()
+    {
+        if (ExpressionsDirty && !TrySaveExpressions())
+            return false;
+        if (NnaExpressionDirty && !TrySaveNnaExpression())
+            return false;
+        return !HasUnsavedScriptSource;
+    }
+
+    private bool TrySaveExpressions()
+    {
+        if (!ExpressionsDirty)
+            return true;
+        try
+        {
+            string expression = _expression.Text ?? string.Empty;
+            string pitch = _pitchExpression.Text ?? string.Empty;
+            ScriptInstrumentDocumentEditor.SetExpressions(
+                _workspace, _definition, expression, pitch);
+            _appliedExpression = expression;
+            _appliedPitchExpression = pitch;
+            UpdateSaveButtons();
+            _message.Text = "Script Instrument expressions saved to the song.";
+            _changed("Updated script Instrument " + _definition.Name);
+            return true;
+        }
+        catch (Exception error)
+        {
+            _message.Text = error.Message;
+            return false;
+        }
+    }
+
     private Control BuildContent()
     {
         StackPanel panel = new()
@@ -154,12 +226,7 @@ public sealed class ScriptInstrumentEditorControl : UserControl
             TextWrapping = TextWrapping.Wrap,
         });
         panel.Children.Add(_pitchExpression);
-        Button apply = new() { Content = "Apply expressions" };
-        apply.Click += (_, _) => Execute(() =>
-            ScriptInstrumentDocumentEditor.SetExpressions(
-                _workspace, _definition, _expression.Text ?? string.Empty,
-                _pitchExpression.Text ?? string.Empty));
-        panel.Children.Add(apply);
+        panel.Children.Add(_saveExpressions);
         panel.Children.Add(new TextBlock
         {
             Text = "Note-start NNA expression of the original incoming pitchMultiplier. Return InstrumentNnaAction.Inherit, Cut, Continue, Off or Fade. Example: pitchMultiplier < 1.5 ? InstrumentNnaAction.Continue : InstrumentNnaAction.Inherit",
@@ -169,9 +236,10 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         StackPanel nnaDuration = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
         nnaDuration.Children.Add(new TextBlock { Text = "NNA Fade duration (ms)", VerticalAlignment = VerticalAlignment.Center });
         nnaDuration.Children.Add(_nnaFadeMilliseconds);
-        Button applyNna = new() { Content = "Apply NNA expression" };
-        applyNna.Click += (_, _) => ApplyNnaExpression();
-        nnaDuration.Children.Add(applyNna);
+        Button applyFade = new() { Content = "Apply NNA fade" };
+        applyFade.Click += (_, _) => TryApplyNna(_definition.NnaExpression, saveSource: false);
+        nnaDuration.Children.Add(applyFade);
+        nnaDuration.Children.Add(_saveNnaExpression);
         panel.Children.Add(nnaDuration);
         panel.Children.Add(new TextBlock
         {
@@ -405,7 +473,13 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         catch (Exception error) { _message.Text = error.Message; }
     }
 
-    private void ApplyNnaExpression()
+    private bool TrySaveNnaExpression()
+    {
+        return !NnaExpressionDirty
+            || TryApplyNna(_nnaExpression.Text ?? string.Empty, saveSource: true);
+    }
+
+    private bool TryApplyNna(string source, bool saveSource)
     {
         try
         {
@@ -416,13 +490,20 @@ public sealed class ScriptInstrumentEditorControl : UserControl
             TimeSpan fade = InstrumentNnaEditorValues.ParseFadeMilliseconds(
                 _nnaFadeMilliseconds.Text);
             ScriptInstrumentDocumentEditor.SetNnaExpression(
-                _workspace, _definition, _nnaExpression.Text ?? string.Empty, fade);
+                _workspace, _definition, source, fade);
             _loadedNnaExpression = _definition.NnaExpression;
             _loadedNnaFade = _definition.NnaFadeDuration;
+            if (saveSource)
+                UpdateSaveButtons();
             _message.Text = "Script Instrument NNA updated.";
             _changed("Updated script Instrument NNA " + _definition.Name);
+            return true;
         }
-        catch (Exception error) { _message.Text = error.Message; }
+        catch (Exception error)
+        {
+            _message.Text = error.Message;
+            return false;
+        }
     }
 
     private void Execute(Action action)
