@@ -260,7 +260,7 @@ Do not reintroduce completed-task checklists here.
   Missing, malformed or nonliteral intrinsic targets refuse the entire
   operation. Script cycles and shared targets are cloned once and re-linked,
   and scripted roots with no references are supported.
-  **D5 implemented (PR #38, manual verification pending):** The six-pane
+  **D5 implemented and owner-verified (PR #38):** The six-pane
   tree context menus now expose shallow Duplicate for every live object,
   and Duplicate (deep) for Instruments, Synths and all scripted definitions.
   No commands appear on folders or missing references. Each root clone is
@@ -269,15 +269,19 @@ Do not reintroduce completed-task checklists here.
   root. New object definitions, tree positions and ID allocator commit as one
   transaction. Core transaction receipts retain Undo/Redo internally, but
   **no new temporary history UI is added**.
-  **D6 (revised):** Owner accepted A–F and H on 2026-11-19. G is
-  inconclusive pending retry with valid computed `_O(id)` expression:
-  permit executable computed calls as plain source (never name tokens),
-  explicitly refuse their untraceable deep duplication, make token-edge
-  Backspace/Delete reveal ordinary source, and display underscores in
-  diagnostic navigation buttons literally. Full D6 acceptance and PR merge
-  still require the owner's G retest. The former ad hoc duplicate-history
-  integration is explicitly superseded by the [tiered Undo/Redo design](tiered-undo-redo-design.md). See
-  [Duplicate Object specification](duplicate-object-plan.md).
+  **D6 owner acceptance complete (2026-11-21):** A–F and H passed on
+  2026-11-19; G passed on 2026-11-21 after adding executable computed
+  `_O(int)` support. The owner tested G's token-edge behavior with a
+  reference not followed by another closing parenthesis, and verified both
+  shallow preservation of the script and atomic refusal of deep duplication
+  for computed IDs. The known edge case where deleting the inner `)` in
+  `_O(1))` immediately reprojects the reference using the outer `)` is
+  **understood and explicitly deferred** to the separate token-projection
+  TODO below; it is not a D6 blocker. Existing diagnostic accelerator and
+  token-edge fixes were also accepted. PR #38 still requires **explicit
+  owner merge approval**. The former ad hoc duplicate-history integration
+  is superseded by the [tiered Undo/Redo design](tiered-undo-redo-design.md).
+  See [Duplicate Object specification](duplicate-object-plan.md).
   Keep this separate from [implemented UI workflow](user-interface-workflows.md).
 
 
@@ -336,6 +340,56 @@ Do not reintroduce completed-task checklists here.
   **Owner refinement (2026-11-21):** Keep this as a separate TODO; PR #38
   currently implements only the signed `_O(int)` compatibility fix for
   D6-G, not this broader script-editor redesign.
+
+- [ ] **Make Script `_O(id)` visual projection edit-local and separately
+  undoable.** The semantic Roslyn analysis still checks the complete
+  underlying source; visual object-name tokens are **stateful presentation
+  projections**, not replacements for the canonical `_O(id)` source.
+  Retain the set of currently projected tokens and source-anchored spans,
+  rather than rebuilding the token list from every full-document analysis.
+  A **caret move alone** must not create, remove, or re-create tokens, even
+  when a previously caret-blocked match becomes unblocked. Do not maintain
+  a blacklist of ineligible spans: an otherwise valid but undisplayed
+  reference remains plain text until a **directly adjacent** qualifying
+  text edit or a complete editor reload. A candidate containing the
+  current caret is not translated.
+  
+  Only an **insertion**, including Paste or replacing text with nonempty
+  inserted characters, may create new visual tokens. The candidate must
+  contain inserted characters or be completed by an insertion directly
+  at its boundary; unrelated insertions, even elsewhere on the same line,
+  must not re-tokenize it. **Deletion and Cut never create tokens.**
+  Deleting inside an existing visual token removes the affected projection
+  and reveals canonical source. Adjust unaffected token positions across
+  document edits. Re-evaluate projected tokens for semantic invalidation
+  (e.g., intrinsic shadowing) without interpreting semantic analysis as
+  permission to create new projections. Opening/reloading the editor may
+  perform a complete initial projection pass.
+
+  **Known accepted edge case from PR #38:** displayed
+  `return Play(New Pattern|);` represents
+  `return Play(_O(1)|);`. Backspace on the token's right edge removes
+  its own closing `)`, yielding raw `return Play(_O(1|);`.
+  Currently the outer `)` immediately re-forms a token and moves the
+  caret incorrectly. With this improvement, the expression remains
+  unprojected after Backspace, after caret movement, and after unrelated
+  edits; re-inserting `)` adjacent to the expression can re-project it.
+
+  **Undo/Redo contract:** Automatic projection is a **separate visual
+  Undo checkpoint** after the triggering text edit. Typing the final
+  `)` makes a token; first Ctrl+Z undoes **only the translation**,
+  revealing the same `_O(1)` source with the caret, and must not
+  re-project it; second Ctrl+Z undoes the typed `)`. Redo reverses
+  both operations. **Group all token translations caused by one Paste
+  into a single visual Undo checkpoint**, not one per reference. A
+  visual-only Undo/Redo must never masquerade as a document text edit
+  or trigger retranslation. Coordinate these operations with the
+  separate [tiered Undo/Redo design](tiered-undo-redo-design.md);
+  preserve text-Undo batching boundaries and caret/selection placement.
+  Test nested `))`, edits elsewhere on the same line, insert/paste/cut,
+  multi-token Paste, caret-only moves, initial reload, semantic invalidation,
+  and Undo/Redo ordering. **Separate future work; accepted PR #38 D6-G
+  must not be reopened solely for this known issue.**
 
 ## Playback preparation feedback
 
