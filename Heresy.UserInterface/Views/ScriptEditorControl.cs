@@ -34,6 +34,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 	private readonly Action<string> _changed;
 	private readonly string _backLabel;
 	private readonly Action? _testRequested;
+	private readonly Action? _documentSaveRequested;
 
 	private readonly TextEditor _source;
 	private string _appliedSource = string.Empty;
@@ -82,7 +83,8 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		Action close,
 		Action<string> changed,
 		string backLabel = "← Document",
-		Action? testRequested = null)
+		Action? testRequested = null,
+		Action? documentSaveRequested = null)
 		: this(
 			workspace,
 			pattern,
@@ -90,7 +92,8 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			close,
 			changed,
 			backLabel,
-			testRequested)
+			testRequested,
+			documentSaveRequested)
 	{
 	}
 
@@ -100,7 +103,8 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		Action close,
 		Action<string> changed,
 		string backLabel = "← Document",
-		Action? testRequested = null)
+		Action? testRequested = null,
+		Action? documentSaveRequested = null)
 		: this(
 			workspace,
 			null,
@@ -108,7 +112,8 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			close,
 			changed,
 			backLabel,
-			testRequested)
+			testRequested,
+			documentSaveRequested)
 	{
 	}
 
@@ -119,7 +124,8 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		Action close,
 		Action<string> changed,
 		string backLabel,
-		Action? testRequested)
+		Action? testRequested,
+		Action? documentSaveRequested)
 	{
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
@@ -138,6 +144,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		_backLabel = backLabel
 			?? throw new ArgumentNullException(nameof(backLabel));
 		_testRequested = testRequested;
+		_documentSaveRequested = documentSaveRequested;
 
 		string source =
 			pattern?.Source
@@ -270,14 +277,18 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		_source.TextArea.TextView.Redraw();
 	}
 
-	public bool TryHandleSourceSaveShortcut(Visual? keySource)
+	public ScriptSourceSaveShortcutRoute TryHandleSourceSaveShortcut(Visual? keySource)
 	{
 		if (!ScriptSourceShortcutRouting.IsWithin(keySource, _source)
 			&& !ScriptSourceShortcutRouting.IsWithin(keySource, _saveSource))
-			return false;
+			return ScriptSourceSaveShortcutRoute.NotApplicable;
 
+		if (!HasUnsavedScriptSource)
+			return ScriptSourceSaveShortcutRoute.SaveDocument;
+
+		// The first press commits a dirty script locally, never to disk.
 		TrySaveScriptSource();
-		return true;
+		return ScriptSourceSaveShortcutRoute.SaveLocally;
 	}
 
 	public bool HasUnsavedScriptSource =>
@@ -555,8 +566,16 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 
 		if (e.Key == Key.S && e.KeyModifiers == KeyModifiers.Control)
 		{
-			e.Handled = true;
-			TrySaveScriptSource();
+			if (HasUnsavedScriptSource)
+			{
+				e.Handled = true;
+				TrySaveScriptSource();
+			}
+			else if (_documentSaveRequested is not null)
+			{
+				e.Handled = true;
+				_documentSaveRequested();
+			}
 		}
 		else if (e.Key == Key.F6 && e.KeyModifiers == KeyModifiers.None
 			&& _testRequested is not null)
