@@ -1040,8 +1040,9 @@ public static class ScriptCompiler
 	private static string BuildPatternWrapper(
 		string className,
 		string source)
-		=> $$"""
+		=> $"""
 			using System;
+			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
 			using static Heresy.Scripting.Runtime.ScriptPitchMath;
