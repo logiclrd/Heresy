@@ -10,6 +10,32 @@ namespace Heresy.UserInterface.Documents;
 /// </summary>
 public static class SongTreeEditor
 {
+	/// <summary>Use the clicked tree occurrence, not the underlying ObjectId,
+	/// to choose the destination. An unrelated pane selection means root;
+	/// a detached selection is an invalid stale target, not a root fallback.</summary>
+	public static SongTreeFolder ResolveCreationFolder(
+		SongDocument document, SongTreeSection section,
+		SongTreeNode? selectedOccurrence)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		SongTreeFolder root = document.GetSectionRoot(section);
+		if (selectedOccurrence is null)
+			return root;
+
+		SongTreeSection? selectedSection = GetSection(document, selectedOccurrence);
+		if (selectedSection is null)
+			throw new InvalidOperationException(
+				"The selected creation target is no longer attached to the song tree.");
+		if (selectedSection != section)
+			return root;
+
+		SongTreeFolder destination = selectedOccurrence as SongTreeFolder
+			?? GetParent(document, selectedOccurrence)
+			?? throw new InvalidOperationException(
+				"The selected object has no attached parent folder.");
+		return document.ResolveObjectDestination(section, destination);
+	}
+
 	public static SongTreeFolder CreateFolder(
 		SongDocument document,
 		SongTreeFolder parent,
