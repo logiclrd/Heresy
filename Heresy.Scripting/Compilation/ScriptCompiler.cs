@@ -188,7 +188,8 @@ public static class ScriptCompiler
 		ScriptCompilationResult<Type> compiled = CompileType(
 			definition.Source, className,
 			BuildSequenceWrapper(className, InstrumentLoops(source)),
-			typeof(SequenceScriptProgram));
+			typeof(SequenceScriptProgram),
+			allowInjectedPlayCallsites: instrumentPlayCallsites);
 
 		if (!compiled.Success || compiled.Program is null)
 			return new(null, compiled.Diagnostics);
@@ -458,12 +459,14 @@ public static class ScriptCompiler
 		string source,
 		string className,
 		string wrapperSource,
-		Type requiredBaseType)
+		Type requiredBaseType,
+		bool allowInjectedPlayCallsites = false)
 	{
 		PreparedScriptCompilation prepared =
 			PrepareCompilation(
 				source,
-				wrapperSource);
+				wrapperSource,
+				allowInjectedPlayCallsites);
 		List<ScriptAnalysisDiagnostic> diagnostics =
 			[.. prepared.Diagnostics];
 
@@ -518,7 +521,8 @@ public static class ScriptCompiler
 
 	private static PreparedScriptCompilation PrepareCompilation(
 		string source,
-		string wrapperSource)
+		string wrapperSource,
+		bool allowInjectedPlayCallsites = false)
 	{
 		ScriptReferenceAnalysis referenceAnalysis =
 			ScriptReferenceAnalyzer.Analyze(source);
@@ -569,7 +573,8 @@ public static class ScriptCompiler
 			ValidateRestrictedSemantics(
 				compilation,
 				syntaxTree,
-				source));
+				source,
+				allowInjectedPlayCallsites));
 		if (HasErrors(diagnostics))
 			return new(null, diagnostics);
 
@@ -674,7 +679,8 @@ public static class ScriptCompiler
 		ValidateRestrictedSemantics(
 			CSharpCompilation compilation,
 			SyntaxTree syntaxTree,
-			string source)
+			string source,
+			bool allowInjectedPlayCallsites)
 	{
 		SemanticModel semanticModel =
 			compilation.GetSemanticModel(
@@ -725,7 +731,8 @@ public static class ScriptCompiler
 					patternBase,
 					sequenceBase,
 					mathType,
-					pitchMathType))
+					pitchMathType,
+					allowInjectedPlayCallsites))
 			{
 				continue;
 			}
@@ -768,8 +775,19 @@ public static class ScriptCompiler
 		INamedTypeSymbol? patternBase,
 		INamedTypeSymbol? sequenceBase,
 		INamedTypeSymbol? mathType,
-		INamedTypeSymbol? pitchMathType)
+		INamedTypeSymbol? pitchMathType,
+		bool allowInjectedPlayCallsites)
 	{
+		// Authors cannot opt themselves into a generated-only entrypoint
+		// even though the protected overload exists on the runtime base.
+		// Editor compilation first checks original authored code under this
+		// rule, then checks the trusted rewritten wrapper with opt-in.
+		if (!allowInjectedPlayCallsites
+			&& method.Name == "Play"
+			&& method.Parameters.Length == 3
+			&& method.Parameters[0].Type.Name == "SequenceCallsite")
+			return false;
+
 		INamedTypeSymbol containingType = method.ContainingType;
 		return SymbolEqualityComparer.Default.Equals(
 				containingType,
