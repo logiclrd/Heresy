@@ -193,7 +193,11 @@ public sealed class ScriptSequencePlayHighlightTests
                 DispatcherPriority.Background);
             Assert.That(ShownCallsite(editor), Is.EqualTo(span));
 
-            transport.Publish(active with { PatternId = (ObjectId)999U });
+            transport.Publish(new PlaybackPatternPosition((ObjectId)999U, 0, null, null)
+            {
+                EditorCallsiteSession = transport.TracePatternSession,
+                EditorPatternCallsite = span,
+            });
             await Dispatcher.UIThread.InvokeAsync(() => { },
                 DispatcherPriority.Background);
             Assert.That(ShownCallsite(editor), Is.Null);
