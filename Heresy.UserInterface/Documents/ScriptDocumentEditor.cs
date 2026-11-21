@@ -5,6 +5,7 @@ using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Scripting;
 using Heresy.Core.Sequences;
+using Heresy.UserInterface.PatternEditing;
 
 namespace Heresy.UserInterface.Documents;
 
@@ -54,6 +55,7 @@ public static class ScriptDocumentEditor
 			{
 				RowCount = rowCount,
 				ChannelCount = channelCount,
+				Source = CreateInitialPatternSource(workspace.Document),
 			};
 		workspace.Document.Add(pattern, affectsAudio: true,
 			destinationFolder: destinationFolder);
@@ -72,10 +74,39 @@ public static class ScriptDocumentEditor
 			SongTreeSection.Sequences, destinationFolder);
 		ObjectId id = workspace.Document.AllocateObjectId();
 		ScriptSequenceDefinition sequence =
-			new(id, name.Trim());
+			new(id, name.Trim())
+			{
+				Source = CreateInitialSequenceSource(workspace.Document),
+			};
 		workspace.Document.Add(sequence, affectsAudio: true,
 			destinationFolder: destinationFolder);
 		return sequence;
+	}
+
+	/// <summary>Initial authored source, generated once before the new
+	/// definition is published. Reopening a script never regenerates it.</summary>
+	public static string CreateInitialPatternSource(SongDocument document)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		PatternSourceOption? source = PatternSourceCatalog.GetSources(document)
+			.FirstOrDefault();
+		return source is null
+			? "// Add a Sample, Synth or Instrument, then use Note(row, channel, _O(id), pitchMultiplier: 1.0);"
+			: $"Note(0, 0, _O({source.Id.Value}), pitchMultiplier: 1.0, volume: 0.75);";
+	}
+
+	/// <summary>Prefer a real Pattern reference; Play requires a Pattern,
+	/// not a Sequence or arbitrary sound source. No Pattern means silence.</summary>
+	public static string CreateInitialSequenceSource(SongDocument document)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		PatternDefinition? pattern = document.Objects.Values
+			.OfType<PatternDefinition>()
+			.OrderBy(item => item.Id.Value)
+			.FirstOrDefault();
+		return pattern is null
+			? "return default; // No Patterns exist yet."
+			: $"switch (sequenceIndex)\n{{\n    case 0: return Play(_O({pattern.Id.Value}));\n    default: return default;\n}}";
 	}
 
 	public static void UpdateSource(
