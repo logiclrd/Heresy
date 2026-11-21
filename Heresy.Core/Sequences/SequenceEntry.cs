@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 
 using Heresy.Core.Objects;
 
@@ -32,6 +33,7 @@ public sealed record SequenceEntry
 
 	/// <summary>Optional editor-audition provenance, null for all ordinary
 	/// Sequence entries. Copying source metadata does not alter musical data.</summary>
+	[JsonIgnore]
 	public SequenceCallsite? EditorCallsite { get; init; }
 
 	public void Deconstruct(out ObjectId patternId, out int startRow)

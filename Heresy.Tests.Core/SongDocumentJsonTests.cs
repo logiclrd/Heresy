@@ -101,6 +101,34 @@ public sealed class SongDocumentJsonTests
 
 
 	[Test]
+	public void SequenceCallsiteProvenanceIsNeverSerializedInSongFiles()
+	{
+		SongDocument document = new();
+		DataPatternDefinition pattern = new((ObjectId)17U, "Pattern")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		DataSequenceDefinition sequence = new((ObjectId)18U, "Sequence");
+		sequence.Entries.Add(new SequenceEntry(pattern.Id)
+		{
+			EditorCallsite = new SequenceCallsite(12, 4),
+		});
+		document.Add(pattern);
+		document.Add(sequence);
+
+		string json = SongDocumentJson.Serialize(document, JsonContextPath);
+		Assert.That(json, Does.Not.Contain("editorCallsite").IgnoreCase);
+		Assert.That(json, Does.Not.Contain("sequenceCallsite").IgnoreCase);
+		SongDocument restored = SongDocumentJson.Deserialize(json, JsonContextPath);
+		DataSequenceDefinition reloaded =
+			(DataSequenceDefinition)restored.Objects[sequence.Id];
+		Assert.That(reloaded.Entries, Has.Count.EqualTo(1));
+		Assert.That(reloaded.Entries[0].PatternId, Is.EqualTo(pattern.Id));
+		Assert.That(reloaded.Entries[0].EditorCallsite, Is.Null);
+	}
+
+	[Test]
 	public void LegacySampleFrequencyMetadataIsAcceptedButNotRewritten()
 	{
 		JsonObject manifest = JsonNode.Parse(
