@@ -219,24 +219,49 @@ Do not reintroduce completed-task checklists here.
   not change the Synth import acceptance result. PR #34 is approved
   for merge by the owner.
 
-- [ ] **Finish selected-folder creation/import acceptance** (issue
-  [#41](https://github.com/logiclrd/Heresy/issues/41), draft PR
-  [#42](https://github.com/logiclrd/Heresy/pull/42)). Every + Create or
-  + Import action across all six panes uses the selected folder, the
-  immediate parent of the clicked object occurrence, or the section
-  root when there is no selection in that section. Capture the import
-  destination before showing file/selection dialogs. Synth graph-aware
-  import places all new Patches/Sample/Synth objects into the chosen
-  Patches folder and keeps cross-section dependencies at their own
-  section roots. Validate attached parent/section before ID allocation
-  and at the atomic Synth import commit boundary; preserve source
-  references, deterministic batch order and selection. Automated checks
-  cover both data/script variants, six sections, nested/empty folders,
-  duplicate occurrences, invalid/detached/wrong-section destinations,
-  audio/Synth import and .hm/.hm.json persistence. **Draft implementation
-  on #42; CI and physical owner acceptance pending.** Reference:
-  [document panes](document-panes.md) and
-  [UI workflow](user-interface-workflows.md).
+- [ ] **Refine the arrangement-layer boundaries of Duplicate (deep)**
+  (follow-up to merged PR #38; owner decision 2026-11-21).
+  **Data Sequences and Script Sequences** must both offer
+  `Duplicate (deep)`. Cloning a Sequence deeply duplicates the
+  *referenced Sequences and Patterns* reachable through supported
+  arrangement-layer links. A Data Sequence traverses every Pattern
+  in its entry list (its current entries are Pattern IDs, not nested
+  Sequence IDs). A Script Sequence traverses semantically recognized
+  literal `_O(id)` references to Patterns and Sequences, where valid
+  within its supported scripting API; do not add unsupported
+  Sequence-to-Sequence `Play()` runtime semantics. Use one global
+  original-to-new ObjectId map: shared Patterns, repeated entries,
+  cross-links and cycles produce exactly one duplicate per reached
+  object, with every cloned Sequence reference to a reached object
+  correctly remapped. Original authoring data remains untouched.
+
+  **Data Patterns and Script Patterns are terminal** in an arrangement
+  deep-clone traversal: clone each reached Pattern's owned data/source
+  independently, but retain its references to sound-generating objects,
+  Filters, Envelopes and other playback sources instead of duplicating
+  that stratum. Remove `Duplicate (deep)` from the **Script Pattern**
+  context menu; ordinary `Duplicate` for both Pattern kinds remains.
+  Pattern-contained `_O(id)` references do not recursively expand
+  into sound-generation objects when a Sequence deep clone reaches that
+  Pattern. Do **not** change the independently agreed deep-clone
+  traversal of Instruments, Script Instruments, Synths or Script
+  Envelopes, nor shallow-duplicate semantics.
+
+  Preserve semantic Roslyn reference discovery and span-only rewrites
+  for references actually remapped; do not rewrite strings, comments,
+  shadowed calls, or external IDs outside the clone set. Keep atomic
+  refusal for genuinely ambiguous/unrewritable references, source asset
+  checks and existing deterministic selected-sibling tree placement.
+  Regression coverage: Data Sequence with repeated/shared Patterns;
+  Script Sequence referring to Data/Script Patterns and arrangement
+  objects; both Pattern kinds stopping at the sound-generation boundary;
+  removal of Script Pattern deep menu; shared/cyclic script links;
+  shallow-vs-deep consistency, selected occurrence placement and
+  `.hm`/`.hm.json` persistence. Update the historical
+  [Duplicate Object specification](duplicate-object-plan.md) to
+  supersede its now-obsolete terminal-Data-Sequence and
+  Script-Pattern-deep decisions before implementation. **Separate
+  future PR; not part of merged PR #42.**
 
 ## Undo/Redo — tiered redesign
 
