@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
+using Heresy.Core.Sequences;
 
 using Heresy.Core.Timing;
 
@@ -18,6 +20,10 @@ public sealed record NoteEvent(
 	/// Zero is the normal root physical-channel namespace; flattened
 	/// sources use distinct positive IDs even when their hosts overlap.</summary>
 	public long PhysicalPlaybackOwner { get; init; }
+
+	/// <summary>Editor-only authored Pattern action span; never song data.</summary>
+	[JsonIgnore]
+	public SequenceCallsite? EditorCallsite { get; init; }
 
 	public NoteEvent WithEmissionOrder(long order) => this with { EmissionOrder = order };
 }

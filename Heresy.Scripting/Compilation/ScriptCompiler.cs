@@ -131,9 +131,19 @@ public static class ScriptCompiler
 	/// timeline until CPU checkpoint scheduling and full parity are ready.
 	/// </summary>
 	public static ScriptCompilationResult<IIncrementalRawPatternNoteGenerator>
-		CompileIncrementalPattern(ScriptPatternDefinition definition)
+		CompileIncrementalPattern(ScriptPatternDefinition definition,
+		bool instrumentActionCallsites = false)
 	{
 		ArgumentNullException.ThrowIfNull(definition);
+
+		// Validate canonical authored source before injecting trusted overloads.
+		if (instrumentActionCallsites)
+		{
+			IReadOnlyList<ScriptAnalysisDiagnostic> authored =
+				AnalyzePatternSource(definition.Source);
+			if (HasErrors(authored))
+				return new(null, authored);
+		}
 
 		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
 			ValidateIncrementalPatternStatements(definition.Source);
@@ -147,8 +157,10 @@ public static class ScriptCompiler
 			className,
 			BuildIncrementalPatternWrapper(
 				className,
-				InstrumentIncrementalPattern(definition.Source)),
-			typeof(PatternScriptProgram));
+				InstrumentIncrementalPattern(definition.Source,
+					instrumentActionCallsites)),
+			typeof(PatternScriptProgram),
+			allowInjectedPlayCallsites: instrumentActionCallsites);
 
 		if (!compiled.Success || compiled.Program is null)
 			return new(null, compiled.Diagnostics);
@@ -782,10 +794,12 @@ public static class ScriptCompiler
 		// even though the protected overload exists on the runtime base.
 		// Editor compilation first checks original authored code under this
 		// rule, then checks the trusted rewritten wrapper with opt-in.
-		if (!allowInjectedPlayCallsites
-			&& method.Name == "Play"
-			&& method.Parameters.Length == 3
-			&& method.Parameters[0].Type.Name == "SequenceCallsite")
+		if (method.Parameters.Length > 0
+			&& method.Parameters[0].Type.Name == "SequenceCallsite"
+			&& method.Name is "Play" or "Note" or "NoteVirtual"
+				or "NoteFilter" or "NoteFilterVirtual"
+				or "ChannelFilter" or "ChannelFilterVirtual"
+			&& !allowInjectedPlayCallsites)
 			return false;
 
 		INamedTypeSymbol containingType = method.ContainingType;
@@ -952,21 +966,49 @@ public static class ScriptCompiler
 		}
 	}
 
-	private static string InstrumentIncrementalPattern(string source)
+	
+	private static string InstrumentIncrementalPattern(string source,
+		bool instrumentActionCallsites = false)
 	{
 		SyntaxNode root = CSharpSyntaxTree.ParseText(
 			source, ScriptParseOptions).GetRoot();
+		if (instrumentActionCallsites)
+			root = new PatternActionCallsiteRewriter().Visit(root) ?? root;
 		root = new LoopCheckpointRewriter(cooperative: true).Visit(root)
 			?? root;
 		return new IncrementalPatternYieldRewriter().Visit(root)
 			?.ToFullString() ?? source;
 	}
 
+
+	/// <summary>Captured before iterator and cooperative rewrites, so source
+	/// spans always refer to the author's unchanged Script Pattern text.</summary>
+	private sealed class PatternActionCallsiteRewriter : CSharpSyntaxRewriter
+	{
+		public override SyntaxNode? VisitInvocationExpression(
+			InvocationExpressionSyntax node)
+		{
+			InvocationExpressionSyntax rewritten =
+				(InvocationExpressionSyntax)(base.VisitInvocationExpression(node) ?? node);
+			if (node.Expression is not IdentifierNameSyntax name
+				|| name.Identifier.ValueText is not
+					("Note" or "NoteVirtual" or "NoteFilter" or "NoteFilterVirtual"
+						or "ChannelFilter" or "ChannelFilterVirtual"))
+				return rewritten;
+			ArgumentSyntax span = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(
+				$"new SequenceCallsite({node.SpanStart}, {node.Span.Length})"));
+			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
+				rewritten.ArgumentList.Arguments.Insert(0, span)))
+				.WithTriviaFrom(node);
+		}
+	}
+
 	private static string BuildIncrementalPatternWrapper(
 		string className, string source)
-		=> $$"""
+		=> $"""
 			using System;
 			using System.Collections.Generic;
+			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
 			using static Heresy.Scripting.Runtime.ScriptPitchMath;

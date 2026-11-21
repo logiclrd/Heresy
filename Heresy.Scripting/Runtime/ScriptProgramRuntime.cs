@@ -78,6 +78,7 @@ public abstract class PatternScriptProgram
 	private readonly ScriptExecutionBudget _budget = new();
 	private int _cooperationIterations;
 	private double _lastRawRow;
+	private SequenceCallsite? _editorActionCallsite;
 
 	protected PatternScriptProgram(
 		SequencingContext context,
@@ -195,6 +196,55 @@ public abstract class PatternScriptProgram
 			sourceId, pitchMultiplier, playbackSpeedMultiplier,
 			mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId);
 	}
+
+
+	/// <summary>Only rewritten editor-F6 calls use these overloads. Normal
+	/// Pattern scripts continue to call the unchanged musical API.</summary>
+	private void EmitWithEditorCallsite(SequenceCallsite callsite, Action emit)
+	{
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = callsite;
+		try { emit(); }
+		finally { _editorActionCallsite = previous; }
+	}
+
+	protected void Note(SequenceCallsite callsite, double row, int channel, ObjectId sourceId,
+		double pitchMultiplier = 1.0,
+		double playbackSpeedMultiplier = 1.0,
+		bool mixdown = false, double? volume = null,
+		double timeOffsetSeconds = 0.0,
+		ObjectId? eventFilterDefinitionId = null)
+		=> EmitWithEditorCallsite(callsite,
+			() => Note(row, channel, sourceId, pitchMultiplier, playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId));
+
+	protected void NoteVirtual(SequenceCallsite callsite, double row, uint virtualId, ObjectId sourceId,
+		double pitchMultiplier = 1.0,
+		double playbackSpeedMultiplier = 1.0,
+		bool mixdown = false, double? volume = null,
+		double timeOffsetSeconds = 0.0,
+		ObjectId? eventFilterDefinitionId = null)
+		=> EmitWithEditorCallsite(callsite,
+			() => NoteVirtual(row, virtualId, sourceId, pitchMultiplier, playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId));
+
+	protected void NoteFilter(SequenceCallsite callsite, double row, int channel, ObjectId? definitionId = null,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => NoteFilter(row, channel, definitionId, timeOffsetSeconds));
+
+	protected void NoteFilterVirtual(SequenceCallsite callsite, double row, uint virtualId, ObjectId? definitionId = null,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => NoteFilterVirtual(row, virtualId, definitionId, timeOffsetSeconds));
+
+	protected void ChannelFilter(SequenceCallsite callsite, double row, int channel, ObjectId? definitionId = null,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => ChannelFilter(row, channel, definitionId, timeOffsetSeconds));
+
+	protected void ChannelFilterVirtual(SequenceCallsite callsite, double row, uint virtualId, ObjectId? definitionId = null,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => ChannelFilterVirtual(row, virtualId, definitionId, timeOffsetSeconds));
 
 	private void AppendNoteStart(
 		double row,
@@ -538,7 +588,7 @@ public abstract class PatternScriptProgram
 			new NoteEvent(
 				new MusicalTime(TimeSpan.FromSeconds(timeOffsetSeconds), row),
 				target,
-				[command]));
+				[command]) { EditorCallsite = _editorActionCallsite });
 		_lastRawRow = row;
 	}
 

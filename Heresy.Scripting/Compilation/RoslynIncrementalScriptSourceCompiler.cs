@@ -18,10 +18,17 @@ public sealed class RoslynIncrementalScriptSourceCompiler
 {
 	public IIncrementalRawPatternNoteGenerator CompilePattern(
 		ScriptPatternDefinition source)
+		=> CompilePattern(source, instrumentActionCallsites: false);
+
+	/// <summary>Only explicitly targeted editor playback injects Pattern
+	/// callsite metadata. Ordinary scripts compile identically to before.</summary>
+	public IIncrementalRawPatternNoteGenerator CompilePattern(
+		ScriptPatternDefinition source, bool instrumentActionCallsites)
 	{
 		ArgumentNullException.ThrowIfNull(source);
 		ScriptCompilationResult<IIncrementalRawPatternNoteGenerator> result =
-			ScriptCompiler.CompileIncrementalPattern(source);
+			ScriptCompiler.CompileIncrementalPattern(source,
+				instrumentActionCallsites);
 		if (!result.Success || result.Program is null)
 			throw CompilationFailure("Pattern", result.Diagnostics);
 		return result.Program;
