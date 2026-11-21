@@ -15,7 +15,8 @@ namespace Heresy.UserInterface.Documents;
 public static class FilterDocumentEditor
 {
 	public static FilterDefinition CreateFilter(
-		DocumentWorkspace workspace, string name)
+		DocumentWorkspace workspace, string name,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -23,8 +24,11 @@ public static class FilterDocumentEditor
 		// Validate before allocating an ID; the final instance receives its
 		// real ID and a fresh, independent stage collection.
 		_ = new FilterDefinition((ObjectId)1U, normalized);
+		workspace.Document.ResolveObjectDestination(
+			SongTreeSection.Filters, destinationFolder);
 		FilterDefinition result = new(workspace.Document.AllocateObjectId(), normalized);
-		workspace.Document.Add(result, affectsAudio: true);
+		workspace.Document.Add(result, affectsAudio: true,
+			destinationFolder: destinationFolder);
 		return result;
 	}
 
