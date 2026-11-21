@@ -28,7 +28,7 @@ public sealed class ScriptSourceSaveControlTests
         ScriptEditorControl editor = new(workspace, sequence, () => { }, _ => { });
         TextEditor source = Field<TextEditor>(editor, "_source");
         Button save = Field<Button>(editor, "_saveSource");
-        string original = source.Text;
+        string original = source.Text ?? string.Empty;
         Assert.That(save.Content, Is.EqualTo("Save"));
         Assert.That(save.IsEnabled, Is.False);
 
