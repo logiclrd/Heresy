@@ -141,4 +141,30 @@ public sealed class ScriptSourceSaveControlTests
         Assert.That(nna.Text, Is.EqualTo(instrument.NnaExpression));
         Assert.That(editor.HasUnsavedScriptSource, Is.False);
     }
+    [AvaloniaTest]
+    public void InstrumentDismissalSaveIsAtomicIfOneOfThreeSourcesIsInvalid()
+    {
+        DocumentWorkspace workspace = new();
+        var instrument = ScriptInstrumentDocumentEditor.Create(
+            workspace, "Test", "-1");
+        ScriptInstrumentEditorControl editor =
+            new(workspace, instrument, () => { }, _ => { });
+        TextBox selector = Field<TextBox>(editor, "_expression");
+        TextBox pitch = Field<TextBox>(editor, "_pitchExpression");
+        TextBox nna = Field<TextBox>(editor, "_nnaExpression");
+        uint before = workspace.Document.AudioRevision;
+        selector.Text = "0";
+        pitch.Text = "1.5";
+        nna.Text = "System.Environment.TickCount";
+        Assert.That(editor.TrySaveScriptSource(), Is.False);
+        Assert.That(instrument.Source, Is.EqualTo("-1"));
+        Assert.That(instrument.PitchExpression, Is.EqualTo("1.0"));
+        Assert.That(instrument.NnaExpression,
+            Is.EqualTo("InstrumentNnaAction.Inherit"));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before));
+        Assert.That(editor.HasUnsavedScriptSource, Is.True);
+        editor.DiscardUnsavedScriptSource();
+        Assert.That(editor.HasUnsavedScriptSource, Is.False);
+    }
+
 }
