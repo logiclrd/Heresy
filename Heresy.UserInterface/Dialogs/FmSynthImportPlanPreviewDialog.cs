@@ -31,6 +31,7 @@ namespace Heresy.UserInterface.Dialogs;
 public sealed class FmSynthImportPlanPreviewDialog : Window
 {
     private readonly SongDocument _destination;
+    private readonly SongTreeFolder? _destinationFolder;
     private readonly IReadOnlyList<FmImportExactMatchSource> _sources;
     private readonly bool _commitEnabled;
     private bool _committed;
@@ -44,11 +45,14 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
 
     public FmSynthImportPlanPreviewDialog(SongFmSynthImportSource source,
         IReadOnlyList<ObjectId> selectedSynths, SongDocument destination,
-        bool enableCommit = false)
+        bool enableCommit = false,
+        SongTreeFolder? destinationFolder = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(selectedSynths);
         _destination = destination ?? throw new ArgumentNullException(nameof(destination));
+        _destinationFolder = _destination.ResolveObjectDestination(
+            SongTreeSection.Samples, destinationFolder);
         _commitEnabled = enableCommit;
         if (selectedSynths.Count == 0)
             throw new ArgumentException("Select at least one Synth.", nameof(selectedSynths));
@@ -212,7 +216,8 @@ public sealed class FmSynthImportPlanPreviewDialog : Window
         if (!CanCommit)
             return null;
         FmImportCommitResult result =
-            FmSynthImportTransactionCommitter.Commit(_plan, _sources, _destination);
+            FmSynthImportTransactionCommitter.Commit(
+                _plan, _sources, _destination, _destinationFolder);
         LastCommitAttempt = result;
         if (result.IsCommitted)
         {
