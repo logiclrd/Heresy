@@ -1043,6 +1043,11 @@ public static class ScriptCompiler
 			#line 1 "heresy-script"
 			{{source}}
 			#line default
+				// Script Sequence fallthrough means end of sequence.
+				// A fully returning script makes this unreachable by design.
+			#pragma warning disable CS0162
+				return default;
+			#pragma warning restore CS0162
 				}
 			}
 			""";
