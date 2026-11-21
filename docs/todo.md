@@ -388,6 +388,18 @@ Do not reintroduce completed-task checklists here.
   cumbersome (see the redesign TODO below). PR #47 CI covers actual
   selector/pitch/NNA evaluation and Pattern note generation.
 
+- [ ] **F6 for Data Sequence and live playing-order highlight (PR #48).**
+  F6 in the Data Sequence editor starts that Sequence from order 0
+  independently of the song's configured root, matching Script Sequence
+  F6. Use the playback transport's existing sequence ID and entry index
+  (not just Pattern ID) to mark exactly the playing occurrence in the
+  editable order list, clear it on Stop/other playback, and scroll the
+  highlighted order into view without stealing keyboard focus. Rebuilt
+  rows reapply the current highlight; mismatched Pattern IDs do not
+  falsely highlight a reordered entry. Visual indication is read-only
+  and uses the same theme-blended color as Pattern playback.
+  **Implementation in draft PR #48; pending desktop acceptance.**
+
 - [ ] **Support F6 test/audition in the Script Pattern and Script
   Sequence editors.** Owner's natural F6 gesture works in the Data
   Pattern editor but was not wired in either scripted editor

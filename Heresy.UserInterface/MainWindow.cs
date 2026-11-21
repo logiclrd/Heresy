@@ -2543,9 +2543,12 @@ public sealed class MainWindow : Window
 						sequence,
 						selectNode,
 						entryIndex,
-						patternId));
+						patternId),
+				_uiConfiguration);
 		if (!TrySetEditorContent(editor))
 			return;
+		editor.SetPlaybackPosition(
+			_playbackPositionTransport?.CurrentPlaybackPosition);
 		UpdateWindowTitle();
 		SetStatus($"Editing sequence {sequence.Name}");
 	}
@@ -3572,7 +3575,7 @@ public sealed class MainWindow : Window
 		}
 
 		if (e.Key == Key.F6 && e.KeyModifiers == KeyModifiers.None
-			&& _mainContent.Content is ScriptEditorControl)
+			&& _mainContent.Content is ScriptEditorControl or SequenceEditorControl)
 		{
 			e.Handled = true;
 			_ = HandlePlaybackKeyAsync(Key.F6);
@@ -3685,6 +3688,14 @@ public sealed class MainWindow : Window
 		if (_playbackTransport is null)
 			return;
 
+		if (_mainContent.Content is SequenceEditorControl dataSequence)
+		{
+			await _playbackTransport.PlaySequenceAsync(
+				_workspace.Document, dataSequence.SequenceId);
+			SetStatus($"Playing sequence {dataSequence.SequenceName} from the beginning.");
+			return;
+		}
+
 		if (_mainContent.Content is ScriptEditorControl script)
 		{
 			// Test the code currently visible to the author, not an older
@@ -3717,7 +3728,7 @@ public sealed class MainWindow : Window
 			is not PatternEditorControl editor)
 		{
 			SetStatus(
-				"F6 requires an open Pattern or Script Sequence editor.");
+				"F6 requires an open Pattern or Sequence editor.");
 			return;
 		}
 
@@ -3805,12 +3816,10 @@ public sealed class MainWindow : Window
 		Dispatcher.UIThread.Post(
 			() =>
 			{
-				if (_mainContent.Content
-					is PatternEditorControl editor)
-				{
-					editor.SetPlaybackPosition(
-						position);
-				}
+				if (_mainContent.Content is PatternEditorControl editor)
+					editor.SetPlaybackPosition(position);
+				else if (_mainContent.Content is SequenceEditorControl sequence)
+					sequence.SetPlaybackPosition(position);
 			});
 	}
 
