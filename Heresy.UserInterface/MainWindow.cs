@@ -288,6 +288,12 @@ public sealed class MainWindow : Window
 			};
 
 		Content = BuildShell();
+		// Tunnel before the global File menu gesture can consume Ctrl+S.
+		// The actual source/Save-button hit test is deliberately narrow.
+		AddHandler(
+			InputElement.KeyDownEvent,
+			OnScriptShortcutPreviewKeyDown,
+			RoutingStrategies.Tunnel);
 		Closing += OnClosing;
 		Closed += (_, _) =>
 		{
@@ -3545,9 +3551,40 @@ public sealed class MainWindow : Window
 		}
 	}
 
+	/// <summary>
+	/// Script-source focus has priority over File Save, including AvaloniaEdit's
+	/// internal TextArea and button template children. F6 tests the active
+	/// Script Pattern/Sequence without relying on those controls bubbling.
+	/// </summary>
+	private void OnScriptShortcutPreviewKeyDown(object? sender, KeyEventArgs e)
+	{
+		if (e.Handled)
+			return;
+
+		if (e.Key == Key.S && e.KeyModifiers == KeyModifiers.Control
+			&& CurrentScriptSourceEditor is IScriptSourceShortcutTarget script
+			&& script.TryHandleSourceSaveShortcut(e.Source as Visual))
+		{
+			e.Handled = true;
+			return;
+		}
+
+		if (e.Key == Key.F6 && e.KeyModifiers == KeyModifiers.None
+			&& _mainContent.Content is ScriptEditorControl)
+		{
+			e.Handled = true;
+			_ = HandlePlaybackKeyAsync(Key.F6);
+		}
+	}
+
 	protected override void OnKeyDown(
 		KeyEventArgs e)
 	{
+		if (e.Handled)
+		{
+			base.OnKeyDown(e);
+			return;
+		}
 		if (e.KeyModifiers == KeyModifiers.None
 			&& e.Key is
 				Key.F5
@@ -3646,11 +3683,39 @@ public sealed class MainWindow : Window
 		if (_playbackTransport is null)
 			return;
 
+		if (_mainContent.Content is ScriptEditorControl script)
+		{
+			// Test the code currently visible to the author, not an older
+			// applied version. This saves source to the song only, never disk.
+			if (!script.TrySaveScriptSource())
+			{
+				SetStatus("Cannot test script: save its source first.");
+				return;
+			}
+
+			if (script.ScriptPatternId is ObjectId scriptPatternId)
+			{
+				await _playbackTransport.PlayPatternAsync(
+					_workspace.Document, scriptPatternId,
+					startRow: 0, repeat: true);
+				SetStatus($"Playing script pattern {script.ScriptSourceDisplayName} repeatedly.");
+				return;
+			}
+
+			if (script.ScriptSequenceId is ObjectId scriptSequenceId)
+			{
+				await _playbackTransport.PlaySequenceAsync(
+					_workspace.Document, scriptSequenceId);
+				SetStatus($"Playing script sequence {script.ScriptSourceDisplayName} from the beginning.");
+				return;
+			}
+		}
+
 		if (_mainContent.Content
 			is not PatternEditorControl editor)
 		{
 			SetStatus(
-				"F6 requires an open tracker pattern view.");
+				"F6 requires an open Pattern or Script Sequence editor.");
 			return;
 		}
 

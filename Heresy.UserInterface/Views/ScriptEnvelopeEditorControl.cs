@@ -16,7 +16,7 @@ namespace Heresy.UserInterface.Views;
 /// before a workspace edit; failures preserve both the old revision and the
 /// active renderer snapshot. Blank release means genuinely unbounded.
 /// </summary>
-public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEditor
+public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEditor, IScriptSourceShortcutTarget
 {
 	private readonly DocumentWorkspace _workspace;
 	private readonly ScriptEnvelopeDefinition _envelope;
@@ -66,6 +66,16 @@ public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEdit
 	}
 
 	public string ScriptSourceDisplayName => _envelope.Name;
+
+	public bool TryHandleSourceSaveShortcut(Visual? keySource)
+	{
+		if (!ScriptSourceShortcutRouting.IsWithin(keySource, _source)
+			&& !ScriptSourceShortcutRouting.IsWithin(keySource, _saveSource))
+			return false;
+
+		TrySaveScriptSource();
+		return true;
+	}
 
 	public bool HasUnsavedScriptSource =>
 		!string.Equals(_source.Text ?? string.Empty,

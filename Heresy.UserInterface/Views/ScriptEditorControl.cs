@@ -24,7 +24,7 @@ namespace Heresy.UserInterface.Views;
 /// The TextDocument always contains canonical restricted-C# source; semantic
 /// object references are replaced only in the visual-line layer.
 /// </summary>
-public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor
+public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScriptSourceShortcutTarget
 {
 	private readonly DocumentWorkspace _workspace;
 	private readonly ScriptPatternDefinition? _pattern;
@@ -194,6 +194,19 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor
 			?? _sequence!;
 
 	public string ScriptSourceDisplayName => ScriptObject.Name;
+
+	public ObjectId? ScriptPatternId => _pattern?.Id;
+	public ObjectId? ScriptSequenceId => _sequence?.Id;
+
+	public bool TryHandleSourceSaveShortcut(Visual? keySource)
+	{
+		if (!ScriptSourceShortcutRouting.IsWithin(keySource, _source)
+			&& !ScriptSourceShortcutRouting.IsWithin(keySource, _saveSource))
+			return false;
+
+		TrySaveScriptSource();
+		return true;
+	}
 
 	public bool HasUnsavedScriptSource =>
 		!string.Equals(_source.Text ?? string.Empty,
