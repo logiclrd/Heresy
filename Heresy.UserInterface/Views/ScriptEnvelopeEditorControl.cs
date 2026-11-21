@@ -49,8 +49,11 @@ public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEdit
 			MinWidth = 350,
 		};
 		ScriptEditorFonts.ApplyTo(_source);
-		_source.TextChanged += (_, _) =>
-			_saveSource.IsEnabled = HasUnsavedScriptSource;
+		_source.PropertyChanged += (_, change) =>
+		{
+			if (change.Property == TextBox.TextProperty)
+				_saveSource.IsEnabled = HasUnsavedScriptSource;
+		};
 		_saveSource.Click += (_, _) => TrySaveScriptSource();
 		_release = new TextBox
 		{
@@ -100,8 +103,11 @@ public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEdit
 	{
 		Button back = new() { Content = "← Document" };
 		back.Click += (_, _) => _close();
-		Button applyRelease = new() { Content = "Apply release limit" };
-		applyRelease.Click += (_, _) => ApplyReleaseLimit();
+		// Applying an expression together with its release limit remains an
+		// atomic, existing authoring action. The new source-only Save above
+		// is independent of the release metadata.
+		Button apply = new() { Content = "Apply expression" };
+		apply.Click += (_, _) => Apply();
 		StackPanel fields = new()
 		{
 			Margin = new Thickness(18, 14),
@@ -137,12 +143,12 @@ public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEdit
 		});
 		fields.Children.Add(ScriptEditorHelp.CreateReferenceViewer(
 			ScriptEditorHelp.EnvelopeReference));
-		fields.Children.Add(applyRelease);
+		fields.Children.Add(apply);
 		fields.Children.Add(_message);
 		return new ScrollViewer { Content = fields };
 	}
 
-	private void ApplyReleaseLimit()
+	private void Apply()
 	{
 		try
 		{
@@ -150,9 +156,12 @@ public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEdit
 			TimeSpan? release = text.Length == 0
 				? null : TimeSpan.FromSeconds(
 					double.Parse(text, CultureInfo.InvariantCulture));
+			string source = _source.Text ?? string.Empty;
 			EnvelopeDocumentEditor.UpdateScriptEnvelope(
-				_workspace, _envelope, _envelope.Source, release);
-			_message.Text = "Release limit updated.";
+				_workspace, _envelope, source, release);
+			_appliedSource = source;
+			_saveSource.IsEnabled = false;
+			_message.Text = "Expression updated.";
 			_changed("Updated script Envelope " + _envelope.Name);
 		}
 		catch (Exception ex)

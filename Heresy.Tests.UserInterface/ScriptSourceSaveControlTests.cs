@@ -94,7 +94,7 @@ public sealed class ScriptSourceSaveControlTests
         Assert.That(envelope.ReleaseDuration, Is.Null);
         Assert.That(save.IsEnabled, Is.False);
         typeof(ScriptEnvelopeEditorControl)
-            .GetMethod("ApplyReleaseLimit",
+            .GetMethod("Apply",
                 BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(editor, null);
         Assert.That(envelope.ReleaseDuration,

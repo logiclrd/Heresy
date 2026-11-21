@@ -94,9 +94,9 @@ public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEd
         };
         _loadedNnaExpression = definition.NnaExpression;
         _loadedNnaFade = definition.NnaFadeDuration;
-        _expression.TextChanged += (_, _) => UpdateSaveButtons();
-        _pitchExpression.TextChanged += (_, _) => UpdateSaveButtons();
-        _nnaExpression.TextChanged += (_, _) => UpdateSaveButtons();
+        _expression.PropertyChanged += OnSourceTextPropertyChanged;
+        _pitchExpression.PropertyChanged += OnSourceTextPropertyChanged;
+        _nnaExpression.PropertyChanged += OnSourceTextPropertyChanged;
         _saveExpressions.Click += (_, _) => TrySaveExpressions();
         _saveNnaExpression.Click += (_, _) => TrySaveNnaExpression();
         _toneNna = new ComboBox
@@ -148,6 +148,13 @@ public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEd
             _loadedNnaExpression, StringComparison.Ordinal);
 
     public bool HasUnsavedScriptSource => ExpressionsDirty || NnaExpressionDirty;
+
+    private void OnSourceTextPropertyChanged(
+        object? sender, Avalonia.AvaloniaPropertyChangedEventArgs change)
+    {
+        if (change.Property == TextBox.TextProperty)
+            UpdateSaveButtons();
+    }
 
     private void UpdateSaveButtons()
     {
