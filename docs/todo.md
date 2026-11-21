@@ -388,15 +388,20 @@ Do not reintroduce completed-task checklists here.
   cumbersome (see the redesign TODO below). PR #47 CI covers actual
   selector/pitch/NNA evaluation and Pattern note generation.
 
-- [ ] **Support F6 test/audition in the Script Pattern editor.**
-  Owner's natural F6 gesture currently works in the Data Pattern editor
-  but is not wired in the Script Pattern editor (observed 2026-11-21).
-  Reuse the expected Data Pattern audition workflow where appropriate,
-  with the same focus/keyboard and stop/retrigger semantics; check how
-  a dirty, not-yet-Saved script source is handled and provide sensible
-  compile/runtime diagnostics rather than silently discarding draft
-  text or globally changing what F6 means. Add GUI and playback
-  regression tests for Script Pattern and unchanged Data Pattern F6.
+- [ ] **Support F6 test/audition in the Script Pattern and Script
+  Sequence editors.** Owner's natural F6 gesture works in the Data
+  Pattern editor but was not wired in either scripted editor
+  (observed 2026-11-21). **Owner refinement:** the same F6 shortcut
+  should test the currently edited Script Sequence as well.
+  Script Patterns start at row zero and repeat, as Data Patterns do;
+  Script Sequences begin with their first order and follow their
+  scripted order generator. If source text is pending, F6 commits
+  that text to the song (not the disk file) before compiling/playing,
+  rather than auditioning an older source; errors must be visible and
+  failure must prevent playback when the source cannot be saved.
+  Preserve F5/F7/F8 and Data Pattern behavior. Regression-test both
+  Script kinds and both clean and dirty source cases.
+  **Implementation:** draft keyboard-shortcuts PR, awaiting acceptance.
 
 - [ ] **Route Ctrl+S to local Script Save only for script-source focus.**
   Currently Ctrl+S invokes global Save Document even while the
@@ -416,6 +421,10 @@ Do not reintroduce completed-task checklists here.
   boundaries with the approved tiered Undo/Redo design.
   Test focus on source, on Save button, elsewhere in script editor,
   and in the main window, plus key routing on supported platforms.
+  **Owner refinement:** both the Script Pattern and Script Sequence
+  editors use this exact focus-sensitive Ctrl+S policy. Implementation
+  also routes Script Envelope and both independent Script Instrument
+  Save groups; draft keyboard-shortcuts PR, awaiting acceptance.
 
 - [ ] **Audit Script Pattern physical/virtual channel helper parity.**
   The current `PatternScriptProgram` exposes `VolumeVirtual`,
