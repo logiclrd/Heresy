@@ -59,7 +59,7 @@ public sealed class ScriptSequencePlayHighlightTests
             () => { }, _ => { });
         TextEditor source = Field<TextEditor>(editor, "_source");
         const int start = 7;
-        SequenceCallsite callsite = new(start, 4);
+        SequenceCallsite callsite = new(start, "Play(_O(17))".Length);
 
         Guid first = Guid.NewGuid();
         editor.BeginEditorSequenceTrace(first);
@@ -129,13 +129,13 @@ public sealed class ScriptSequencePlayHighlightTests
                 (ObjectId)17U, 0, sequence.Id, 0)
             {
                 EditorCallsiteSession = transport.TraceSession,
-                EditorPlayCallsite = new SequenceCallsite(7, 4),
+                EditorPlayCallsite = new SequenceCallsite(7, "Play(_O(17))".Length),
             };
             transport.Publish(visible);
             await Dispatcher.UIThread.InvokeAsync(() => { },
                 DispatcherPriority.Background);
             Assert.That(ShownCallsite(editor),
-                Is.EqualTo(new SequenceCallsite(7, 4)));
+                Is.EqualTo(new SequenceCallsite(7, "Play(_O(17))".Length)));
 
             transport.Publish(null);
             await Dispatcher.UIThread.InvokeAsync(() => { },

@@ -937,10 +937,12 @@ public static class ScriptCompiler
 				|| name.Identifier.ValueText != "Play")
 				return rewritten;
 
-			// The user wrote Play(x[, row]); inject a new *first* argument
-			// without shifting optional arguments or persisting code changes.
-			int start = node.Expression.SpanStart;
-			int length = node.Expression.Span.Length;
+			// The user wrote Play(x[, row]); capture the *entire* original
+			// invocation, including '(' and ')' and any multiline arguments,
+			// before adding the trusted leading metadata parameter. Preserve
+			// the authored offset so _O() visual tokens map correctly.
+			int start = node.SpanStart;
+			int length = node.Span.Length;
 			ArgumentSyntax callsite = SyntaxFactory.Argument(
 				SyntaxFactory.ParseExpression(
 					$"new SequenceCallsite({start}, {length})"));
