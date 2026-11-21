@@ -796,9 +796,9 @@ public static class ScriptCompiler
 		// rule, then checks the trusted rewritten wrapper with opt-in.
 		if (method.Parameters.Length > 0
 			&& method.Parameters[0].Type.Name == "SequenceCallsite"
-			&& method.Name is "Play" or "Note" or "NoteVirtual"
+			&& (method.Name is "Play" or "Note" or "NoteVirtual"
 				or "NoteFilter" or "NoteFilterVirtual"
-				or "ChannelFilter" or "ChannelFilterVirtual"
+				or "ChannelFilter" or "ChannelFilterVirtual")
 			&& !allowInjectedPlayCallsites)
 			return false;
 
@@ -966,7 +966,6 @@ public static class ScriptCompiler
 		}
 	}
 
-	
 	private static string InstrumentIncrementalPattern(string source,
 		bool instrumentActionCallsites = false)
 	{
