@@ -74,19 +74,33 @@ public sealed class SongDocument
 		return new ObjectId(_nextObjectId++);
 	}
 
-	public void Add(SongObject songObject, bool affectsAudio = true)
+	/// <summary>Resolve and validate a creation/import destination in the
+	/// correct section before allocating an ID or publishing any object.</summary>
+	public SongTreeFolder ResolveObjectDestination(
+		SongTreeSection section, SongTreeFolder? destinationFolder = null)
+	{
+		SongTreeFolder root = GetSectionRoot(section);
+		SongTreeFolder destination = destinationFolder ?? root;
+		if (!IsFolderInSection(root, destination))
+			throw new InvalidOperationException(
+				"The destination folder is not attached to the requested song section.");
+		return destination;
+	}
+
+	public void Add(SongObject songObject, bool affectsAudio = true,
+		SongTreeFolder? destinationFolder = null)
 	{
 		ArgumentNullException.ThrowIfNull(songObject);
 
-		SongTreeFolder sectionRoot =
-			GetSectionRoot(SongTreeSections.ForKind(songObject.Kind));
+		SongTreeFolder destination = ResolveObjectDestination(
+			SongTreeSections.ForKind(songObject.Kind), destinationFolder);
 
 		if (!_objects.TryAdd(songObject.Id, songObject))
 			throw new InvalidOperationException($"Object ID {songObject.Id} is already in use.");
 
 		_tombstones.Remove(songObject.Id);
 		EnsureNextIdPast(songObject.Id);
-		sectionRoot.Children.Add(
+		destination.Children.Add(
 			new SongTreeObject(songObject.Name, songObject.Id));
 		MarkChanged(affectsAudio);
 	}
