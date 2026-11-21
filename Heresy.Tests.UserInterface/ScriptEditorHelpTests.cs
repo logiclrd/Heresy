@@ -66,7 +66,7 @@ public sealed class ScriptEditorHelpTests
         Assert.That(instrumentReference,
             Does.Contain("pitchMultiplier"));
         Assert.That(instrumentReference,
-            Does.Contain("predeclared"));
+            Does.Contain("declared ToneSpecifications"));
     }
 
     [AvaloniaTest]
