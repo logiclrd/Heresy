@@ -25,12 +25,21 @@ public interface IScriptSourceEditor
 /// <summary>
 /// An editor recognizes Ctrl+S only when its source text area or associated
 /// Save button originated the key event; other focus contexts keep File Save.
-/// Return true when handled, even for clean or rejected source, so the key
-/// never falls through to saving the document on disk.
+/// A dirty source/group consumes Ctrl+S locally (including failed saves).
+/// Only an *already-clean* source/group forwards Ctrl+S to document Save.
+/// This decision is made before applying source changes, so two presses
+/// perform two deliberate commits without accidentally saving to disk.
 /// </summary>
+public enum ScriptSourceSaveShortcutRoute
+{
+    NotApplicable,
+    SaveLocally,
+    SaveDocument,
+}
+
 public interface IScriptSourceShortcutTarget
 {
-    bool TryHandleSourceSaveShortcut(Visual? keySource);
+    ScriptSourceSaveShortcutRoute TryHandleSourceSaveShortcut(Visual? keySource);
 }
 
 internal static class ScriptSourceShortcutRouting

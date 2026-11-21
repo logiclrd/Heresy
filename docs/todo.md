@@ -463,9 +463,14 @@ Do not reintroduce completed-task checklists here.
   **Save Document** handler. Handle multiple independently editable
   Script Instrument expressions and Script Envelope source fields,
   including embedded inspectors, using the focused field/button's
-  actual local Save operation. If source is clean, a local Ctrl+S
-  should be a local no-op (not fall through to global Save Document);
-  failed validation must preserve pending text and diagnostics.
+  actual local Save operation. **Amended owner design (2026-11-21):** If script source is
+  dirty when Ctrl+S arrives in its text area or Save button, perform
+  only the local source commit. If already clean at the *start* of
+  that keypress, forward it to document Save; two Ctrl+S presses
+  therefore commit source to the song, then save the song to disk.
+  Invalid local edits still consume Ctrl+S and preserve pending source
+  and diagnostics. Script Instrument's independently saved expression
+  groups must not forward when another group is still dirty.
   Do not trigger both handlers. Retain the PR #45 source-dirty
   Save/Discard/Cancel behavior and coordinate eventual Ctrl+S flush
   boundaries with the approved tiered Undo/Redo design.

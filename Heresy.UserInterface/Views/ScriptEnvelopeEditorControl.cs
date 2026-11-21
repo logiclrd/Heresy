@@ -67,14 +67,17 @@ public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEdit
 
 	public string ScriptSourceDisplayName => _envelope.Name;
 
-	public bool TryHandleSourceSaveShortcut(Visual? keySource)
+	public ScriptSourceSaveShortcutRoute TryHandleSourceSaveShortcut(Visual? keySource)
 	{
 		if (!ScriptSourceShortcutRouting.IsWithin(keySource, _source)
 			&& !ScriptSourceShortcutRouting.IsWithin(keySource, _saveSource))
-			return false;
+			return ScriptSourceSaveShortcutRoute.NotApplicable;
+
+		if (!HasUnsavedScriptSource)
+			return ScriptSourceSaveShortcutRoute.SaveDocument;
 
 		TrySaveScriptSource();
-		return true;
+		return ScriptSourceSaveShortcutRoute.SaveLocally;
 	}
 
 	public bool HasUnsavedScriptSource =>
