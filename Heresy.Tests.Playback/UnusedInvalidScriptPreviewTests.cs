@@ -21,7 +21,7 @@ public sealed class UnusedInvalidScriptPreviewTests
 {
     [TestCase(false)]
     [TestCase(true)]
-    public void UnreferencedInvalidSequenceDoesNotStopSynthPreview(bool empty)
+    public void UnreferencedInvalidOrEmptySequenceDoesNotStopSynthPreview(bool empty)
     {
         SongDocument document = new();
         ObjectId synthId = document.AllocateObjectId();
@@ -30,7 +30,7 @@ public sealed class UnusedInvalidScriptPreviewTests
         ObjectId unused = document.AllocateObjectId();
         document.Add(new ScriptSequenceDefinition(unused, "Unused invalid")
         {
-            Source = empty ? "" : "if (sequenceIndex == 0) return null;",
+            Source = empty ? "" : "if (sequenceIndex == 0) return MissingObject;",
         });
 
         NoteScheduleBuilder schedule = new();
@@ -72,13 +72,13 @@ public sealed class UnusedInvalidScriptPreviewTests
         ObjectId brokenId = document.AllocateObjectId();
         document.Add(new ScriptSequenceDefinition(brokenId, "Broken")
         {
-            Source = "if (sequenceIndex == 0) return null;",
+            Source = "if (sequenceIndex == 0) return MissingObject;",
         });
         NotSupportedException? exception = Assert.Throws<NotSupportedException>(
             () => Factory().Create(document, brokenId));
         Assert.That(exception!.Message,
             Does.Contain("Incremental Sequence script compilation failed"));
-        Assert.That(exception.Message, Does.Contain("CS0161"));
+        Assert.That(exception.Message, Does.Contain("CS0103"));
     }
 
     [Test]
@@ -102,7 +102,7 @@ public sealed class UnusedInvalidScriptPreviewTests
         ObjectId invalid = document.AllocateObjectId();
         document.Add(new ScriptSequenceDefinition(invalid, "Broken")
         {
-            Source = "if (sequenceIndex == 0) return null;",
+            Source = "if (sequenceIndex == 0) return MissingObject;",
         });
         ObjectId valid = document.AllocateObjectId();
         document.Add(new ScriptSequenceDefinition(valid, "Valid")
@@ -118,7 +118,7 @@ public sealed class UnusedInvalidScriptPreviewTests
         Assert.That(() =>
             prepared.CompileSequence((ScriptSequenceDefinition)badObject!),
             Throws.TypeOf<NotSupportedException>()
-                .With.Message.Contains("CS0161"));
+                .With.Message.Contains("CS0103"));
     }
 
     private static PreparedIncrementalPlaybackFactory Factory() =>
