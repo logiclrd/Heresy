@@ -75,6 +75,11 @@ public sealed class ScriptAnalysisGlobals
 	public object _O(uint id)
 		=> throw new NotSupportedException(
 			$"Object lookup {id} is an analysis-only intrinsic.");
+
+	// Mirror the runtime overloads so Roslyn resolves _O(int) variables
+	// and ordinary signed literals as intrinsic calls, not unknown methods.
+	public object _O(int id)
+		=> _O(unchecked((uint)id));
 }
 
 /// <summary>
@@ -186,7 +191,7 @@ public static class ScriptReferenceAnalyzer
 					new ScriptAnalysisDiagnostic(
 						MalformedReferenceCode,
 						ScriptDiagnosticSeverity.Error,
-						"An object lookup needs one argument. Literal IDs must be non-zero 32-bit integers, for example _O(137); computed uint expressions are also allowed.",
+						"An object lookup needs one argument. Literal IDs must be non-zero 32-bit integers, for example _O(137); computed int and uint expressions are also allowed.",
 						new ScriptSourceSpan(
 							invocation.SpanStart,
 							invocation.Span.Length)));

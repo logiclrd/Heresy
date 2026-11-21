@@ -320,16 +320,22 @@ Do not reintroduce completed-task checklists here.
   named font exists on Windows, Linux or macOS.
 
   Rename the script editor's **Apply source** button to **Save**. Keep
-  Save disabled until the text has been edited relative to the applied
-  source, and do not silently lose pending edits: closing/canceling the
-  dialog with unsaved text must offer Save, Discard and Cancel (stay in
-  editor). Reconcile the new caption/commit boundary with the approved
-  [tiered Undo/Redo design](tiered-undo-redo-design.md), including pending
-  5-second text-undo batches and preserving editor-local history rather
-  than introducing an unrelated history mechanism. Regression/GUI checks
-  should cover fallthrough vs explicit return, example compilation,
-  font fallbacks on all desktop platforms, Save enablement and each
+  Save disabled until the text differs from the last applied/saved source
+  (and disable it again if the edits are reverted); enabling is driven by
+  text changes rather than other object settings. Do not silently lose
+  pending edits: attempting to dismiss the editor through Back/navigation,
+  close or Cancel with unsaved source text must offer **Save**, **Discard**
+  and **Cancel (stay in editor)**. Reconcile the new caption/commit boundary
+  with the approved [tiered Undo/Redo design](tiered-undo-redo-design.md),
+  including pending 5-second text-undo batches and preserving editor-local
+  history rather than introducing an unrelated history mechanism.
+  Regression/GUI checks should cover fallthrough vs explicit return,
+  valid editable initial examples for each script type, font fallbacks on
+  all desktop platforms, Save dirty-state enable/disable and each
   unsaved-dismissal choice.
+  **Owner refinement (2026-11-21):** Keep this as a separate TODO; PR #38
+  currently implements only the signed `_O(int)` compatibility fix for
+  D6-G, not this broader script-editor redesign.
 
 ## Playback preparation feedback
 

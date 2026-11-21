@@ -31,8 +31,12 @@ persisted, tested, restricted compilation and editor surfaces.
   shared script state.
 - **References:** stable `ObjectId` and `_O(id)` references must
   interact with tombstones, sound/envelope resolution and serialization.
-  Valid computed lookups such as `uint id = 137; _O(id)` are ordinary
-  executable C# source; only statically recognizable non-zero numeric
+  Both `_O(uint)` and `_O(int)` are supported. Positive signed IDs
+  forward to the UInt32 overload; negative signed IDs wrap to unsigned
+  IDs and behave like ordinary unresolved IDs (there is no signed-ID
+  object namespace). Zero remains invalid. Valid computed lookups
+  such as `int id = 137; _O(id)` are ordinary executable C# source;
+  only statically recognizable non-zero numeric
   literal calls (such as `_O(137)`) become named visual reference tokens.
   Computed references are not statically enumerable: graph analysis is
   conservative, and **deep duplication refuses** scripts containing them
