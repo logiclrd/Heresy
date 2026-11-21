@@ -80,7 +80,7 @@ Reference test vectors (approximate except unity and powers of two):
 - **Named notes / MIDI note numbers** (e.g. `NotePitch("C#4")`, `MidiNote(60)`): these require an explicit register-numbering and reference-C mapping and would overlap the existing `Note(row,...)` call. Avoid strings and tuning-policy ambiguity in v1.
 - **Rational interval helpers** (`Ratio(3, 2)`, `Interval(...)`): `3.0 / 2.0` already gives a just fifth; introducing an interval type or an alternate temperament is a separate, larger feature.
 - **A generalized transpose function** (`Transpose(ratio, semitones)`): `ratio * Semitone(semitones)` is already clear. No need to duplicate composition operations.
-- **`CentOffset` and `OctaveOffset` inverses:** useful occasionally but straightforward as `100.0 * SemitoneOffset(r) / 1.0` (cents per semitone) and `SemitoneOffset(r) / 12.0`. Prefer a single inverse until real usage justifies more names.
+- **`CentOffset` and `OctaveOffset` inverses:** useful occasionally but straightforward as `100.0 * SemitoneOffset(r)` (100 cents per semitone) and `SemitoneOffset(r) / 12.0`. Prefer a single inverse until real usage justifies more names.
 - **Instrument `Divisions`-aware conversion:** fundamentally different from 12-TET. Any future custom-scale helper should state its division count explicitly (not inspect mutable Instrument state), e.g. a separately designed `DivisionOffset(n, divisionsPerOctave)`.
 - **Frequency-in-Hz conversions:** require explicit reference-frequency semantics and are not necessary to express `pitchMultiplier`. Can be studied later if Script Instrument authoring evolves.
 
