@@ -90,7 +90,7 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 		fields.Children.Add(_release);
 		fields.Children.Add(new TextBlock
 		{
-			Text = "Script Envelope reference — select and copy text",
+			Text = "Script Envelope reference",
 			FontWeight = FontWeight.SemiBold,
 		});
 		fields.Children.Add(ScriptEditorHelp.CreateReferenceViewer(

@@ -11,18 +11,6 @@ namespace Heresy.UserInterface.Views;
 /// </summary>
 public static class ScriptEditorHelp
 {
-    public const string SequenceIntroduction =
-        "Use _O(35) to reference object 35. This script is called each time " +
-        "playback needs the next Pattern. Return Play(_O(n)) or " +
-        "Play(_O(n), startRow) to play a Pattern; returning null/default " +
-        "(or reaching the end without returning) ends the Sequence.";
-
-    public const string PatternIntroduction =
-        "Use _O(35) to reference object 35. This script runs for each " +
-        "invocation of the Pattern, emitting notes and control commands " +
-        "using the helpers below. In streaming playback, emitting helpers " +
-        "are direct statements; they may not be nested in expressions.";
-
     public const string SequenceReference = """
 SCRIPT SEQUENCE — LOOKUP AND RETURN VALUES
 Called once for each requested order. The returned SequenceEntry starts one Pattern.

@@ -240,19 +240,9 @@ public sealed class ScriptEditorControl : UserControl
 			};
 		body.Children.Add(analysisBorder);
 
-		TextBlock introduction =
-			new()
-			{
-				Text = _pattern is not null
-					? ScriptEditorHelp.PatternIntroduction
-					: ScriptEditorHelp.SequenceIntroduction,
-				TextWrapping = TextWrapping.Wrap,
-				MaxWidth = 900,
-			};
-		body.Children.Add(introduction);
 		body.Children.Add(new TextBlock
 		{
-			Text = "Script API reference — select and copy text",
+			Text = "Script API reference",
 			FontWeight = FontWeight.SemiBold,
 		});
 		body.Children.Add(ScriptEditorHelp.CreateReferenceViewer(

@@ -172,7 +172,7 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         panel.Children.Add(nnaDuration);
         panel.Children.Add(new TextBlock
         {
-            Text = "Script Instrument reference — select and copy text",
+            Text = "Script Instrument reference",
             FontWeight = FontWeight.SemiBold,
         });
         panel.Children.Add(ScriptEditorHelp.CreateReferenceViewer(

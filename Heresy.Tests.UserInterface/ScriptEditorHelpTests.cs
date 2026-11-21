@@ -45,13 +45,12 @@ public sealed class ScriptEditorHelpTests
     public void SequenceReferenceDescribesActualPatternOrderContract()
     {
         string reference = ScriptEditorHelp.SequenceReference;
-        string introduction = ScriptEditorHelp.SequenceIntroduction;
         Assert.That(reference, Does.Contain(
             "Play(ObjectId patternId, int startRow = 0)"));
         Assert.That(reference, Does.Contain(
             "previousSequenceIndex"));
-        Assert.That(introduction, Does.Contain(
-            "reaching the end without returning"));
+        Assert.That(reference, Does.Contain(
+            "falling through ends the Sequence"));
         Assert.That(reference, Does.Contain(
             "not a Sequence ID"));
     }
