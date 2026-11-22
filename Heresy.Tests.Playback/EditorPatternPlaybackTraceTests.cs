@@ -1118,6 +1118,125 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void EditedScriptRestartKeepsOldAndNewF6SessionTimelinesIsolated()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long sound", "long.wav", LongMonoWave()));
+        const string originalNote = "Note(0, 0, _O(20))";
+        const string revisedNote = "Note(0, 0, _O(20), volume: 0.5)";
+        const string revisedPrefix = "Cut(0, 0); ";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Recompiled F6")
+        {
+            RowCount = 16, ChannelCount = 1,
+            Source = originalNote + ";",
+        };
+        song.Add(script);
+
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        Guid firstSession = Guid.NewGuid();
+        Guid secondSession = Guid.NewGuid();
+        PatternPlaybackRequest firstRequest = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = firstSession };
+        IAudioOutputSource first = factory.Create(firstRequest);
+        IAudioOutputSource? second = null;
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(firstRequest,
+                out PlaybackPositionTimeline? firstTimeline), Is.True);
+            Assert.That(firstTimeline, Is.Not.Null);
+            float[] pcm = new float[512];
+            first.Render(pcm.Length, pcm);
+            Assert.That(firstTimeline!.GetPositionAt(TimeSpan.FromMilliseconds(1))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[]
+                {
+                    new SequenceCallsite(0, originalNote.Length),
+                }));
+
+            // Change the authored source in the live document. The first
+            // request's frozen snapshot must not acquire the new callsite.
+            script.Source = revisedPrefix + revisedNote + ";";
+            PatternPlaybackRequest secondRequest = PatternPlaybackRequest.Create(
+                song, script.Id) with { EditorCallsiteSession = secondSession };
+            second = factory.Create(secondRequest);
+
+            // Record equality is insufficient: requests with identical
+            // values but different identities may not steal a timeline.
+            Assert.That(factory.TryTakePlaybackPositionTimeline(
+                secondRequest with { },
+                out PlaybackPositionTimeline? clonedTimeline), Is.False);
+            Assert.That(clonedTimeline, Is.Null);
+            Assert.That(factory.TryTakePlaybackPositionTimeline(
+                firstRequest, out PlaybackPositionTimeline? stale), Is.False);
+            Assert.That(stale, Is.Null);
+            Assert.That(factory.TryTakePlaybackPositionTimeline(
+                secondRequest, out PlaybackPositionTimeline? secondTimeline),
+                Is.True);
+            Assert.That(secondTimeline, Is.Not.Null);
+            Assert.That(secondTimeline!.Entries, Is.Empty,
+                "no stale old producer snapshot can initialize a new session");
+
+            // Simulate a retired PCM worker delivering another block after
+            // the replacement session is installed. It must change only its
+            // own timeline, not the new session's row or voice snapshots.
+            first.Render(pcm.Length, pcm);
+            Assert.That(secondTimeline.Entries, Is.Empty,
+                "late old-session callbacks cannot publish to a new timeline");
+            second.Render(pcm.Length, pcm);
+
+            PlaybackPatternPosition? oldPosition = firstTimeline.GetPositionAt(
+                TimeSpan.FromMilliseconds(5));
+            PlaybackPatternPosition? newPosition = secondTimeline.GetPositionAt(
+                TimeSpan.FromMilliseconds(1));
+            Assert.Multiple(() =>
+            {
+                Assert.That(oldPosition?.EditorCallsiteSession,
+                    Is.EqualTo(firstSession));
+                Assert.That(newPosition?.EditorCallsiteSession,
+                    Is.EqualTo(secondSession));
+                Assert.That(oldPosition?.EditorActiveNoteCallsites,
+                    Is.EquivalentTo(new[]
+                    {
+                        new SequenceCallsite(0, originalNote.Length),
+                    }));
+                Assert.That(newPosition?.EditorActiveNoteCallsites,
+                    Is.EquivalentTo(new[]
+                    {
+                        new SequenceCallsite(revisedPrefix.Length,
+                            revisedNote.Length),
+                    }));
+                Assert.That(oldPosition?.EditorPatternCallsites,
+                    Is.EquivalentTo(new[]
+                    {
+                        new SequenceCallsite(0, originalNote.Length),
+                    }));
+                Assert.That(newPosition?.EditorPatternCallsites,
+                    Is.EquivalentTo(new[]
+                    {
+                        new SequenceCallsite(0, "Cut(0, 0)".Length),
+                        new SequenceCallsite(revisedPrefix.Length,
+                            revisedNote.Length),
+                    }));
+            });
+
+            int oldEntryCount = firstTimeline.Entries.Count;
+            second.Render(pcm.Length, pcm);
+            Assert.That(firstTimeline.Entries.Count, Is.EqualTo(oldEntryCount),
+                "the new PCM producer cannot append to the old timeline");
+        }
+        finally
+        {
+            (first as IDisposable)?.Dispose();
+            (second as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
     public void PatternRequestDeliversDueActionButOrdinaryRequestHasNoTrace()
     {
         SongDocument song = new();
