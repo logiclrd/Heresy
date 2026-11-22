@@ -198,8 +198,13 @@ public sealed class PlaybackRequestAudioSourceFactory :
 					(long Ticks, long Order)> pendingPositions = new();
 				long nextPositionOrder = 0;
 				void QueuePosition(QueuedEditorPatternPosition position)
-					=> pendingPositions.Enqueue(position,
+				{
+					pendingPositions.Enqueue(position,
 						(position.At.Ticks, nextPositionOrder++));
+					// F6-only diagnostic; capture the burst/lookahead peak
+					// before any due events are flushed. No retained journal.
+					positions.RecordEditorPendingPositionCount(pendingPositions.Count);
+				}
 				void PublishPositionsThrough(TimeSpan when)
 				{
 					while (pendingPositions.TryPeek(out _, out var key)
