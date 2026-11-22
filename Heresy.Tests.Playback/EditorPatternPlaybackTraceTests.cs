@@ -112,6 +112,100 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void UnchangedEditorOriginsReuseImmutableSnapshotsAcrossRowActionsAndVoiceCuts()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long source", "long.wav", LongMonoWave()));
+        const string first = "Note(0, 0, _O(20))";
+        const string second = "Note(2, 1, _O(20))";
+        string source = first + "; ChannelFilter(1, 0); " + second
+            + "; Cut(3, 0); Cut(4, 1);";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Reused origin arrays")
+        {
+            RowCount = 16, ChannelCount = 2, Source = source,
+        };
+        song.Add(script);
+        PlaybackRequestAudioSourceFactory factory = new(
+            new RenderConfiguration(48000, new[]
+            {
+                new OutputChannelConfiguration(Vector3.Zero,
+                    positionalImportance: 0.0),
+            }));
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, script.Id) with
+        {
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+        };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            float[] samples = new float[512];
+            double elapsed = 0.0;
+            PlaybackPatternPosition Row(int target)
+            {
+                for (int i = 0; i < 300; i++)
+                {
+                    audio.Render(samples.Length, samples);
+                    elapsed += samples.Length / 48000.0;
+                    PlaybackPatternPosition? position = timeline!.GetPositionAt(
+                        TimeSpan.FromSeconds(elapsed));
+                    if (position?.PatternRow >= target)
+                        return position;
+                }
+                throw new AssertionException(
+                    $"F6 playback did not reach Pattern row {target}.");
+            }
+
+            SequenceCallsite spanA = new(source.IndexOf(first,
+                StringComparison.Ordinal), first.Length);
+            SequenceCallsite spanB = new(source.IndexOf(second,
+                StringComparison.Ordinal), second.Length);
+            PlaybackPatternPosition row0 = Row(0);
+            PlaybackPatternPosition row1 = Row(1);
+            IReadOnlyList<SequenceCallsite>? firstSnapshot =
+                row0.EditorActiveNoteCallsites;
+            Assert.Multiple(() =>
+            {
+                Assert.That(firstSnapshot, Is.EquivalentTo(new[] { spanA }));
+                Assert.That(row1.EditorActiveNoteCallsites,
+                    Is.SameAs(firstSnapshot),
+                    "an unchanged origin set must share the immutable array "
+                    + "across row and control-action entries");
+            });
+            PlaybackPatternPosition row2 = Row(2);
+            IReadOnlyList<SequenceCallsite>? secondSnapshot =
+                row2.EditorActiveNoteCallsites;
+            Assert.That(secondSnapshot,
+                Is.EquivalentTo(new[] { spanA, spanB }));
+            Assert.That(secondSnapshot, Is.Not.SameAs(firstSnapshot),
+                "membership changes require a distinct frozen origin array");
+
+            PlaybackPatternPosition row3 = Row(3);
+            Assert.That(row3.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { spanB }));
+            PlaybackPatternPosition row4 = Row(4);
+            Assert.That(row4.EditorActiveNoteCallsites ?? [], Is.Empty);
+
+            // The scratch HashSet is cleared and refilled after every PCM
+            // segment. Published arrays must not mutate when it is reused.
+            Assert.Multiple(() =>
+            {
+                Assert.That(firstSnapshot, Is.EquivalentTo(new[] { spanA }));
+                Assert.That(secondSnapshot,
+                    Is.EquivalentTo(new[] { spanA, spanB }));
+                Assert.That(row1.EditorActiveNoteCallsites,
+                    Is.SameAs(firstSnapshot));
+                Assert.That(timeline!.Entries.Count, Is.LessThan(80),
+                    "stable active sets cannot create an entry per PCM block");
+            });
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [Test]
     public void NaturalSampleEndInsideSinglePcmBufferHasExactBlueLifetimeAndPcmParity()
     {
         SongDocument song = new();
