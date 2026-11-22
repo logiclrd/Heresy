@@ -58,6 +58,14 @@ public interface IEditorPatternPlaybackTransport
 		ObjectId patternId, long editorCallsiteSession);
 }
 
+/// <summary>Optional one-way control for an editor-F6 audition whose
+/// originating editor has left the visible document view. The audio
+/// continues normally; only source-call provenance is deactivated.</summary>
+public interface IEditorCallsiteTraceLifecycleTransport
+{
+	bool DeactivateEditorCallsiteTrace(long session);
+}
+
 /// <summary>Optional committed Synth editor update. No playback session is
 /// created if no audition is already active.</summary>
 public interface ILiveSynthEditTransport
@@ -84,7 +92,8 @@ public sealed class SongPlaybackTransport
 		IPlaybackSnapshotTransport,
 		ILiveSynthEditTransport,
 		IEditorSequencePlaybackTransport,
-		IEditorPatternPlaybackTransport
+		IEditorPatternPlaybackTransport,
+		IEditorCallsiteTraceLifecycleTransport
 {
 	private readonly BackgroundPlaybackController _controller;
 	private readonly IBackgroundPlaybackSourceFactory _sourceFactory;
@@ -159,6 +168,14 @@ public sealed class SongPlaybackTransport
 			lock (_positionGate)
 				return _currentPlaybackPosition;
 		}
+	}
+
+	/// <summary>One-way, session-matched trace deactivation when
+	/// the owning Script editor is replaced. Never stops musical playback.</summary>
+	public bool DeactivateEditorCallsiteTrace(long session)
+	{
+		lock (_positionGate)
+			return _positionTimeline?.DisableEditorCallsiteTracing(session) == true;
 	}
 
 	public Task PlaySongAsync(
