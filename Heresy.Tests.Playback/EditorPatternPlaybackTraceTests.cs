@@ -42,7 +42,7 @@ public sealed class EditorPatternPlaybackTraceTests
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
         PatternPlaybackRequest request = PatternPlaybackRequest.Create(
-            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+            song, script.Id) with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
         IAudioOutputSource audio = factory.Create(request);
         try
         {
@@ -131,7 +131,7 @@ public sealed class EditorPatternPlaybackTraceTests
         PlaybackRequestAudioSourceFactory tracedFactory = new(config);
         PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
         PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
-            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+            song, script.Id) with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
         PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
             song, script.Id);
         IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
@@ -199,7 +199,7 @@ public sealed class EditorPatternPlaybackTraceTests
         PlaybackRequestAudioSourceFactory tracedFactory = new(config);
         PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
         PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
-            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+            song, script.Id) with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
         PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
             song, script.Id);
         IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
@@ -299,7 +299,7 @@ public sealed class EditorPatternPlaybackTraceTests
         PlaybackRequestAudioSourceFactory tracedFactory = new(config);
         PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
         PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
-            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+            song, script.Id) with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
         PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
             song, script.Id);
         IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
@@ -397,7 +397,7 @@ public sealed class EditorPatternPlaybackTraceTests
         PlaybackRequestAudioSourceFactory tracedFactory = new(config);
         PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
         PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
-            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+            song, script.Id) with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
         PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
             song, script.Id);
         IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
@@ -485,7 +485,7 @@ public sealed class EditorPatternPlaybackTraceTests
         PatternPlaybackRequest request = PatternPlaybackRequest.Create(
             song, script.Id, repeat: true) with
         {
-            EditorCallsiteSession = Guid.NewGuid(),
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
         };
         IAudioOutputSource audio = factory.Create(request);
         try
@@ -553,7 +553,7 @@ public sealed class EditorPatternPlaybackTraceTests
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
         PatternPlaybackRequest request = PatternPlaybackRequest.Create(
-            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+            song, script.Id) with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
         IAudioOutputSource audio = factory.Create(request);
         try
         {
@@ -610,7 +610,7 @@ public sealed class EditorPatternPlaybackTraceTests
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
         PatternPlaybackRequest request = PatternPlaybackRequest.Create(
-            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+            song, script.Id) with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
         IAudioOutputSource audio = factory.Create(request);
         try
         {
@@ -695,7 +695,7 @@ public sealed class EditorPatternPlaybackTraceTests
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
         PatternPlaybackRequest request = PatternPlaybackRequest.Create(
-            song, root.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+            song, root.Id) with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
         IAudioOutputSource audio = factory.Create(request);
         try
         {
@@ -768,7 +768,7 @@ public sealed class EditorPatternPlaybackTraceTests
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
         PatternPlaybackRequest request = PatternPlaybackRequest.Create(
-            song, root.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+            song, root.Id) with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
         IAudioOutputSource audio = factory.Create(request);
         try
         {
@@ -887,7 +887,7 @@ public sealed class EditorPatternPlaybackTraceTests
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
-        Guid session = Guid.NewGuid();
+        long session = EditorCallsiteSessionIds.Next();
         PatternPlaybackRequest request = PatternPlaybackRequest.Create(
             song, script.Id) with { EditorCallsiteSession = session };
         IAudioOutputSource audio = factory.Create(request);
@@ -963,7 +963,7 @@ public sealed class EditorPatternPlaybackTraceTests
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
-        Guid session = Guid.NewGuid();
+        long session = EditorCallsiteSessionIds.Next();
         PatternPlaybackRequest traced = PatternPlaybackRequest.Create(
             song, script.Id) with { EditorCallsiteSession = session };
         IAudioOutputSource audio = factory.Create(traced);
@@ -1035,7 +1035,7 @@ public sealed class EditorPatternPlaybackTraceTests
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
-        Guid session = Guid.NewGuid();
+        long session = EditorCallsiteSessionIds.Next();
         PatternPlaybackRequest request = PatternPlaybackRequest.Create(
             song, script.Id) with { EditorCallsiteSession = session };
         IAudioOutputSource audio = factory.Create(request);
@@ -1082,7 +1082,7 @@ public sealed class EditorPatternPlaybackTraceTests
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
-        Guid session = Guid.NewGuid();
+        long session = EditorCallsiteSessionIds.Next();
         PatternPlaybackRequest request = PatternPlaybackRequest.Create(
             song, script.Id) with { EditorCallsiteSession = session };
         IAudioOutputSource audio = factory.Create(request);
@@ -1138,8 +1138,8 @@ public sealed class EditorPatternPlaybackTraceTests
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
-        Guid firstSession = Guid.NewGuid();
-        Guid secondSession = Guid.NewGuid();
+        long firstSession = EditorCallsiteSessionIds.Next();
+        long secondSession = EditorCallsiteSessionIds.Next();
         PatternPlaybackRequest firstRequest = PatternPlaybackRequest.Create(
             song, script.Id) with { EditorCallsiteSession = firstSession };
         IAudioOutputSource first = factory.Create(firstRequest);
@@ -1251,7 +1251,7 @@ public sealed class EditorPatternPlaybackTraceTests
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
-        Guid session = Guid.NewGuid();
+        long session = EditorCallsiteSessionIds.Next();
         PatternPlaybackRequest trace = PatternPlaybackRequest.Create(
             song, script.Id) with { EditorCallsiteSession = session };
 
