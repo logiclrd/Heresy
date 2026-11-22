@@ -553,6 +553,113 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void QueuedF6RowsAndDelayedCallsKeepDueTimesAndStableOrderAcrossLoops()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long sound", "long.wav", LongMonoWave()));
+        const string note = "Note(0, 0, _O(20))";
+        const string sameRow = "ChannelFilter(0, 0)";
+        const string laterRow = "ChannelFilter(1, 0)";
+        const string delayed = "Cut(0, 0, timeOffsetSeconds: 0.18)";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Queued F6")
+        {
+            RowCount = 8, ChannelCount = 1,
+            Source = note + "; " + sameRow + "; " + laterRow
+                + "; " + delayed + ";",
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero,
+                positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id, repeat: true) with
+        {
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+        };
+        PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
+            song, script.Id, repeat: true);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline),
+                Is.True);
+            Assert.That(ordinaryFactory.TryTakePlaybackPositionTimeline(
+                ordinaryRequest, out PlaybackPositionTimeline? untraced),
+                Is.True);
+            float[] withTrace = new float[512];
+            float[] withoutTrace = new float[512];
+            for (int block = 0; block < 200; block++)
+            {
+                Array.Clear(withTrace);
+                Array.Clear(withoutTrace);
+                traced.Render(withTrace.Length, withTrace);
+                ordinary.Render(withoutTrace.Length, withoutTrace);
+                for (int frame = 0; frame < withTrace.Length; frame++)
+                    Assert.That(withTrace[frame],
+                        Is.EqualTo(withoutTrace[frame]).Within(0.000001f),
+                        $"queued F6 metadata changed PCM in block {block}, frame {frame}");
+            }
+
+            SequenceCallsite noteSpan = new(
+                script.Source.IndexOf(note, StringComparison.Ordinal), note.Length);
+            SequenceCallsite sameSpan = new(
+                script.Source.IndexOf(sameRow, StringComparison.Ordinal), sameRow.Length);
+            SequenceCallsite laterSpan = new(
+                script.Source.IndexOf(laterRow, StringComparison.Ordinal), laterRow.Length);
+            SequenceCallsite delayedSpan = new(
+                script.Source.IndexOf(delayed, StringComparison.Ordinal), delayed.Length);
+            PlaybackPatternPosition? rowZero = timeline!.GetPositionAt(TimeSpan.Zero);
+            Assert.That(rowZero?.EditorPatternCallsites,
+                Is.EquivalentTo(new[] { noteSpan, sameSpan }),
+                "equal-time row and action entries retain their stable order");
+            Assert.That(rowZero?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { noteSpan }));
+
+            PlaybackPositionTimelineEntry firstRowOne = timeline.Entries.First(e =>
+                e.Position.PatternRow == 1
+                && e.Position.EditorPatternCallsite == laterSpan);
+            PlaybackPositionTimelineEntry firstDelayed = timeline.Entries.First(e =>
+                e.Position.EditorPatternCallsite == delayedSpan);
+            Assert.Multiple(() =>
+            {
+                Assert.That(firstDelayed.Offset, Is.GreaterThan(firstRowOne.Offset),
+                    "the authored row-zero Cut must activate later than row one");
+                Assert.That(firstDelayed.Position.PatternRow, Is.EqualTo(1),
+                    "late Cut takes the PCM clock's current display row");
+                Assert.That(firstDelayed.Position.EditorPatternCallsites,
+                    Does.Contain(laterSpan).And.Contain(delayedSpan));
+                Assert.That(firstDelayed.Position.EditorActiveNoteCallsites,
+                    Is.EquivalentTo(new[] { noteSpan }),
+                    "green activation precedes the Cut's blue voice retirement");
+                Assert.That(timeline.Entries.Zip(timeline.Entries.Skip(1))
+                    .All(pair => pair.First.Offset <= pair.Second.Offset),
+                    Is.True, "pending UI events never move the PCM clock backwards");
+                Assert.That(untraced!.Entries.All(e =>
+                    e.Position.EditorPatternCallsites is null
+                    && e.Position.EditorActiveNoteCallsites is null),
+                    Is.True, "ordinary playback cannot be instrumented");
+                Assert.That(timeline.Entries.Count(e =>
+                    e.Position.PatternRow == 0
+                    && e.Position.EditorPatternCallsites is null),
+                    Is.GreaterThanOrEqualTo(2),
+                    "the pending queue must reset at the start of the next loop");
+            });
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
     public void RepeatedF6PatternWithOffsetCutsNeverPublishesTimelineBackwards()
     {
         SongDocument song = new();
