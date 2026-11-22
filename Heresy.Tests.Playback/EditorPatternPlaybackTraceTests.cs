@@ -18,6 +18,77 @@ public sealed class EditorPatternPlaybackTraceTests
 {
     [TestCase(false)]
     [TestCase(true)]
+    public void SameRowVirtualControlsRetainSpansRegardlessOfOrder(bool reverseOrder)
+    {
+        SongDocument song = new();
+        string volume0 = "VolumeVirtual(0, 7U, .25)";
+        string frame0 = "SourceFrameVirtual(0, 7U, 256)";
+        string displacement8 = "DisplacementVirtual(8, 7U, NoteDisplacementAction.Continue)";
+        string past8 = "PastVirtual(8, 7U, TrackerPastNoteAction.Cut)";
+        string source = reverseOrder
+            ? $"{frame0}; {volume0}; {past8}; {displacement8};"
+            : $"{volume0}; {frame0}; {displacement8}; {past8};";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Virtual controls")
+        {
+            RowCount = 16, ChannelCount = 1, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        Guid session = Guid.NewGuid();
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = session };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            float[] samples = new float[512];
+            audio.Render(samples.Length, samples);
+            PlaybackPatternPosition? zero = timeline!.GetPositionAt(TimeSpan.Zero);
+            Assert.That(zero, Is.Not.Null);
+            Assert.That(zero!.EditorCallsiteSession, Is.EqualTo(session));
+            Assert.That(zero.EditorPatternCallsites, Is.EquivalentTo(new[]
+            {
+                new SequenceCallsite(source.IndexOf(volume0, StringComparison.Ordinal),
+                    volume0.Length),
+                new SequenceCallsite(source.IndexOf(frame0, StringComparison.Ordinal),
+                    frame0.Length),
+            }));
+
+            PlaybackPatternPosition? after = null;
+            for (int i = 0; i < 600; i++)
+            {
+                audio.Render(samples.Length, samples);
+                after = timeline.GetPositionAt(TimeSpan.FromSeconds(
+                    (i + 2) * samples.Length / 48000.0));
+                if (after?.PatternRow >= 9)
+                    break;
+            }
+            Assert.That(after?.PatternRow, Is.GreaterThanOrEqualTo(9));
+            PlaybackPatternPosition? rowEight = timeline.Entries
+                .Where(x => x.Position.PatternRow == 8
+                    && x.Position.EditorPatternCallsites is { Count: 2 })
+                .Select(x => x.Position).LastOrDefault();
+            Assert.That(rowEight, Is.Not.Null);
+            Assert.That(rowEight!.EditorPatternCallsites, Is.EquivalentTo(new[]
+            {
+                new SequenceCallsite(source.IndexOf(displacement8, StringComparison.Ordinal),
+                    displacement8.Length),
+                new SequenceCallsite(source.IndexOf(past8, StringComparison.Ordinal),
+                    past8.Length),
+            }));
+            Assert.That(after!.EditorPatternCallsites, Is.Null,
+                "later row boundaries clear both virtual-control highlights");
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
     public void SameRowPatternActionsRetainBothSpansRegardlessOfSourceOrder(bool filterFirst)
     {
         SongDocument song = new();
