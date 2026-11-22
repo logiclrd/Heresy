@@ -239,6 +239,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 
 	public ObjectId? ScriptPatternId => _pattern?.Id;
 	public ObjectId? ScriptSequenceId => _sequence?.Id;
+	public long? EditorCallsiteTraceSession => _editorTraceSession;
 
 	/// <summary>Only an editor-F6 request can enable this visual trace.
 	/// The source snapshot is captured separately from the mutable editor
