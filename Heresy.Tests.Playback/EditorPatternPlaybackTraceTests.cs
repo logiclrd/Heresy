@@ -96,6 +96,68 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void VirtualNnaContinueRetainsOriginalNoteCallsiteUntilPastCut()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long sustained", "sustained.wav", LongMonoWave()));
+        const string first = "NoteVirtual(0, 7U, _O(20))";
+        const string replacement = "NoteVirtual(4, 7U, _O(20))";
+        string source = first + "; " +
+            "DisplacementVirtual(2, 7U, NoteDisplacementAction.Continue); " +
+            replacement + "; CutVirtual(8, 7U); " +
+            "PastVirtual(12, 7U, TrackerPastNoteAction.Cut);";
+        ScriptPatternDefinition script = new((ObjectId)5U, "NNA origin")
+        {
+            RowCount = 16, ChannelCount = 1, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            SequenceCallsite firstSpan = new(source.IndexOf(first,
+                StringComparison.Ordinal), first.Length);
+            SequenceCallsite replacementSpan = new(source.IndexOf(replacement,
+                StringComparison.Ordinal), replacement.Length);
+            float[] samples = new float[512];
+            double seconds = 0;
+            PlaybackPatternPosition? AtRow(int target)
+            {
+                for (int i = 0; i < 700; i++)
+                {
+                    audio.Render(samples.Length, samples);
+                    seconds += samples.Length / 48000.0;
+                    var position = timeline!.GetPositionAt(TimeSpan.FromSeconds(seconds));
+                    if (position?.PatternRow >= target)
+                        return position;
+                }
+                Assert.Fail($"Did not reach row {target}");
+                return null;
+            }
+            Assert.That(AtRow(1)?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan }));
+            Assert.That(AtRow(5)?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan, replacementSpan }),
+                "a displaced Continue NNA voice keeps its original source span");
+            Assert.That(AtRow(9)?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan }),
+                "CutVirtual only retires the new current voice");
+            Assert.That(AtRow(13)?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "PastVirtual Cut finally retires the displaced NNA");
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [Test]
     public void OrdinaryPlaybackHasNoSustainedNoteTraceMetadata()
     {
         SongDocument song = new();
