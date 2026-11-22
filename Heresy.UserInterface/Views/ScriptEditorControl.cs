@@ -258,22 +258,29 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 
 	public void SetPlaybackPosition(PlaybackPatternPosition? position)
 	{
-		Heresy.Core.Sequences.SequenceCallsite? span = null;
+		IReadOnlyList<Heresy.Core.Sequences.SequenceCallsite> spans = [];
 		if (_sequence is not null
 			&& _editorTraceSession is Guid session
 			&& position?.EditorCallsiteSession == session
 			&& position.SequenceId == _sequence.Id
 			&& string.Equals(_editorTraceSource, _source.Text,
 					StringComparison.Ordinal))
-			span = position.EditorPlayCallsite;
+		{
+			if (position.EditorPlayCallsite is { } play)
+				spans = [play];
+		}
 		else if (_pattern is not null
 			&& _editorTraceSession is Guid patternSession
 			&& position?.EditorCallsiteSession == patternSession
 			&& position.PatternId == _pattern.Id
 			&& string.Equals(_editorTraceSource, _source.Text,
 					StringComparison.Ordinal))
-			span = position.EditorPatternCallsite;
-		_playbackRenderer.SetSpan(span, _source.Document.TextLength);
+		{
+			spans = position.EditorPatternCallsites
+				?? (position.EditorPatternCallsite is { } action
+					? [action] : []);
+		}
+		_playbackRenderer.SetSpans(spans, _source.Document.TextLength);
 		_source.TextArea.TextView.Redraw();
 	}
 

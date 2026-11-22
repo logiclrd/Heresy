@@ -51,6 +51,11 @@ public sealed record PlaybackPatternPosition
 	public Guid? EditorCallsiteSession { get; init; }
 	public SequenceCallsite? EditorPlayCallsite { get; init; }
 	public SequenceCallsite? EditorPatternCallsite { get; init; }
+
+	/// <summary>All distinct authored actions activated in the current
+	/// Pattern row. Each timeline entry owns an immutable snapshot; this
+	/// transient editor metadata is never stored in the song.</summary>
+	public IReadOnlyList<SequenceCallsite>? EditorPatternCallsites { get; init; }
 }
 
 public sealed record PlaybackPositionTimelineEntry(

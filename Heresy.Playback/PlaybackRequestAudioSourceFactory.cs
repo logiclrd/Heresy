@@ -162,23 +162,41 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			else if (request is PatternPlaybackRequest
 				{ EditorCallsiteSession: Guid patternSession } patternTrace)
 			{
-				// A row boundary clears the prior action without implying
-				// that its note or voice has finished sounding.
+				// Preserve all actions, not only the last emission on a row.
+				// RowBegan is called again when a repeating Pattern loops;
+				// no previous-cycle callsite must leak into the next cycle.
+				List<SequenceCallsite> activeActions = [];
+				int? activeRow = null;
 				plan.Timeline.RowBegan += (id, row, sequence, order, at) =>
+				{
+					if (id != patternTrace.PatternId)
+						return;
+					activeRow = row;
+					activeActions.Clear();
 					positions.Append(new PlaybackPositionTimelineEntry(at,
 						new PlaybackPatternPosition(id, row, sequence, order)
 						{
 							EditorCallsiteSession = patternSession,
 						}));
+				};
 				plan.Timeline.EditorPatternActionBegan += (id, row, at, callsite) =>
 				{
 					if (id != patternTrace.PatternId)
 						return;
+					// Fixed-wall-offset events can arrive after their authored
+					// row. Follow the *currently sounding* root row and retain
+					// every distinct action whose deadline has arrived so far.
+					int displayRow = activeRow ?? row;
+					if (activeRow is null)
+						activeRow = displayRow;
+					if (!activeActions.Contains(callsite))
+						activeActions.Add(callsite);
 					positions.Append(new PlaybackPositionTimelineEntry(at,
-						new PlaybackPatternPosition(id, row, null, null)
+						new PlaybackPatternPosition(id, displayRow, null, null)
 						{
 							EditorCallsiteSession = patternSession,
 							EditorPatternCallsite = callsite,
+							EditorPatternCallsites = activeActions.ToArray(),
 						}));
 				};
 			}
