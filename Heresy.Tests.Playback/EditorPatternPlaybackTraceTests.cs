@@ -186,6 +186,12 @@ public sealed class EditorPatternPlaybackTraceTests
         };
         leaf.Grid.GetOrCreateCell(2, 0).Note =
             new StartPatternNote((ObjectId)20U);
+        leaf.Grid.GetOrCreateCell(3, 0).Note = new PatternNoteCut();
+        // The gap from row 3 through row 6 is silent; the outer
+        // flattened invocation is still an active logical source note.
+        leaf.Grid.GetOrCreateCell(6, 0).Note =
+            new StartPatternNote((ObjectId)20U);
+        leaf.Grid.GetOrCreateCell(7, 0).Note = new PatternNoteCut();
         song.Add(leaf);
         DataPatternDefinition middle = new((ObjectId)3U, "Middle")
         {
@@ -236,11 +242,23 @@ public sealed class EditorPatternPlaybackTraceTests
                 return null;
             }
 
-            Assert.That(AtRow(1)?.EditorActiveNoteCallsites ?? [],
-                Is.Empty, "a flattened instigator with no child voice is not blue");
+            Assert.That(AtRow(1)?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan, secondSpan }),
+                "flattened instigators are active before their first child voice");
             Assert.That(AtRow(3)?.EditorActiveNoteCallsites,
                 Is.EquivalentTo(new[] { firstSpan, secondSpan }),
                 "nested descendant voices carry their distinct top-level origins");
+
+            PlaybackPatternPosition? silentGap = AtRow(5);
+            Assert.That(silentGap?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan, secondSpan }),
+                "both logical notes stay blue even with no sounding child voices");
+            Assert.That(samples.All(value => Math.Abs(value) < 0.00001f),
+                Is.True, "the gap is genuinely silent, not a sustained child voice");
+
+            Assert.That(AtRow(7)?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan, secondSpan }),
+                "repeated child notes do not affect the parent lifetime");
             Assert.That(AtRow(9)?.EditorActiveNoteCallsites,
                 Is.EquivalentTo(new[] { secondSpan }),
                 "Cut only retires the first nested source's descendants");

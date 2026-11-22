@@ -471,9 +471,11 @@ public sealed class PlaybackSession
 
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
 
-	/// <summary>Editor-only snapshot of note origins of *actual* surviving
-	/// renderer voices, including displaced NNA voices. Caller must be the
-	/// PCM producer. Ordinary playback never requests this snapshot.</summary>
+	/// <summary>Editor-only snapshot of the source notes whose logical
+	/// invocations are still producing, plus origins of surviving rendered
+	/// voices (including displaced NNA or release). A flattened source is
+	/// playing across silent gaps in its child pattern, even if no descendant
+	/// voice currently exists. Caller must be the PCM producer.</summary>
 	public SequenceCallsite[] CollectActiveEditorNoteCallsites()
 	{
 		HashSet<SequenceCallsite>? spans = null;
@@ -491,6 +493,15 @@ public sealed class PlaybackSession
 				if (ancestor.EditorOriginCallsite is { } source)
 					(spans ??= []).Add(source);
 		}
+		// Non-mixdown Pattern/Sequence starts have NO parent PlaybackVoice.
+		// Their active producer scopes are live logical notes even during
+		// silence between descendant notes. The producer unregisters each
+		// controller on natural completion, Cut, or source termination;
+		// retired controllers can still be referenced by sounding children,
+		// which Add() handles independently below.
+		foreach (FlattenedSourceVolume source in _sourceVolumes.Values)
+			if (source.EditorOriginCallsite is { } activeOrigin)
+				(spans ??= []).Add(activeOrigin);
 		foreach (PlaybackChannelState channel in _channels.Values)
 			Add(channel.CurrentVoice);
 		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
