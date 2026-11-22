@@ -243,15 +243,16 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 					"Recursive timeline returned a null step.");
 
 			// Script-editor F6 row positions must not accumulate for every
-			// silent row inside a very large output buffer. Keep the one
-			// generated step for the next pass, then render up to the first
-			// queued future position. No event is lost or played early.
+			// silent row inside a very large output buffer. Defer a generated
+			// step ONLY if its own timestamp is at/after the next editor
+			// presentation boundary. This applies to Flow/Cooperate as well as
+			// Emit: deferring an earlier structural step could prevent an
+			// audio event it enables from being discovered before rendering.
 			if (_editorNextPositionBoundaryFrame?.Invoke() is long positionFrame
 				&& positionFrame > _session.NextFrame
 				&& positionFrame < exclusiveFrame
-				&& (step is not IncrementalPatternTimelineStep.Emit candidate
-					|| FrameTime.Ceiling(candidate.Time, Format.SampleRate)
-						>= positionFrame))
+				&& FrameTime.Ceiling(step.Time, Format.SampleRate)
+					>= positionFrame)
 			{
 				_deferredStep = step;
 				return;
