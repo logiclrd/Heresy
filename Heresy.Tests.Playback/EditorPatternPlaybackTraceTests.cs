@@ -84,6 +84,17 @@ public sealed class EditorPatternPlaybackTraceTests
             Assert.That(rowTwo?.EditorPatternCallsites, Is.Null,
                 "scheduled-action highlights still clear at the next row");
 
+            // Every row-boundary entry must inherit the last known voice
+            // snapshot, not momentarily erase it until the next PCM block.
+            var stableRowEntries = timeline!.Entries.Where(x =>
+                x.Position.PatternRow is >= 1 and <= 3
+                && x.Position.EditorPatternCallsites is null).ToArray();
+            Assert.That(stableRowEntries, Is.Not.Empty);
+            foreach (var entry in stableRowEntries)
+                Assert.That(entry.Position.EditorActiveNoteCallsites,
+                    Is.EquivalentTo(new[] { spanA, spanB }),
+                    $"row {entry.Position.PatternRow} must not flicker");
+
             PlaybackPatternPosition? rowFive = SeekRow(5);
             Assert.That(rowFive?.EditorActiveNoteCallsites,
                 Is.EquivalentTo(new[] { spanB }),
@@ -91,6 +102,8 @@ public sealed class EditorPatternPlaybackTraceTests
             PlaybackPatternPosition? rowNine = SeekRow(9);
             Assert.That(rowNine?.EditorActiveNoteCallsites ?? [],
                 Is.Empty, "both voiced origins must disappear after their Cuts");
+            Assert.That(timeline.Entries.Count, Is.LessThan(80),
+                "long notes must not append a duplicate position every PCM block");
         }
         finally { (audio as IDisposable)?.Dispose(); }
     }

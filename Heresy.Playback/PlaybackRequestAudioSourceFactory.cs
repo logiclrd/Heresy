@@ -144,6 +144,10 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		}
 		PlaybackPositionTimeline? positions = request is AdHocPlaybackRequest
 			? null : new PlaybackPositionTimeline();
+		// Only editor-traced Script Patterns install this callback. Row
+		// boundaries and scheduled actions must inherit the latest *actual*
+		// voice snapshot rather than temporarily clearing the blue overlay.
+		Action<SequenceCallsite[], TimeSpan>? updateActiveEditorNotes = null;
 		if (positions is not null)
 		{
 			if (request is SequencePlaybackRequest
@@ -167,7 +171,21 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				// RowBegan is called again when a repeating Pattern loops;
 				// no previous-cycle callsite must leak into the next cycle.
 				List<SequenceCallsite> activeActions = [];
+				SequenceCallsite[] activeNotes = [];
 				int? activeRow = null;
+				updateActiveEditorNotes = (next, at) =>
+				{
+					// Publishing every audio buffer was not only wasteful: it
+					// left row/action timeline entries with absent note spans,
+					// making the overlay flicker as the poll crossed each row.
+					if (activeNotes.SequenceEqual(next))
+						return;
+					activeNotes = next;
+					PlaybackPatternPosition? current = positions.GetPositionAt(at);
+					if (current?.PatternId == patternTrace.PatternId)
+						positions.Append(new PlaybackPositionTimelineEntry(at,
+							current with { EditorActiveNoteCallsites = activeNotes }));
+				};
 				plan.Timeline.RowBegan += (id, row, sequence, order, at) =>
 				{
 					if (id != patternTrace.PatternId)
@@ -178,6 +196,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 						new PlaybackPatternPosition(id, row, sequence, order)
 						{
 							EditorCallsiteSession = patternSession,
+							EditorActiveNoteCallsites = activeNotes,
 						}));
 				};
 				plan.Timeline.EditorPatternActionBegan += (id, row, at, callsite) =>
@@ -198,6 +217,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 							EditorCallsiteSession = patternSession,
 							EditorPatternCallsite = callsite,
 							EditorPatternCallsites = activeActions.ToArray(),
+							EditorActiveNoteCallsites = activeNotes,
 						}));
 				};
 			}
@@ -208,10 +228,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 						new PlaybackPatternPosition(id, row, sequence, order)));
 			}
 		}
-		ObjectId? editorActivePatternId = request is PatternPlaybackRequest
-			{ EditorCallsiteSession: Guid } traceRequest
-			? traceRequest.PatternId : null;
-		LiveRecursiveSource live = new(plan, positions, editorActivePatternId);
+		LiveRecursiveSource live = new(plan, positions, updateActiveEditorNotes);
 		lock (_gate)
 		{
 			_active.Clear();
@@ -264,7 +281,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 	private sealed class LiveRecursiveSource(
 		PreparedIncrementalPlaybackPlan plan,
 		PlaybackPositionTimeline? positions,
-		ObjectId? editorActivePatternId) : ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput,
+		Action<SequenceCallsite[], TimeSpan>? updateActiveEditorNotes) : ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput,
 		IFirPreparationAudioSource, IDisposable
 	{
 		// Publication and note messages share FIFO ordering on the producer.
@@ -275,7 +292,6 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		private readonly ConcurrentQueue<LiveAction> _commands = new();
 		private readonly ConcurrentQueue<SequencingDiagnostic> _warnings = new();
 		private int _olderAudioVoiceCount;
-		private bool _hadActiveEditorNotes;
 		public int OlderAudioVoiceCount => Volatile.Read(ref _olderAudioVoiceCount);
 		public SequencingDiagnostic[] DrainRuntimeDiagnostics()
 		{
@@ -326,23 +342,16 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				}
 			}
 			plan.Source.Render(frameCount, destination);
-			if (editorActivePatternId is ObjectId traced && positions is not null)
+			if (updateActiveEditorNotes is not null)
 			{
-				// Snapshot real renderer voices after each PCM block. These
-				// snapshots share the already bounded transport timeline and
-				// never expose mutable voice objects to the UI thread.
+				// Only changed voice sets produce entries. The callback updates
+				// producer-owned state shared by row/action callbacks, so they
+				// cannot briefly erase the sustained blue source highlight.
 				SequenceCallsite[] active = plan.Source.Session
 					.CollectActiveEditorNoteCallsites();
-				if (active.Length != 0 || _hadActiveEditorNotes)
-				{
-					TimeSpan at = TimeSpan.FromSeconds(
-						plan.Source.Session.NextFrame / (double)Format.SampleRate);
-					PlaybackPatternPosition? current = positions.GetPositionAt(at);
-					if (current?.PatternId == traced)
-						positions.Append(new PlaybackPositionTimelineEntry(at,
-							current with { EditorActiveNoteCallsites = active }));
-				}
-				_hadActiveEditorNotes = active.Length != 0;
+				TimeSpan at = TimeSpan.FromSeconds(
+					plan.Source.Session.NextFrame / (double)Format.SampleRate);
+				updateActiveEditorNotes(active, at);
 			}
 			// The note list is owned by this producer. Publish only the
 			// scalar aggregate, never expose mutable PCM-owned voice objects.
