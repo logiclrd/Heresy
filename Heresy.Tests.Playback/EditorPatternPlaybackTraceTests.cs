@@ -565,8 +565,8 @@ public sealed class EditorPatternPlaybackTraceTests
         ScriptPatternDefinition script = new((ObjectId)5U, "Queued F6")
         {
             RowCount = 8, ChannelCount = 1,
-            Source = note + "; " + sameRow + "; " + laterRow
-                + "; " + delayed + ";",
+            Source = note + "; " + sameRow + "; " + delayed
+                + "; " + laterRow + ";",
         };
         song.Add(script);
         RenderConfiguration config = new(48000, new[]
