@@ -4,6 +4,7 @@ using System.Text;
 using System.Linq;
 using System.Numerics;
 
+using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Samples;
@@ -251,6 +252,98 @@ public sealed class EditorPatternPlaybackTraceTests
                 Assert.That(withTrace[frame], Is.EqualTo(withoutTrace[frame])
                     .Within(0.000001f),
                     $"F6 tracing changed combined PCM at frame {frame}");
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
+    public void FadingDisplacedInstrumentVoiceKeepsOriginUntilExactFadeEnd()
+    {
+        SongDocument song = new();
+        // A long Sample cannot naturally finish during this buffer.
+        // The Instrument's four-millisecond NNA fade therefore determines
+        // the first authored Note's actual lifetime after displacement.
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long source", "long.wav", LongMonoWave()));
+        InstrumentDefinition instrument = new((ObjectId)21U, "Four-ms NNA fade")
+        {
+            NnaOverride = InstrumentNnaOverride.Fade,
+            NnaFadeDuration = TimeSpan.FromMilliseconds(4),
+        };
+        instrument.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = (ObjectId)20U,
+        });
+        instrument.ToneTable.Add(0);
+        song.Add(instrument);
+
+        const string first = "Note(0, 0, _O(21))";
+        const string second =
+            "Note(0, 0, _O(21), timeOffsetSeconds: 0.002)";
+        const string cut = "Cut(0, 0, timeOffsetSeconds: 0.003)";
+        string source = first + "; " + second + "; " + cut + ";";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Fading NNA")
+        {
+            RowCount = 16, ChannelCount = 1, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+        PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
+            song, script.Id);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline), Is.True);
+            float[] withTrace = new float[512];
+            float[] withoutTrace = new float[512];
+            traced.Render(withTrace.Length, withTrace);
+            ordinary.Render(withoutTrace.Length, withoutTrace);
+
+            SequenceCallsite firstSpan = new(0, first.Length);
+            SequenceCallsite secondSpan = new(first.Length + 2, second.Length);
+            Assert.That(timeline!.GetPositionAt(TimeSpan.FromMilliseconds(1))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan }),
+                "the first Note owns the current voice before displacement");
+            Assert.That(timeline.GetPositionAt(TimeSpan.FromMilliseconds(2.5))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan, secondSpan }),
+                "the fading NNA tail and replacement have distinct origins");
+            Assert.That(timeline.GetPositionAt(TimeSpan.FromMilliseconds(4))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan }),
+                "Cut at 3 ms removes only the current replacement voice");
+            Assert.That(timeline.GetPositionAt(TimeSpan.FromMilliseconds(7))
+                    ?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "the NNA origin clears after its 6 ms fade end");
+
+            Assert.That(timeline.Entries.Any(e =>
+                e.Offset >= TimeSpan.FromMilliseconds(5.5)
+                && e.Offset <= TimeSpan.FromMilliseconds(6.5)
+                && e.Position.EditorActiveNoteCallsites is { Count: 0 }),
+                Is.True,
+                "the trace must publish NNA fade completion inside the buffer");
+            Assert.That(timeline.Entries.Count, Is.LessThan(25),
+                "a finite fade must not create redundant per-buffer entries");
+            Assert.That(withTrace.Any(x => Math.Abs(x) > 0.00001f),
+                Is.True, "the old and new Notes must actually sound");
+            for (int frame = 0; frame < withTrace.Length; frame++)
+                Assert.That(withTrace[frame], Is.EqualTo(withoutTrace[frame])
+                    .Within(0.000001f),
+                    $"F6 tracing changed NNA fade PCM at frame {frame}");
         }
         finally
         {
