@@ -32,35 +32,72 @@ internal sealed class ScriptSequencePlayCallsiteRenderer : IBackgroundRenderer
     public KnownLayer Layer => KnownLayer.Background;
 
     public void SetSpan(SequenceCallsite? span, int documentLength)
-        => SetSpans(span is SequenceCallsite valid
-            ? [valid] : [], documentLength);
-
-    public void SetSpans(IReadOnlyList<SequenceCallsite>? spans, int documentLength)
     {
-        List<SequenceCallsite> accepted = [];
-        if (spans is not null)
-            foreach (SequenceCallsite span in spans)
-                if (span.Start >= 0 && span.Length > 0
-                    && span.Start <= documentLength
-                    && span.Length <= documentLength - span.Start
-                    && !accepted.Contains(span))
-                    accepted.Add(span);
-        _spans = accepted.ToArray();
-        _span = accepted.Count != 0 ? accepted[^1] : null;
+        SetSpans(span is SequenceCallsite valid
+            ? [valid] : [], documentLength);
     }
 
-    public void SetActiveNoteSpans(IReadOnlyList<SequenceCallsite>? spans,
+    /// <summary>Returns true only when the displayed green spans change.
+    /// The common per-position case reuses the prior immutable array
+    /// without list/array allocation or a redundant editor redraw.</summary>
+    public bool SetSpans(IReadOnlyList<SequenceCallsite>? spans,
         int documentLength)
     {
+        if (MatchesDisplayed(spans, _spans, documentLength))
+            return false;
+        SequenceCallsite[] accepted = Normalize(spans, documentLength);
+        if (MatchesDisplayed(accepted, _spans, documentLength))
+            return false;
+        _spans = accepted;
+        _span = accepted.Length != 0 ? accepted[^1] : null;
+        return true;
+    }
+
+    /// <summary>Independent blue note-lifetime overlay: a changed blue
+    /// set must redraw even if green activations are unchanged.</summary>
+    public bool SetActiveNoteSpans(IReadOnlyList<SequenceCallsite>? spans,
+        int documentLength)
+    {
+        if (MatchesDisplayed(spans, _activeNoteSpans, documentLength))
+            return false;
+        SequenceCallsite[] accepted = Normalize(spans, documentLength);
+        if (MatchesDisplayed(accepted, _activeNoteSpans, documentLength))
+            return false;
+        _activeNoteSpans = accepted;
+        return true;
+    }
+
+    private static bool MatchesDisplayed(IReadOnlyList<SequenceCallsite>? incoming,
+        IReadOnlyList<SequenceCallsite> displayed, int documentLength)
+    {
+        if (incoming is null || incoming.Count == 0)
+            return displayed.Count == 0;
+        if (incoming.Count != displayed.Count)
+            return false;
+        for (int i = 0; i < incoming.Count; i++)
+        {
+            SequenceCallsite span = incoming[i];
+            if (span != displayed[i] || span.Start < 0
+                || span.Length <= 0 || span.Start > documentLength
+                || span.Length > documentLength - span.Start)
+                return false;
+        }
+        return true;
+    }
+
+    private static SequenceCallsite[] Normalize(
+        IReadOnlyList<SequenceCallsite>? spans, int documentLength)
+    {
+        if (spans is null || spans.Count == 0)
+            return [];
         List<SequenceCallsite> accepted = [];
-        if (spans is not null)
-            foreach (SequenceCallsite span in spans)
-                if (span.Start >= 0 && span.Length > 0
-                    && span.Start <= documentLength
-                    && span.Length <= documentLength - span.Start
-                    && !accepted.Contains(span))
-                    accepted.Add(span);
-        _activeNoteSpans = accepted.ToArray();
+        foreach (SequenceCallsite span in spans)
+            if (span.Start >= 0 && span.Length > 0
+                && span.Start <= documentLength
+                && span.Length <= documentLength - span.Start
+                && !accepted.Contains(span))
+                accepted.Add(span);
+        return accepted.ToArray();
     }
 
     public void Draw(TextView textView, DrawingContext drawingContext)
