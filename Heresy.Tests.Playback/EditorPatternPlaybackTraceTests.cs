@@ -632,8 +632,9 @@ public sealed class EditorPatternPlaybackTraceTests
             Assert.Multiple(() =>
             {
                 Assert.That(audible, Is.True);
-                Assert.That(noteActivations, Has.Length.EqualTo(2),
-                    "each execution of one authored site retains its own due activation");
+                Assert.That(noteActivations.Length, Is.GreaterThanOrEqualTo(2),
+                    "both authored Note executions must produce due activation entries; "
+                    + "one helper may expand into multiple scheduled musical events");
                 Assert.That(noteActivations.All(e =>
                     e.Position.EditorPatternCallsites is { Count: 1 }
                     && e.Position.EditorPatternCallsites[0] == noteSpan),
