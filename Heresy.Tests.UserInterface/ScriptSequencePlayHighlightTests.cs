@@ -150,6 +150,137 @@ public sealed class ScriptSequencePlayHighlightTests
     }
 
     [AvaloniaTest]
+    public void SameSourceNoteInvocationsPaintOneRegionUntilLastLiveVoiceEnds()
+    {
+        DocumentWorkspace workspace = new();
+        var pattern = ScriptDocumentEditor.CreateScriptPattern(
+            workspace, "Repeated source invocation");
+        const string note = "Note(0, channel, _O(20))";
+        pattern.Source = "for (int channel = 0; channel < 2; channel++) "
+            + note + "; Cut(2, 0); Cut(4, 1);";
+        ScriptEditorControl editor = new(
+            workspace, pattern, () => { }, _ => { });
+        TextEditor source = Field<TextEditor>(editor, "_source");
+        long session = EditorCallsiteSessionIds.Next();
+        editor.BeginEditorPatternTrace(session);
+        SequenceCallsite callsite = new(
+            pattern.Source.IndexOf(note, StringComparison.Ordinal), note.Length);
+
+        // The producer has two distinct live voices that originated at
+        // this same authored statement. The UI presents the union of
+        // source spans instead of inventing two overlapping rectangles.
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(
+            pattern.Id, 0, null, null)
+        {
+            EditorCallsiteSession = session,
+            EditorPatternCallsite = callsite,
+            EditorPatternCallsites = [callsite],
+            EditorActiveNoteCallsites = [callsite],
+        });
+        IReadOnlyList<SequenceCallsite> initialGreen = ShownCallsites(editor);
+        IReadOnlyList<SequenceCallsite> initialBlue =
+            ShownActiveNoteCallsites(editor);
+        Assert.Multiple(() =>
+        {
+            Assert.That(initialGreen, Is.EqualTo(new[] { callsite }));
+            Assert.That(initialBlue, Is.EqualTo(new[] { callsite }));
+            Assert.That(source.Text, Is.EqualTo(pattern.Source));
+        });
+
+        // Multiple activations with equivalent authored offsets do not
+        // create duplicated green/blue regions, even if a caller passes
+        // noncanonical repeated source spans.
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(
+            pattern.Id, 0, null, null)
+        {
+            EditorCallsiteSession = session,
+            EditorPatternCallsite = callsite,
+            EditorPatternCallsites = [callsite, callsite],
+            EditorActiveNoteCallsites = [callsite, callsite],
+        });
+        Assert.Multiple(() =>
+        {
+            Assert.That(ShownCallsites(editor), Is.SameAs(initialGreen));
+            Assert.That(ShownActiveNoteCallsites(editor),
+                Is.SameAs(initialBlue));
+        });
+
+        // One voice was cut; the other still owns this exact same span.
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(
+            pattern.Id, 3, null, null)
+        {
+            EditorCallsiteSession = session,
+            EditorActiveNoteCallsites = [callsite],
+        });
+        Assert.Multiple(() =>
+        {
+            Assert.That(ShownCallsites(editor), Is.Empty);
+            Assert.That(ShownActiveNoteCallsites(editor),
+                Is.SameAs(initialBlue),
+                "the shared blue region survives the first voice's Cut");
+        });
+
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(
+            pattern.Id, 5, null, null)
+        {
+            EditorCallsiteSession = session,
+            EditorActiveNoteCallsites = [],
+        });
+        Assert.That(ShownActiveNoteCallsites(editor), Is.Empty,
+            "blue disappears after the last live voice has ended");
+        Assert.That(source.Text, Is.EqualTo(pattern.Source));
+    }
+
+    [AvaloniaTest]
+    public void DistinctPlaySitesRemainDistinctDespiteTargetingSamePattern()
+    {
+        DocumentWorkspace workspace = new();
+        var sequence = ScriptDocumentEditor.CreateScriptSequence(
+            workspace, "Shared target");
+        const string play = "Play(_O(17))";
+        sequence.Source = "if (sequenceIndex == 0) return " + play
+            + "; if (sequenceIndex == 1) return " + play + "; return default;";
+        ScriptEditorControl editor = new(
+            workspace, sequence, () => { }, _ => { });
+        TextEditor source = Field<TextEditor>(editor, "_source");
+        int first = sequence.Source.IndexOf(play, StringComparison.Ordinal);
+        int second = sequence.Source.IndexOf(
+            play, first + play.Length, StringComparison.Ordinal);
+        SequenceCallsite firstSpan = new(first, play.Length);
+        SequenceCallsite secondSpan = new(second, play.Length);
+        long session = EditorCallsiteSessionIds.Next();
+        editor.BeginEditorSequenceTrace(session);
+
+        PlaybackPatternPosition firstOrder = new(
+            (ObjectId)17U, 0, sequence.Id, 0)
+        {
+            EditorCallsiteSession = session,
+            EditorPlayCallsite = firstSpan,
+        };
+        PlaybackPatternPosition secondOrder = new(
+            (ObjectId)17U, 0, sequence.Id, 1)
+        {
+            EditorCallsiteSession = session,
+            EditorPlayCallsite = secondSpan,
+        };
+        editor.SetPlaybackPosition(firstOrder);
+        Assert.That(ShownCallsite(editor), Is.EqualTo(firstSpan));
+        editor.SetPlaybackPosition(secondOrder);
+        Assert.That(ShownCallsite(editor), Is.EqualTo(secondSpan),
+            "Pattern identity does not determine the painted Play span");
+
+        // A second invocation of the first authored site has no new
+        // visual identity; it still paints the original first site.
+        editor.SetPlaybackPosition(firstOrder with
+        {
+            SequenceEntryIndex = 2,
+        });
+        Assert.That(ShownCallsite(editor), Is.EqualTo(firstSpan));
+        Assert.That(source.Text, Is.EqualTo(sequence.Source),
+            "only the overlay changes, never the user's script text");
+    }
+
+    [AvaloniaTest]
     public void MarkerTracksOnlyMatchingF6SessionAndUnchangedAuthorSource()
     {
         DocumentWorkspace workspace = new();
