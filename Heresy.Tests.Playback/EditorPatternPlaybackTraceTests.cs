@@ -109,6 +109,83 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void RepeatedF6PatternWithOffsetCutsNeverPublishesTimelineBackwards()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)2U,
+            "Test sample", "test.wav", LongMonoWave()));
+        // Actual user script that previously crashed during its second
+        // F6 loop: a delayed Cut can overlap cursor lookahead for later
+        // rows while shorter Note events still belong to an earlier time.
+        const string source = """
+            Note(0, 0, _O(2));
+            Note(2, 1, _O(2));
+
+            Cut(3, 0, timeOffsetSeconds: 0.06);
+            Cut(5, 1, timeOffsetSeconds: 0.06);
+            """;
+        ScriptPatternDefinition script = new((ObjectId)5U, "Loop repro")
+        {
+            RowCount = 8, ChannelCount = 2, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, script.Id, repeat: true) with
+        {
+            EditorCallsiteSession = Guid.NewGuid(),
+        };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            float[] buffer = new float[512];
+            int loops = 0;
+            int? previousRow = null;
+            double seconds = 0;
+            for (int i = 0; i < 1500 && loops < 3; i++)
+            {
+                // Must not throw "Streamed Pattern rows must be
+                // chronological" on the second or a later loop.
+                audio.Render(buffer.Length, buffer);
+                seconds += buffer.Length / 48000.0;
+                PlaybackPatternPosition? position = timeline!.GetPositionAt(
+                    TimeSpan.FromSeconds(seconds));
+                if (position?.PatternRow is int row)
+                {
+                    if (previousRow is int prev && row < prev)
+                        loops++;
+                    previousRow = row;
+                }
+            }
+            Assert.That(loops, Is.GreaterThanOrEqualTo(2),
+                "exercise multiple full root Pattern F6 repeats");
+            Assert.That(timeline!.Entries.Zip(timeline.Entries.Skip(1))
+                .All(pair => pair.First.Offset <= pair.Second.Offset),
+                Is.True, "row, action, and active-note entries remain chronological");
+
+            // The 0.06-second delayed cuts must remain distinct and in
+            // their own musical order, even after several loops.
+            SequenceCallsite cut0 = new(source.IndexOf("Cut(3,",
+                StringComparison.Ordinal), "Cut(3, 0, timeOffsetSeconds: 0.06)".Length);
+            SequenceCallsite cut1 = new(source.IndexOf("Cut(5,",
+                StringComparison.Ordinal), "Cut(5, 1, timeOffsetSeconds: 0.06)".Length);
+            Assert.That(timeline.Entries.Any(e =>
+                e.Position.EditorPatternCallsites?.Contains(cut0) == true),
+                Is.True);
+            Assert.That(timeline.Entries.Any(e =>
+                e.Position.EditorPatternCallsites?.Contains(cut1) == true),
+                Is.True);
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [Test]
     public void ShortNoteInsideOnePcmBufferHasDistinctSourceLifetimeBoundaries()
     {
         SongDocument song = new();

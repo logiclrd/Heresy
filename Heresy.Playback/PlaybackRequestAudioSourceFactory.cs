@@ -173,8 +173,31 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				List<SequenceCallsite> activeActions = [];
 				SequenceCallsite[] activeNotes = [];
 				int? activeRow = null;
+
+				// Incremental cursor lookahead may report a future row or
+				// delayed authored action before the PCM head reaches it.
+				// Publishing that future timestamp immediately causes a
+				// later post-event blue-note snapshot (at an earlier frame)
+				// to violate the streamed timeline's chronological contract.
+				// Keep only editor position changes pending; never defer the
+				// audio events or alter their musical scheduling.
+				PriorityQueue<Action, (long Ticks, long Order)> pendingPositions = new();
+				long nextPositionOrder = 0;
+				void QueuePosition(TimeSpan when, Action publish)
+					=> pendingPositions.Enqueue(publish,
+						(when.Ticks, nextPositionOrder++));
+				void PublishPositionsThrough(TimeSpan when)
+				{
+					while (pendingPositions.TryPeek(out _, out var key)
+						&& key.Ticks <= when.Ticks)
+						pendingPositions.Dequeue()();
+				}
 				updateActiveEditorNotes = (next, at) =>
 				{
+					// Row/action metadata is visible only once the PCM clock
+					// reaches it, and always before the voice-state update
+					// at the same sample-frame boundary.
+					PublishPositionsThrough(at);
 					// Publishing every audio buffer was not only wasteful: it
 					// left row/action timeline entries with absent note spans,
 					// making the overlay flicker as the poll crossed each row.
@@ -190,35 +213,41 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				{
 					if (id != patternTrace.PatternId)
 						return;
-					activeRow = row;
-					activeActions.Clear();
-					positions.Append(new PlaybackPositionTimelineEntry(at,
-						new PlaybackPatternPosition(id, row, sequence, order)
-						{
-							EditorCallsiteSession = patternSession,
-							EditorActiveNoteCallsites = activeNotes,
-						}));
+					QueuePosition(at, () =>
+				{
+						activeRow = row;
+						activeActions.Clear();
+						positions.Append(new PlaybackPositionTimelineEntry(at,
+							new PlaybackPatternPosition(id, row, sequence, order)
+							{
+								EditorCallsiteSession = patternSession,
+								EditorActiveNoteCallsites = activeNotes,
+							}));
+					});
 				};
 				plan.Timeline.EditorPatternActionBegan += (id, row, at, callsite) =>
 				{
 					if (id != patternTrace.PatternId)
 						return;
-					// Fixed-wall-offset events can arrive after their authored
-					// row. Follow the *currently sounding* root row and retain
-					// every distinct action whose deadline has arrived so far.
-					int displayRow = activeRow ?? row;
-					if (activeRow is null)
-						activeRow = displayRow;
-					if (!activeActions.Contains(callsite))
-						activeActions.Add(callsite);
-					positions.Append(new PlaybackPositionTimelineEntry(at,
-						new PlaybackPatternPosition(id, displayRow, null, null)
-						{
-							EditorCallsiteSession = patternSession,
-							EditorPatternCallsite = callsite,
-							EditorPatternCallsites = activeActions.ToArray(),
-							EditorActiveNoteCallsites = activeNotes,
-						}));
+					QueuePosition(at, () =>
+					{
+						// The operation is applied on its *due* boundary,
+						// never ahead of the PCM clock. Delayed calls can
+						// arrive after their authored row.
+						int displayRow = activeRow ?? row;
+						if (activeRow is null)
+							activeRow = displayRow;
+						if (!activeActions.Contains(callsite))
+							activeActions.Add(callsite);
+						positions.Append(new PlaybackPositionTimelineEntry(at,
+								new PlaybackPatternPosition(id, displayRow, null, null)
+								{
+									EditorCallsiteSession = patternSession,
+									EditorPatternCallsite = callsite,
+									EditorPatternCallsites = activeActions.ToArray(),
+									EditorActiveNoteCallsites = activeNotes,
+								}));
+					});
 				};
 			}
 			else
