@@ -147,7 +147,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		// Only editor-traced Script Patterns install this callback. Row
 		// boundaries and scheduled actions must inherit the latest *actual*
 		// voice snapshot rather than temporarily clearing the blue overlay.
-		Action<SequenceCallsite[], TimeSpan>? updateActiveEditorNotes = null;
+		Action<HashSet<SequenceCallsite>, TimeSpan>? updateActiveEditorNotes = null;
 		if (positions is not null)
 		{
 			if (request is SequencePlaybackRequest
@@ -201,9 +201,14 @@ public sealed class PlaybackRequestAudioSourceFactory :
 					// Publishing every audio buffer was not only wasteful: it
 					// left row/action timeline entries with absent note spans,
 					// making the overlay flicker as the poll crossed each row.
-					if (activeNotes.SequenceEqual(next))
+					if (activeNotes.Length == next.Count
+						&& next.SetEquals(activeNotes))
 						return;
-					activeNotes = next;
+					// Only membership changes allocate a standalone sorted
+					// snapshot. Row/action timelines may retain that array
+					// indefinitely; never publish the mutable scratch set.
+					activeNotes = next.Count == 0
+						? [] : next.OrderBy(x => x.Start).ToArray();
 					PlaybackPatternPosition? current = positions.GetPositionAt(at);
 					if (current?.PatternId == patternTrace.PatternId)
 						positions.Append(new PlaybackPositionTimelineEntry(at,
@@ -259,14 +264,15 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		}
 		if (updateActiveEditorNotes is not null)
 		{
-			// Install only for an editor-F6 Script Pattern. Each snapshot
-			// comes from the actual PCM producer immediately after a note
-			// event or a rendered segment, never from a UI-thread estimate.
+			// One scratch set per traced producer, reused at every exact
+			// sample-frame boundary. The update callback publishes a new
+			// immutable array only when the origins actually change.
+			// Ordinary playback never installs this observer or set.
+			HashSet<SequenceCallsite> scratch = [];
 			plan.Source.SetEditorTraceBoundary(frame =>
 			{
-				SequenceCallsite[] active = plan.Source.Session
-					.CollectActiveEditorNoteCallsites();
-				updateActiveEditorNotes(active, TimeSpan.FromSeconds(
+				plan.Source.Session.CollectActiveEditorNoteCallsites(scratch);
+				updateActiveEditorNotes(scratch, TimeSpan.FromSeconds(
 					frame / (double)plan.Source.Format.SampleRate));
 			});
 		}
