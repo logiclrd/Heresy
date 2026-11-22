@@ -553,6 +553,114 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void RepeatedNoteCallsiteStaysBlueUntilLastIndependentVoiceEnds()
+    {
+        // The rendered editor owns *source spans*, not one painted region
+        // per voice. Two executions of the same Note statement must retain
+        // separate playback ownership: cutting one cannot clear the
+        // remaining voice's shared blue source span.
+        const string note = "Note(0, channel, _O(20))";
+        const string cutFirst = "Cut(2, 0)";
+        const string cutSecond = "Cut(4, 1)";
+        string source = "for (int channel = 0; channel < 2; channel++) "
+            + note + "; " + cutFirst + "; " + cutSecond + ";";
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long sound", "long.wav", LongMonoWave()));
+        ScriptPatternDefinition script = new((ObjectId)5U, "Shared Note site")
+        {
+            RowCount = 8, ChannelCount = 2, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero,
+                positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id) with
+        {
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+        };
+        PatternPlaybackRequest ordinaryRequest =
+            PatternPlaybackRequest.Create(song, script.Id);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline), Is.True);
+            Assert.That(ordinaryFactory.TryTakePlaybackPositionTimeline(
+                ordinaryRequest, out PlaybackPositionTimeline? ordinaryTimeline),
+                Is.True);
+            float[] tracedPcm = new float[512];
+            float[] ordinaryPcm = new float[512];
+            bool audible = false;
+            double elapsed = 0.0;
+            PlaybackPatternPosition? firstRow = null;
+            PlaybackPatternPosition? afterFirstCut = null;
+            PlaybackPatternPosition? afterSecondCut = null;
+            for (int block = 0; block < 120; block++)
+            {
+                traced.Render(tracedPcm.Length, tracedPcm);
+                ordinary.Render(ordinaryPcm.Length, ordinaryPcm);
+                for (int frame = 0; frame < tracedPcm.Length; frame++)
+                {
+                    if (Math.Abs(tracedPcm[frame] - ordinaryPcm[frame]) > 0.000001f)
+                        Assert.Fail(
+                            $"Shared-site F6 changed PCM: block {block}, frame {frame}");
+                    audible |= Math.Abs(ordinaryPcm[frame]) > 0.00001f;
+                }
+                elapsed += tracedPcm.Length / 48000.0;
+                PlaybackPatternPosition? position =
+                    timeline!.GetPositionAt(TimeSpan.FromSeconds(elapsed));
+                if (position?.PatternRow == 0 && firstRow is null)
+                    firstRow = position;
+                if (position?.PatternRow == 3 && afterFirstCut is null)
+                    afterFirstCut = position;
+                if (position?.PatternRow == 5 && afterSecondCut is null)
+                    afterSecondCut = position;
+            }
+
+            SequenceCallsite noteSpan = new(
+                source.IndexOf(note, StringComparison.Ordinal), note.Length);
+            PlaybackPositionTimelineEntry[] noteActivations =
+                timeline!.Entries.Where(e =>
+                    e.Position.EditorPatternCallsite == noteSpan).ToArray();
+            Assert.Multiple(() =>
+            {
+                Assert.That(audible, Is.True);
+                Assert.That(noteActivations, Has.Length.EqualTo(2),
+                    "each execution of one authored site retains its own due activation");
+                Assert.That(noteActivations.All(e =>
+                    e.Position.EditorPatternCallsites is { Count: 1 }
+                    && e.Position.EditorPatternCallsites[0] == noteSpan),
+                    Is.True,
+                    "two same-site activations paint one green source region");
+                Assert.That(firstRow?.EditorActiveNoteCallsites,
+                    Is.EquivalentTo(new[] { noteSpan }));
+                Assert.That(afterFirstCut?.EditorActiveNoteCallsites,
+                    Is.EquivalentTo(new[] { noteSpan }),
+                    "cutting channel 0 must leave channel 1's shared source span blue");
+                Assert.That(afterSecondCut?.EditorActiveNoteCallsites ?? [],
+                    Is.Empty, "shared blue span clears only when the last voice ends");
+                Assert.That(ordinaryTimeline!.Entries.All(e =>
+                    e.Position.EditorCallsiteSession is null
+                    && e.Position.EditorPatternCallsites is null
+                    && e.Position.EditorActiveNoteCallsites is null),
+                    Is.True, "normal playback must not carry editor tracing");
+            });
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
     public void RepeatedSameHelperInvocationReusesFrozenActionCallsiteSnapshot()
     {
         SongDocument song = new();
