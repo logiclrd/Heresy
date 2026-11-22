@@ -53,7 +53,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		new();
 	private readonly ScriptSequencePlayCallsiteRenderer _playbackRenderer =
 		new();
-	private Guid? _editorTraceSession;
+	private long? _editorTraceSession;
 	private string? _editorTraceSource;
 	private readonly ComboBox _reference;
 	private readonly TextBlock _message = new()
@@ -236,9 +236,9 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 	/// <summary>Only an editor-F6 request can enable this visual trace.
 	/// The source snapshot is captured separately from the mutable editor
 	/// buffer, so an edit during playback cannot highlight stale offsets.</summary>
-	public void BeginEditorSequenceTrace(Guid session)
+	public void BeginEditorSequenceTrace(long session)
 	{
-		if (_sequence is null || session == Guid.Empty)
+		if (_sequence is null || session <= 0)
 			throw new InvalidOperationException(
 				"Only a Script Sequence editor can trace F6 Play calls.");
 		_editorTraceSession = session;
@@ -247,9 +247,9 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 	}
 
 	/// <summary>F6 traces one source snapshot and one fresh playback session.</summary>
-	public void BeginEditorPatternTrace(Guid session)
+	public void BeginEditorPatternTrace(long session)
 	{
-		if (_pattern is null || session == Guid.Empty)
+		if (_pattern is null || session <= 0)
 			throw new InvalidOperationException(
 				"Only a Script Pattern editor can trace F6 actions.");
 		_editorTraceSession = session;
@@ -262,7 +262,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		IReadOnlyList<Heresy.Core.Sequences.SequenceCallsite> spans = [];
 		IReadOnlyList<Heresy.Core.Sequences.SequenceCallsite> activeNotes = [];
 		if (_sequence is not null
-			&& _editorTraceSession is Guid session
+			&& _editorTraceSession is long session
 			&& position?.EditorCallsiteSession == session
 			&& position.SequenceId == _sequence.Id
 			&& string.Equals(_editorTraceSource, _source.Text,
@@ -272,7 +272,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 				spans = [play];
 		}
 		else if (_pattern is not null
-			&& _editorTraceSession is Guid patternSession
+			&& _editorTraceSession is long patternSession
 			&& position?.EditorCallsiteSession == patternSession
 			&& position.PatternId == _pattern.Id
 			&& string.Equals(_editorTraceSource, _source.Text,
