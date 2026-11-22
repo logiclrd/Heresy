@@ -181,7 +181,7 @@ public sealed class LazySongPlaybackTransportTests
 		created.Should().Be(0,
 			"the interface check itself must not initialize the audio system");
 
-		Guid session = Guid.NewGuid();
+		long session = EditorCallsiteSessionIds.Next();
 		SongDocument song = new();
 		await editor.PlayEditorSequenceAsync(song, (ObjectId)2U, session);
 
@@ -207,7 +207,7 @@ public sealed class LazySongPlaybackTransportTests
 		});
 		IEditorPatternPlaybackTransport editor = lazy;
 		created.Should().Be(0);
-		Guid session = Guid.NewGuid();
+		long session = EditorCallsiteSessionIds.Next();
 		SongDocument song = new();
 		await editor.PlayEditorPatternAsync(song, (ObjectId)5U, session);
 		created.Should().Be(1);
@@ -269,11 +269,11 @@ public sealed class LazySongPlaybackTransportTests
 		public int SequenceCalls { get; private set; }
 		public ObjectId? EditorSequenceId { get; private set; }
 		public ObjectId? EditorPatternId { get; private set; }
-		public Guid? EditorPatternSession { get; private set; }
-		public Guid? EditorTraceId { get; private set; }
+		public long? EditorPatternSession { get; private set; }
+		public long? EditorTraceId { get; private set; }
 		public int StopCalls { get; private set; }
 		public Task PlayEditorSequenceAsync(
-			SongDocument document, ObjectId sequenceId, Guid editorCallsiteSession)
+			SongDocument document, ObjectId sequenceId, long editorCallsiteSession)
 		{
 			EditorSequenceId = sequenceId;
 			EditorTraceId = editorCallsiteSession;
@@ -281,7 +281,7 @@ public sealed class LazySongPlaybackTransportTests
 		}
 
 		public Task PlayEditorPatternAsync(
-			SongDocument document, ObjectId patternId, Guid editorCallsiteSession)
+			SongDocument document, ObjectId patternId, long editorCallsiteSession)
 		{
 			EditorPatternId = patternId;
 			EditorPatternSession = editorCallsiteSession;
