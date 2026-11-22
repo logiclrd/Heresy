@@ -30,6 +30,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	private readonly Func<NoteEvent, long, long, NoteEvent>? _transform;
 	private readonly Action? _afterRender;
 	private Action<long>? _editorTraceBoundary;
+	private Func<bool>? _editorTraceOriginCollectionEnabled;
 	// Only one event may be prefetched. Cancellation invalidates it by
 	// actual Pattern cursor ID rather than retaining a growing tombstone set.
 	// The timeline can retire a just-started child while it is still
@@ -81,9 +82,13 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	/// The same PCM worker reports post-event and post-render boundaries
 	/// in source-frame order, allowing very short notes inside one client
 	/// buffer to have distinct lifetimes. No tracing during normal playback.</summary>
-	internal void SetEditorTraceBoundary(Action<long> observer)
-		=> _editorTraceBoundary = observer
+	internal void SetEditorTraceBoundary(Action<long> observer,
+		Func<bool>? editorOriginCollectionEnabled = null)
+	{
+		_editorTraceBoundary = observer
 			?? throw new ArgumentNullException(nameof(observer));
+		_editorTraceOriginCollectionEnabled = editorOriginCollectionEnabled;
+	}
 
 	/// <summary>Produce at most the remaining logical arrangement frames.
 	/// On reaching the natural end, return a short frame count so the
@@ -327,6 +332,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 				boundary = Math.Min(boundary,
 					FrameTime.Ceiling(_timeline.Elapsed, Format.SampleRate));
 			if (_editorTraceBoundary is not null
+				&& (_editorTraceOriginCollectionEnabled?.Invoke() ?? true)
 				&& _session.GetNextEditorOriginCompletionFrameExclusive(now)
 					is long naturalEnd)
 			{
