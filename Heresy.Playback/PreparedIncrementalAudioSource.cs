@@ -31,6 +31,9 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	private readonly Action? _afterRender;
 	private Action<long>? _editorTraceBoundary;
 	private Func<bool>? _editorTraceOriginCollectionEnabled;
+	// F6-only backpressure. The source's pending UI row is a PCM segment
+	// boundary, not a prefetched musical event or an early publication.
+	private Func<long?>? _editorNextPositionBoundaryFrame;
 	// Only one event may be prefetched. Cancellation invalidates it by
 	// actual Pattern cursor ID rather than retaining a growing tombstone set.
 	// The timeline can retire a just-started child while it is still
@@ -83,11 +86,13 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	/// in source-frame order, allowing very short notes inside one client
 	/// buffer to have distinct lifetimes. No tracing during normal playback.</summary>
 	internal void SetEditorTraceBoundary(Action<long> observer,
-		Func<bool>? editorOriginCollectionEnabled = null)
+		Func<bool>? editorOriginCollectionEnabled = null,
+		Func<long?>? nextPositionBoundaryFrame = null)
 	{
 		_editorTraceBoundary = observer
 			?? throw new ArgumentNullException(nameof(observer));
 		_editorTraceOriginCollectionEnabled = editorOriginCollectionEnabled;
+		_editorNextPositionBoundaryFrame = nextPositionBoundaryFrame;
 	}
 
 	/// <summary>Produce at most the remaining logical arrangement frames.
@@ -237,6 +242,21 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 				throw new InvalidOperationException(
 					"Recursive timeline returned a null step.");
 
+			// Script-editor F6 row positions must not accumulate for every
+			// silent row inside a very large output buffer. Keep the one
+			// generated step for the next pass, then render up to the first
+			// queued future position. No event is lost or played early.
+			if (_editorNextPositionBoundaryFrame?.Invoke() is long positionFrame
+				&& positionFrame > _session.NextFrame
+				&& positionFrame < exclusiveFrame
+				&& (step is not IncrementalPatternTimelineStep.Emit candidate
+					|| FrameTime.Ceiling(candidate.Time, Format.SampleRate)
+						>= positionFrame))
+			{
+				_deferredStep = step;
+				return;
+			}
+
 			if (step is IncrementalPatternTimelineStep.Emit emit)
 			{
 				long frame = FrameTime.Ceiling(emit.Time, Format.SampleRate);
@@ -328,6 +348,12 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			long boundary = end;
 			if (_pendingEvent is { } future)
 				boundary = Math.Min(boundary, future.Frame);
+			// F6-only presentation backpressure: render to the upcoming
+			// due row/action boundary before looking ahead through more
+			// silent rows. Unlike the audio event queue, this is metadata.
+			if (_editorNextPositionBoundaryFrame?.Invoke() is long positionFrame
+				&& positionFrame > now)
+				boundary = Math.Min(boundary, positionFrame);
 			if (_endInputAtNaturalCompletion && _complete && !_session.InputEnded && !_inputStopped)
 				boundary = Math.Min(boundary,
 					FrameTime.Ceiling(_timeline.Elapsed, Format.SampleRate));
