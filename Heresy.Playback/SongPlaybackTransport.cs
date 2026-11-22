@@ -48,14 +48,14 @@ public interface ISongPlaybackTransport
 public interface IEditorSequencePlaybackTransport
 {
 	Task PlayEditorSequenceAsync(SongDocument document,
-		ObjectId sequenceId, Guid editorCallsiteSession);
+		ObjectId sequenceId, long editorCallsiteSession);
 }
 
 /// <summary>Independent opt-in F6 tracing for a Script Pattern audition.</summary>
 public interface IEditorPatternPlaybackTransport
 {
 	Task PlayEditorPatternAsync(SongDocument document,
-		ObjectId patternId, Guid editorCallsiteSession);
+		ObjectId patternId, long editorCallsiteSession);
 }
 
 /// <summary>Optional committed Synth editor update. No playback session is
@@ -190,10 +190,10 @@ public sealed class SongPlaybackTransport
 	public Task PlayEditorSequenceAsync(
 		SongDocument document,
 		ObjectId sequenceId,
-		Guid editorCallsiteSession)
+		long editorCallsiteSession)
 	{
-		if (editorCallsiteSession == Guid.Empty)
-			throw new ArgumentException("Editor trace ID cannot be empty.",
+		if (editorCallsiteSession <= 0)
+			throw new ArgumentException("Editor trace ID must be positive.",
 				nameof(editorCallsiteSession));
 		return PlayRequestAsync(
 			SequencePlaybackRequest.Create(document, sequenceId) with
@@ -204,10 +204,10 @@ public sealed class SongPlaybackTransport
 	}
 
 	public Task PlayEditorPatternAsync(
-		SongDocument document, ObjectId patternId, Guid editorCallsiteSession)
+		SongDocument document, ObjectId patternId, long editorCallsiteSession)
 	{
-		if (editorCallsiteSession == Guid.Empty)
-			throw new ArgumentException("Editor trace ID cannot be empty.",
+		if (editorCallsiteSession <= 0)
+			throw new ArgumentException("Editor trace ID must be positive.",
 				nameof(editorCallsiteSession));
 		return PlayRequestAsync(
 			PatternPlaybackRequest.Create(document, patternId,
