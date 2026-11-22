@@ -73,6 +73,86 @@ public sealed class EditorPatternCallsiteTests
             "trusted instrumentation cannot change authored song source");
     }
 
+
+    [Test]
+    public void EditorF6TracesVirtualControlsWithoutChangingTypedCommands()
+    {
+        const string source = """
+            VolumeVirtual(0, 7U, .25);
+            SourceFrameVirtual(
+                1, 7U, 256,
+                timeOffsetSeconds: .01);
+            DisplacementVirtual(2, 7U, NoteDisplacementAction.Continue);
+            PastVirtual(3, 7U, TrackerPastNoteAction.Cut);
+            """;
+        string[] helperNames =
+        {
+            "VolumeVirtual(", "SourceFrameVirtual(",
+            "DisplacementVirtual(", "PastVirtual(",
+        };
+        ScriptPatternDefinition pattern = new((ObjectId)12U, "Virtual controls")
+        {
+            Source = source, RowCount = 8, ChannelCount = 1,
+        };
+        var ordinaryCompile = ScriptCompiler.CompileIncrementalPattern(pattern);
+        var tracedCompile = ScriptCompiler.CompileIncrementalPattern(pattern,
+            instrumentActionCallsites: true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(ordinaryCompile.Success, Is.True,
+                string.Join("; ", ordinaryCompile.Diagnostics.Select(d => d.Message)));
+            Assert.That(tracedCompile.Success, Is.True,
+                string.Join("; ", tracedCompile.Diagnostics.Select(d => d.Message)));
+        });
+        NoteEvent[] ordinary = ordinaryCompile.Program!
+            .EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(x => x.Note).ToArray();
+        NoteEvent[] traced = tracedCompile.Program!
+            .EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(x => x.Note).ToArray();
+        Assert.That(ordinary, Has.Length.EqualTo(helperNames.Length));
+        Assert.That(traced, Has.Length.EqualTo(helperNames.Length));
+        for (int i = 0; i < helperNames.Length; i++)
+        {
+            int start = source.IndexOf(helperNames[i], StringComparison.Ordinal);
+            int end = i + 1 < helperNames.Length
+                ? source.LastIndexOf(");", source.IndexOf(helperNames[i + 1],
+                    StringComparison.Ordinal) - 1, StringComparison.Ordinal) + 1
+                : source.LastIndexOf(");", StringComparison.Ordinal) + 1;
+            Assert.Multiple(() =>
+            {
+                Assert.That(ordinary[i].EditorCallsite, Is.Null);
+                Assert.That(ordinary[i].EditorPatternRow, Is.Null);
+                Assert.That(traced[i].EditorCallsite,
+                    Is.EqualTo(new SequenceCallsite(start, end - start)));
+                Assert.That(traced[i].EditorPatternRow, Is.EqualTo(i));
+                Assert.That(traced[i].Offset, Is.EqualTo(ordinary[i].Offset));
+                Assert.That(traced[i].Target, Is.EqualTo(ordinary[i].Target));
+                Assert.That(traced[i].Commands, Is.EqualTo(ordinary[i].Commands));
+            });
+        }
+        Assert.That(pattern.Source, Is.EqualTo(source));
+    }
+
+    [TestCase("VolumeVirtual(default(SequenceCallsite), 0, 7U, .25);")]
+    [TestCase("SourceFrameVirtual(default(SequenceCallsite), 0, 7U, 256);")]
+    [TestCase("DisplacementVirtual(default(SequenceCallsite), 0, 7U, NoteDisplacementAction.Cut);")]
+    [TestCase("PastVirtual(default(SequenceCallsite), 0, 7U, TrackerPastNoteAction.Cut);")]
+    public void AuthoredSourceCannotSpoofVirtualControlCallsites(string source)
+    {
+        ScriptPatternDefinition pattern = new((ObjectId)13U, "Restricted")
+        {
+            RowCount = 4, ChannelCount = 1, Source = source,
+        };
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(pattern).Success,
+            Is.False);
+        var traced = ScriptCompiler.CompileIncrementalPattern(pattern,
+            instrumentActionCallsites: true);
+        Assert.That(traced.Success, Is.False);
+        Assert.That(traced.Diagnostics,
+            Has.Some.Property("Code").EqualTo("HRS2001"));
+    }
+
     [Test]
     public void EditorF6TracesTimingAndPhysicalControlsWithoutChangingMusic()
     {

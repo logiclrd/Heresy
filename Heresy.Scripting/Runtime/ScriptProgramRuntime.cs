@@ -330,6 +330,30 @@ public abstract class PatternScriptProgram
 		=> EmitWithEditorCallsite(callsite,
 			() => FilterResonance(row, channel, resonance, timeOffsetSeconds));
 
+	// Editor-F6-only provenance for virtual-channel control commands.
+	// The authored overloads still own validation and command emission.
+	protected void VolumeVirtual(SequenceCallsite callsite, double row,
+		uint virtualId, double volume, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => VolumeVirtual(row, virtualId, volume, timeOffsetSeconds));
+
+	protected void SourceFrameVirtual(SequenceCallsite callsite, double row,
+		uint virtualId, long sourceFrameOffset, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => SourceFrameVirtual(row, virtualId, sourceFrameOffset, timeOffsetSeconds));
+
+	protected void DisplacementVirtual(SequenceCallsite callsite, double row,
+		uint virtualId, NoteDisplacementAction action,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => DisplacementVirtual(row, virtualId, action, timeOffsetSeconds));
+
+	protected void PastVirtual(SequenceCallsite callsite, double row,
+		uint virtualId, TrackerPastNoteAction action,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => PastVirtual(row, virtualId, action, timeOffsetSeconds));
+
 	private void AppendNoteStart(
 		double row,
 		ChannelTarget target,

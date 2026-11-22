@@ -803,7 +803,9 @@ public static class ScriptCompiler
 				or "OffVirtualInScope" or "CutVirtualInScope"
 				or "OffAllVirtual" or "CutAllVirtual"
 				or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
-				or "Filter" or "FilterCutoff" or "FilterResonance")
+				or "Filter" or "FilterCutoff" or "FilterResonance"
+				or "VolumeVirtual" or "SourceFrameVirtual"
+				or "DisplacementVirtual" or "PastVirtual")
 			&& !allowInjectedPlayCallsites)
 			return false;
 
@@ -1002,7 +1004,9 @@ public static class ScriptCompiler
 						or "OffVirtualInScope" or "CutVirtualInScope"
 						or "OffAllVirtual" or "CutAllVirtual"
 						or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
-						or "Filter" or "FilterCutoff" or "FilterResonance"))
+						or "Filter" or "FilterCutoff" or "FilterResonance"
+						or "VolumeVirtual" or "SourceFrameVirtual"
+						or "DisplacementVirtual" or "PastVirtual"))
 				return rewritten;
 			ArgumentSyntax span = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(
 				$"new SequenceCallsite({node.SpanStart}, {node.Span.Length})"));
