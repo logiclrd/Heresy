@@ -55,6 +55,13 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		new();
 	private long? _editorTraceSession;
 	private string? _editorTraceSource;
+	private SequenceCallsite? _lastFollowedCallsite;
+	private readonly CheckBox _followPlayback = new()
+	{
+		Content = "Follow F6 playback",
+		IsChecked = false,
+		VerticalAlignment = VerticalAlignment.Center,
+	};
 	private readonly ComboBox _reference;
 	private readonly TextBlock _message = new()
 	{
@@ -287,6 +294,41 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		_playbackRenderer.SetActiveNoteSpans(activeNotes,
 			_source.Document.TextLength);
 		_source.TextArea.TextView.Redraw();
+		FollowActivatedCallsite(spans);
+	}
+
+	/// <summary>Follow newly activated green calls only, never continuous
+	/// blue voice-lifetime updates. Do not change the caret, selection, or
+	/// authored source, and do not fight manual scrolling until the next
+	/// distinct activation. Disabled by default.</summary>
+	private void FollowActivatedCallsite(
+		IReadOnlyList<SequenceCallsite> spans)
+	{
+		if (_followPlayback.IsChecked != true || spans.Count == 0)
+		{
+			_lastFollowedCallsite = null;
+			return;
+		}
+
+		SequenceCallsite callsite = spans[^1];
+		if (_lastFollowedCallsite == callsite)
+			return;
+		if (callsite.Start < 0
+			|| callsite.Start >= _source.Document.TextLength)
+			return;
+
+		var view = _source.TextArea.TextView;
+		if (!view.VisualLinesValid || view.VisualLines.Count == 0)
+			return;
+
+		_lastFollowedCallsite = callsite;
+		int visibleStart = view.VisualLines[0].FirstDocumentLine.Offset;
+		int visibleEnd = view.VisualLines[^1].LastDocumentLine.EndOffset;
+		if (callsite.Start >= visibleStart && callsite.Start <= visibleEnd)
+			return;
+
+		var location = _source.Document.GetLocation(callsite.Start);
+		_source.ScrollTo(location.Line, location.Column);
 	}
 
 	public ScriptSourceSaveShortcutRoute TryHandleSourceSaveShortcut(Visual? keySource)
@@ -358,12 +400,22 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 
 		body.Children.Add(BuildReferenceToolbar());
 
-		body.Children.Add(
-			new TextBlock
-			{
-				Text = "Restricted C# source",
-				FontWeight = FontWeight.SemiBold,
-			});
+		DockPanel sourceHeader = new()
+		{
+			LastChildFill = true,
+		};
+		DockPanel.SetDock(_followPlayback, Dock.Right);
+		ToolTip.SetTip(_followPlayback,
+			"Scroll to newly activated F6 script calls when they are offscreen. "
+			+ "Leaves the caret and selection unchanged.");
+		sourceHeader.Children.Add(_followPlayback);
+		sourceHeader.Children.Add(new TextBlock
+		{
+			Text = "Restricted C# source",
+			FontWeight = FontWeight.SemiBold,
+			VerticalAlignment = VerticalAlignment.Center,
+		});
+		body.Children.Add(sourceHeader);
 		body.Children.Add(_source);
 
 		Border analysisBorder =
