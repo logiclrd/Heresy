@@ -471,11 +471,6 @@ public sealed class PlaybackSession
 
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
 
-	/// <summary>Editor-only snapshot of the source notes whose logical
-	/// invocations are still producing, plus origins of surviving rendered
-	/// voices (including displaced NNA or release). A flattened source is
-	/// playing across silent gaps in its child pattern, even if no descendant
-	/// voice currently exists. Caller must be the PCM producer.</summary>
 	/// <summary>Next provable natural/release/fade voice-completion
 	/// frame relevant to an editor-F6 Note callsite. Used only by the
 	/// instrumented PCM producer to expose a short note's exact blue
@@ -515,6 +510,11 @@ public sealed class PlaybackSession
 		return earliest;
 	}
 
+	/// <summary>Editor-only snapshot of the source notes whose logical
+	/// invocations are still producing, plus origins of surviving rendered
+	/// voices (including displaced NNA or release). A flattened source is
+	/// playing across silent gaps in its child pattern, even if no descendant
+	/// voice currently exists. Caller must be the PCM producer.</summary>
 	public SequenceCallsite[] CollectActiveEditorNoteCallsites()
 	{
 		HashSet<SequenceCallsite>? spans = null;
