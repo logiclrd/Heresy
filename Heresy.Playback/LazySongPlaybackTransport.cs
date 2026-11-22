@@ -20,7 +20,8 @@ public sealed class LazySongPlaybackTransport
 		IPlaybackSnapshotTransport,
 		ILiveSynthEditTransport,
 		IEditorSequencePlaybackTransport,
-		IEditorPatternPlaybackTransport
+		IEditorPatternPlaybackTransport,
+		IEditorCallsiteTraceLifecycleTransport
 {
 	private readonly object _gate = new();
 	private readonly Func<ISongPlaybackTransport> _factory;
@@ -197,6 +198,18 @@ public sealed class LazySongPlaybackTransport
 			?? throw new NotSupportedException(
 					"The playback transport does not support editor Sequence tracing."))
 			.PlayEditorSequenceAsync(document, sequenceId, editorCallsiteSession);
+	}
+
+	/// <summary>Never create an audio backend solely to stop visual
+	/// tracing. Forward only if the lazy transport is already active.</summary>
+	public bool DeactivateEditorCallsiteTrace(long session)
+	{
+		lock (_gate)
+		{
+			ThrowIfDisposed();
+			return (_inner as IEditorCallsiteTraceLifecycleTransport)
+				?.DeactivateEditorCallsiteTrace(session) == true;
+		}
 	}
 
 	public Task PlayEditorPatternAsync(
