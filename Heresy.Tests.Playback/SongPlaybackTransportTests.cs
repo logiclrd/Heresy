@@ -151,6 +151,34 @@ public sealed class SongPlaybackTransportTests
 	}
 
 	[Test]
+	public async Task EditorTraceDeactivationMatchesSessionWithoutStoppingTransport()
+	{
+		SongDocument document = new();
+		ObjectId patternId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(patternId, "Trace lifetime"));
+		PositionTrackingFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+		long session = EditorCallsiteSessionIds.Next();
+		await transport.PlayEditorPatternAsync(document, patternId, session);
+
+		PlaybackPositionTimeline? timeline = factory.Timeline;
+		Assert.That(timeline, Is.Not.Null);
+		Assert.That(timeline!.EditorCallsiteTracingEnabled, Is.True);
+		Assert.That(transport.DeactivateEditorCallsiteTrace(session + 1),
+			Is.False);
+		Assert.That(timeline.EditorCallsiteTracingEnabled, Is.True);
+		Assert.That(transport.DeactivateEditorCallsiteTrace(session), Is.True);
+		Assert.That(transport.DeactivateEditorCallsiteTrace(session), Is.False);
+		Assert.Multiple(() =>
+		{
+			Assert.That(timeline.EditorCallsiteTracingEnabled, Is.False);
+			Assert.That(backend.OpenCount, Is.EqualTo(1),
+				"editor exit must not restart/stop the audio device");
+		});
+	}
+
+	[Test]
 	public async Task OrdinaryAdHocPlaybackDoesNotReserveSynthMultiHeadroom()
 	{
 		SongDocument document = new();
@@ -816,6 +844,29 @@ public sealed class SongPlaybackTransportTests
 			int frameCount,
 			Span<float> destination)
 			=> destination.Clear();
+	}
+
+	private sealed class PositionTrackingFactory
+		: IBackgroundPlaybackSourceFactory, IPlaybackPositionTimelineProvider
+	{
+		public PlaybackPositionTimeline? Timeline { get; private set; }
+		public IAudioOutputSource Create(PlaybackRequest request)
+		{
+			Timeline = new PlaybackPositionTimeline(request switch
+			{
+				PatternPlaybackRequest pattern => pattern.EditorCallsiteSession,
+				SequencePlaybackRequest sequence => sequence.EditorCallsiteSession,
+				_ => null,
+			});
+			return new SilentSource();
+		}
+		public bool TryTakePlaybackPositionTimeline(PlaybackRequest request,
+			out PlaybackPositionTimeline? timeline)
+		{
+			timeline = Timeline;
+			Timeline = null;
+			return timeline is not null;
+		}
 	}
 
 	private sealed class RecordingFactory
