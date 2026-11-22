@@ -65,6 +65,32 @@ public sealed class ScriptSyntaxHighlightingTests
 	}
 
 	[Test]
+	public void AdjacentUnaryMinusSharesNumberColourButBinaryMinusDoesNot()
+	{
+		DocumentWorkspace workspace = new();
+		const string source = """
+			var a = -1;
+			var b = -0.125;
+			var c = 3 - 1;
+			var d = 3 * -1.5e2;
+			var e = - 2;
+			var f = -0x10;
+			""";
+		ScriptSourceDocumentAnalysis analysis =
+			ScriptSourceDocumentAnalyzer.Analyze(workspace, source);
+		ScriptSyntaxHighlightSpan[] spans =
+			ScriptSyntaxHighlightCatalog.Create(analysis.SyntaxSnapshot, [])
+				.ToArray();
+		string[] numeric = Texts(source, spans, ScriptSyntaxHighlightKind.Number);
+
+		numeric.Should().Contain(["-1", "-0.125", "-1.5e2", "-0x10"]);
+		numeric.Should().Contain(["3", "1", "2"]);
+		numeric.Should().NotContain(["- 1", "- 2", "-"]);
+		spans.Should().NotContain(span => span.Kind == ScriptSyntaxHighlightKind.Number
+			&& source.Substring(span.Span.Start, span.Span.Length) == "3 - 1");
+	}
+
+	[Test]
 	public void ObjectReferenceUsesWholeSemanticSpanAndSuppressesNestedLexicalSpans()
 	{
 		DocumentWorkspace workspace = new();
