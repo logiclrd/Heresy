@@ -202,6 +202,158 @@ public sealed class ScriptSequencePlayHighlightTests
     }
 
     [AvaloniaTest]
+    public void FollowPlaybackOptInScrollsOffscreenPlayWithoutMovingSelection()
+    {
+        DocumentWorkspace workspace = new();
+        var sequence = ScriptDocumentEditor.CreateScriptSequence(workspace, "Follow");
+        sequence.Source = new string('\n', 150) + "return Play(_O(17));";
+        ScriptEditorControl editor = new(workspace, sequence, () => { }, _ => { });
+        Window window = new() { Width = 1100, Height = 950, Content = editor };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            TextEditor source = Field<TextEditor>(editor, "_source");
+            CheckBox follow = Field<CheckBox>(editor, "_followPlayback");
+            Assert.That(follow.IsChecked, Is.False,
+                "following playback must not scroll the source by default");
+            source.Select(3, 2);
+            int caret = source.CaretOffset;
+            int selectionStart = source.SelectionStart;
+            int selectionLength = source.SelectionLength;
+            source.ScrollTo(1, 1);
+            window.UpdateLayout();
+
+            var view = source.TextArea.TextView;
+            Assert.That(view.VisualLinesValid, Is.True);
+            Assert.That(view.VisualLines, Is.Not.Empty);
+            int firstBefore = view.VisualLines[0].FirstDocumentLine.LineNumber;
+            int targetStart = sequence.Source.IndexOf("Play(", StringComparison.Ordinal);
+            Assert.That(targetStart, Is.GreaterThan(
+                view.VisualLines[^1].LastDocumentLine.EndOffset),
+                "the authored Play call must initially be offscreen");
+
+            long session = EditorCallsiteSessionIds.Next();
+            SequenceCallsite span = new(targetStart, "Play(_O(17))".Length);
+            PlaybackPatternPosition active = new((ObjectId)17U, 0, sequence.Id, 0)
+            {
+                EditorCallsiteSession = session,
+                EditorPlayCallsite = span,
+            };
+            editor.BeginEditorSequenceTrace(session);
+            editor.SetPlaybackPosition(active);
+            window.UpdateLayout();
+            Assert.That(view.VisualLines[0].FirstDocumentLine.LineNumber,
+                Is.EqualTo(firstBefore),
+                "ordinary F6 overlays cannot move an opted-out editor");
+
+            follow.IsChecked = true;
+            editor.SetPlaybackPosition(null);
+            editor.SetPlaybackPosition(active with
+            {
+                EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+            });
+            window.UpdateLayout();
+            Assert.That(view.VisualLines[0].FirstDocumentLine.LineNumber,
+                Is.EqualTo(firstBefore),
+                "a stale F6 session must not scroll");
+            editor.SetPlaybackPosition(active);
+            window.UpdateLayout();
+
+            Assert.That(view.VisualLines[0].FirstDocumentLine.Offset,
+                Is.LessThanOrEqualTo(targetStart));
+            Assert.That(view.VisualLines[^1].LastDocumentLine.EndOffset,
+                Is.GreaterThanOrEqualTo(targetStart),
+                "following must bring the activated source call into view");
+            Assert.Multiple(() =>
+            {
+                Assert.That(source.CaretOffset, Is.EqualTo(caret));
+                Assert.That(source.SelectionStart, Is.EqualTo(selectionStart));
+                Assert.That(source.SelectionLength, Is.EqualTo(selectionLength));
+                Assert.That(source.Text, Is.EqualTo(sequence.Source));
+            });
+
+            // A repeated timeline notification must not fight manual
+            // scrolling; only a distinct future activation may follow.
+            source.ScrollTo(1, 1);
+            window.UpdateLayout();
+            int manuallyScrolled = view.VisualLines[0].FirstDocumentLine.LineNumber;
+            editor.SetPlaybackPosition(active);
+            window.UpdateLayout();
+            Assert.That(view.VisualLines[0].FirstDocumentLine.LineNumber,
+                Is.EqualTo(manuallyScrolled));
+
+            source.Text += " // edited after F6";
+            editor.SetPlaybackPosition(active);
+            window.UpdateLayout();
+            Assert.That(view.VisualLines[0].FirstDocumentLine.LineNumber,
+                Is.EqualTo(manuallyScrolled),
+                "source-edited sessions cannot scroll stale spans");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public void FollowPlaybackIgnoresBlueOnlyNoteLifetimeUpdates()
+    {
+        DocumentWorkspace workspace = new();
+        var pattern = ScriptDocumentEditor.CreateScriptPattern(workspace, "Follow");
+        const string note = "Note(0, 0, _O(17))";
+        const string cut = "Cut(8, 0)";
+        pattern.Source = note + ";" + new string('\n', 150) + cut + ";";
+        ScriptEditorControl editor = new(workspace, pattern, () => { }, _ => { });
+        Window window = new() { Width = 1100, Height = 950, Content = editor };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            TextEditor source = Field<TextEditor>(editor, "_source");
+            CheckBox follow = Field<CheckBox>(editor, "_followPlayback");
+            follow.IsChecked = true;
+            source.ScrollTo(1, 1);
+            window.UpdateLayout();
+            var view = source.TextArea.TextView;
+            Assert.That(view.VisualLinesValid, Is.True);
+            int before = view.VisualLines[0].FirstDocumentLine.LineNumber;
+            int cutStart = pattern.Source.IndexOf(cut, StringComparison.Ordinal);
+            Assert.That(cutStart, Is.GreaterThan(
+                view.VisualLines[^1].LastDocumentLine.EndOffset));
+
+            long session = EditorCallsiteSessionIds.Next();
+            editor.BeginEditorPatternTrace(session);
+            SequenceCallsite noteSpan = new(0, note.Length);
+            SequenceCallsite cutSpan = new(cutStart, cut.Length);
+            editor.SetPlaybackPosition(new PlaybackPatternPosition(pattern.Id, 4, null, null)
+            {
+                EditorCallsiteSession = session,
+                EditorActiveNoteCallsites = [noteSpan],
+            });
+            window.UpdateLayout();
+            Assert.That(view.VisualLines[0].FirstDocumentLine.LineNumber,
+                Is.EqualTo(before),
+                "blue sounding-note updates must never move the source");
+
+            editor.SetPlaybackPosition(new PlaybackPatternPosition(pattern.Id, 8, null, null)
+            {
+                EditorCallsiteSession = session,
+                EditorPatternCallsites = [cutSpan],
+                EditorActiveNoteCallsites = [noteSpan],
+            });
+            window.UpdateLayout();
+            Assert.That(view.VisualLines[^1].LastDocumentLine.EndOffset,
+                Is.GreaterThanOrEqualTo(cutStart),
+                "new green Cut activation should be followed");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
     public async Task F6UsesOptionalEditorTraceTransportAndStopsOnPositionClear()
     {
         RecordingTransport transport = new();
