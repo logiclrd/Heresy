@@ -4,6 +4,7 @@ using System.Text;
 using System.Linq;
 using System.Numerics;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -344,6 +345,109 @@ public sealed class EditorPatternPlaybackTraceTests
                 Assert.That(withTrace[frame], Is.EqualTo(withoutTrace[frame])
                     .Within(0.000001f),
                     $"F6 tracing changed NNA fade PCM at frame {frame}");
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
+    public void FiniteVolumeReleaseKeepsOnlyInstrumentOriginPastOffWithinOneBuffer()
+    {
+        SongDocument song = new();
+        // Both starts have the same long PCM source. At 2 ms, bare
+        // Sample Off is definite; the Instrument's sustain/release
+        // envelope holds its note until the independent 6 ms endpoint.
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long source", "long.wav", LongMonoWave()));
+        NodeEnvelopeDefinition release = new((ObjectId)22U, "Four-ms release");
+        release.ReplaceCurve(
+            [
+                new EnvelopeNode(TimeSpan.Zero, 1.0),
+                new EnvelopeNode(TimeSpan.FromMilliseconds(4), 0.0),
+            ],
+            0, 0, EnvelopeSustainLoopMode.Forward);
+        song.Add(release);
+        InstrumentDefinition instrument = new((ObjectId)21U, "Sustaining tone");
+        instrument.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = (ObjectId)20U,
+            VolumeEnvelopeId = release.Id,
+        });
+        instrument.ToneTable.Add(0);
+        song.Add(instrument);
+
+        const string sustained = "Note(0, 0, _O(21))";
+        const string bare = "Note(0, 1, _O(20))";
+        const string releaseInstrument = "Off(0, 0, timeOffsetSeconds: 0.002)";
+        const string releaseBare = "Off(0, 1, timeOffsetSeconds: 0.002)";
+        string source = sustained + "; " + bare + "; "
+            + releaseInstrument + "; " + releaseBare + ";";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Off release precision")
+        {
+            RowCount = 16, ChannelCount = 2, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+        PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
+            song, script.Id);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline), Is.True);
+            float[] withTrace = new float[512];
+            float[] withoutTrace = new float[512];
+            traced.Render(withTrace.Length, withTrace);
+            ordinary.Render(withoutTrace.Length, withoutTrace);
+
+            SequenceCallsite instrumentSpan = new(0, sustained.Length);
+            SequenceCallsite bareSpan = new(sustained.Length + 2, bare.Length);
+            Assert.That(timeline!.GetPositionAt(TimeSpan.FromMilliseconds(1))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { instrumentSpan, bareSpan }),
+                "both authored Notes must be active before their Offs");
+            Assert.That(timeline.GetPositionAt(TimeSpan.FromMilliseconds(3))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { instrumentSpan }),
+                "only the Instrument with an actual sustain release survives Off");
+            Assert.That(timeline.GetPositionAt(TimeSpan.FromMilliseconds(5))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { instrumentSpan }),
+                "the finite release keeps its original callsite blue");
+            Assert.That(timeline.GetPositionAt(TimeSpan.FromMilliseconds(7))
+                    ?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "blue clears after the Instrument's 6 ms release end");
+
+            Assert.That(timeline.Entries.Any(e =>
+                e.Offset >= TimeSpan.FromMilliseconds(1.5)
+                && e.Offset <= TimeSpan.FromMilliseconds(2.5)
+                && e.Position.EditorActiveNoteCallsites is { Count: 1 }
+                && e.Position.EditorActiveNoteCallsites.Contains(instrumentSpan)),
+                Is.True, "the bare Sample clears on the exact Off boundary");
+            Assert.That(timeline.Entries.Any(e =>
+                e.Offset >= TimeSpan.FromMilliseconds(5.5)
+                && e.Offset <= TimeSpan.FromMilliseconds(6.5)
+                && e.Position.EditorActiveNoteCallsites is { Count: 0 }),
+                Is.True, "the finite release clears inside the PCM buffer");
+            Assert.That(timeline.Entries.Count, Is.LessThan(30),
+                "trace state should not be republished on every segment");
+            Assert.That(withTrace.Any(x => Math.Abs(x) > 0.00001f),
+                Is.True, "the fixture must produce audible PCM");
+            for (int frame = 0; frame < withTrace.Length; frame++)
+                Assert.That(withTrace[frame], Is.EqualTo(withoutTrace[frame])
+                    .Within(0.000001f),
+                    $"F6 tracing changed release PCM at frame {frame}");
         }
         finally
         {
