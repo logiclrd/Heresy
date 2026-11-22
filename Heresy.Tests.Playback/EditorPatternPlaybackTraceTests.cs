@@ -1,9 +1,12 @@
 using System;
+using System.IO;
+using System.Text;
 using System.Linq;
 using System.Numerics;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
+using Heresy.Core.Samples;
 using Heresy.Core.Sequences;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
@@ -16,6 +19,140 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class EditorPatternPlaybackTraceTests
 {
+    [Test]
+    public void F6SustainedOriginsFollowRealVoicesAcrossRowsAndCuts()
+    {
+        SongDocument song = new();
+        const uint sampleId = 20;
+        song.Add(SampleDefinition.CreateImported((ObjectId)sampleId,
+            "Long sustained", "sustained.wav", LongMonoWave()));
+        string noteA = $"Note(0, 0, _O({sampleId}))";
+        string noteB = $"Note(0, 1, _O({sampleId}))";
+        string source = $"{noteA}; {noteB}; Cut(4, 0); Cut(8, 1);";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Two sustained voices")
+        {
+            RowCount = 16, ChannelCount = 2, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            float[] samples = new float[512];
+            double seconds = 0;
+
+            PlaybackPatternPosition? RenderNext()
+            {
+                audio.Render(samples.Length, samples);
+                seconds += samples.Length / 48000.0;
+                return timeline!.GetPositionAt(TimeSpan.FromSeconds(seconds));
+            }
+
+            PlaybackPatternPosition? SeekRow(int row)
+            {
+                for (int i = 0; i < 500; i++)
+                {
+                    PlaybackPatternPosition? position = RenderNext();
+                    if (position?.PatternRow >= row)
+                        return position;
+                }
+                Assert.Fail($"Playback did not reach row {row}.");
+                return null;
+            }
+
+            SequenceCallsite spanA = new(source.IndexOf(noteA,
+                StringComparison.Ordinal), noteA.Length);
+            SequenceCallsite spanB = new(source.IndexOf(noteB,
+                StringComparison.Ordinal), noteB.Length);
+            PlaybackPatternPosition? zero = RenderNext();
+            Assert.That(zero?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { spanA, spanB }),
+                "both actual newly started voices must be highlighted");
+
+            PlaybackPatternPosition? rowTwo = SeekRow(2);
+            Assert.That(rowTwo?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { spanA, spanB }),
+                "the originating Note calls persist beyond their scheduled row");
+            Assert.That(rowTwo?.EditorPatternCallsites, Is.Null,
+                "scheduled-action highlights still clear at the next row");
+
+            PlaybackPatternPosition? rowFive = SeekRow(5);
+            Assert.That(rowFive?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { spanB }),
+                "Cut removes only its actual voice, not the other source span");
+            PlaybackPatternPosition? rowNine = SeekRow(9);
+            Assert.That(rowNine?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "both voiced origins must disappear after their Cuts");
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [Test]
+    public void OrdinaryPlaybackHasNoSustainedNoteTraceMetadata()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long sustained", "sustained.wav", LongMonoWave()));
+        ScriptPatternDefinition script = new((ObjectId)5U, "Normal")
+        {
+            RowCount = 16, ChannelCount = 1,
+            Source = "Note(0, 0, _O(20));",
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(song, script.Id);
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            float[] samples = new float[512];
+            audio.Render(samples.Length, samples);
+            PlaybackPatternPosition? current = timeline!.GetPositionAt(
+                TimeSpan.FromSeconds(samples.Length / 48000.0));
+            Assert.That(current, Is.Not.Null);
+            Assert.That(current!.EditorActiveNoteCallsites, Is.Null);
+            Assert.That(current.EditorPatternCallsites, Is.Null);
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    private static byte[] LongMonoWave()
+    {
+        const int sampleRate = 8000;
+        const int frames = sampleRate * 2;
+        using MemoryStream stream = new();
+        using BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true);
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + frames * 2);
+        writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+        writer.Write(16);
+        writer.Write((ushort)1);
+        writer.Write((ushort)1);
+        writer.Write(sampleRate);
+        writer.Write(sampleRate * 2);
+        writer.Write((ushort)2);
+        writer.Write((ushort)16);
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write(frames * 2);
+        for (int i = 0; i < frames; i++)
+            writer.Write((short)12000);
+        writer.Flush();
+        return stream.ToArray();
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void SameRowVirtualControlsRetainSpansRegardlessOfOrder(bool reverseOrder)

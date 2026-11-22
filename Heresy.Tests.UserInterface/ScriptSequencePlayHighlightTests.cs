@@ -44,6 +44,62 @@ public sealed class ScriptSequencePlayHighlightTests
         return Field<IReadOnlyList<SequenceCallsite>>(renderer, "_spans");
     }
 
+    private static IReadOnlyList<SequenceCallsite> ShownActiveNoteCallsites(
+        ScriptEditorControl editor)
+    {
+        object renderer = Field<object>(editor, "_playbackRenderer");
+        return Field<IReadOnlyList<SequenceCallsite>>(renderer, "_activeNoteSpans");
+    }
+
+    [AvaloniaTest]
+    public void SustainedNotesUseIndependentOverlayAndHonorSourceSession()
+    {
+        DocumentWorkspace workspace = new();
+        var pattern = ScriptDocumentEditor.CreateScriptPattern(workspace, "Note trace");
+        pattern.Source = "Note(0, 0, _O(2)); Cut(8, 0);";
+        ScriptEditorControl editor = new(workspace, pattern, () => { }, _ => { });
+        TextEditor source = Field<TextEditor>(editor, "_source");
+        Guid session = Guid.NewGuid();
+        editor.BeginEditorPatternTrace(session);
+
+        SequenceCallsite note = new(0, "Note(0, 0, _O(2))".Length);
+        int cutAt = pattern.Source.IndexOf("Cut(", StringComparison.Ordinal);
+        SequenceCallsite cut = new(cutAt, "Cut(8, 0)".Length);
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(pattern.Id, 3, null, null)
+        {
+            EditorCallsiteSession = session,
+            EditorActiveNoteCallsites = [note],
+        });
+        Assert.That(ShownActiveNoteCallsites(editor),
+            Is.EquivalentTo(new[] { note }));
+        Assert.That(ShownCallsites(editor), Is.Empty);
+
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(pattern.Id, 8, null, null)
+        {
+            EditorCallsiteSession = session,
+            EditorPatternCallsites = [cut],
+            EditorActiveNoteCallsites = [note],
+        });
+        Assert.That(ShownActiveNoteCallsites(editor),
+            Is.EquivalentTo(new[] { note }));
+        Assert.That(ShownCallsites(editor), Is.EquivalentTo(new[] { cut }));
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(pattern.Id, 9, null, null)
+        {
+            EditorCallsiteSession = session,
+            EditorActiveNoteCallsites = [],
+        });
+        Assert.That(ShownActiveNoteCallsites(editor), Is.Empty);
+
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(pattern.Id, 3, null, null)
+        {
+            EditorCallsiteSession = session,
+            EditorActiveNoteCallsites = [note],
+        });
+        source.Text += " // changed after F6";
+        Assert.That(ShownActiveNoteCallsites(editor), Is.Empty);
+        Assert.That(ShownCallsites(editor), Is.Empty);
+    }
+
     private static KeyEventArgs Press(Control control, Key key)
     {
         KeyEventArgs args = new()
