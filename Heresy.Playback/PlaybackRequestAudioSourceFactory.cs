@@ -151,7 +151,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		if (positions is not null)
 		{
 			if (request is SequencePlaybackRequest
-				{ EditorCallsiteSession: Guid session })
+				{ EditorCallsiteSession: long session })
 			{
 				// Keep source metadata with the actual order's row
 				// activation, not the earlier Roslyn Play evaluation.
@@ -165,7 +165,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 							}));
 			}
 			else if (request is PatternPlaybackRequest
-				{ EditorCallsiteSession: Guid patternSession } patternTrace)
+				{ EditorCallsiteSession: long patternSession } patternTrace)
 			{
 				// Preserve all actions, not only the last emission on a row.
 				// RowBegan is called again when a repeating Pattern loops;
