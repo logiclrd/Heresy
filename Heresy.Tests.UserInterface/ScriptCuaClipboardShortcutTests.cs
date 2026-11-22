@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 using Avalonia.Controls;
@@ -57,22 +58,34 @@ public sealed class ScriptCuaClipboardShortcutTests
             {
                 TextEditor source = Field<TextEditor>(editor, "_source");
                 source.Text = "alpha beta";
+                List<string> copied = [];
+                source.TextArea.TextCopied += (_, e) => copied.Add(e.Text);
                 source.Select(0, 5);
                 Assert.That(Press(source.TextArea, Key.Insert, KeyModifiers.Control).Handled,
                     Is.True);
-                Assert.That(await window.Clipboard!.TryGetTextAsync(), Is.EqualTo("alpha"));
+                Assert.That(copied, Is.EqualTo(new[] { "alpha" }),
+                    "Ctrl+Insert must invoke AvaloniaEdit's real Copy command");
                 Assert.That(source.Text, Is.EqualTo("alpha beta"));
 
                 source.Select(6, 4);
                 Assert.That(Press(source.TextArea, Key.Delete, KeyModifiers.Shift).Handled,
                     Is.True);
                 Assert.That(source.Text, Is.EqualTo("alpha "));
-                Assert.That(await window.Clipboard!.TryGetTextAsync(), Is.EqualTo("beta"));
+                Assert.That(copied, Is.EqualTo(new[] { "alpha", "beta" }),
+                    "Shift+Delete must use the existing Cut command");
 
+                using (DataTransfer data = new())
+                {
+                    DataTransferItem item = new();
+                    item.Set(DataFormat.Text, "beta");
+                    data.Add(item);
+                    await window.Clipboard!.SetDataAsync(data);
+                }
                 source.CaretOffset = source.Text.Length;
                 Assert.That(Press(source.TextArea, Key.Insert, KeyModifiers.Shift).Handled,
                     Is.True);
-                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                for (int attempt = 0; attempt < 20 && source.Text != "alpha beta"; attempt++)
+                    await Task.Delay(10);
                 Assert.That(source.Text, Is.EqualTo("alpha beta"));
 
                 Assert.That(Press(source.TextArea, Key.Insert,
