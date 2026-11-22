@@ -879,6 +879,122 @@ public sealed class EditorPatternPlaybackTraceTests
         }
     }
 
+    [TestCase(8000)]
+    [TestCase(48000)]
+    public void FastRowsAndNestedStepsRespectLosslessF6PresentationBoundaries(
+        int sampleRate)
+    {
+        // Source-row metadata can be generated ahead of the PCM head while
+        // a flattened child is still producing musical steps. In
+        // particular, a non-Emit step *before* the next display boundary
+        // may not be deferred merely because the position queue is nonempty.
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long nested sample", "long.wav", LongMonoWave()));
+        DataPatternDefinition child = new((ObjectId)2U, "Nested events")
+        {
+            RowCount = 8, ChannelCount = 1,
+        };
+        child.Grid.GetOrCreateCell(1, 0).Note =
+            new StartPatternNote((ObjectId)20U);
+        child.Grid.GetOrCreateCell(3, 0).Note = new PatternNoteCut();
+        child.Grid.GetOrCreateCell(4, 0).Note =
+            new StartPatternNote((ObjectId)20U);
+        child.Grid.GetOrCreateCell(5, 0).Note = new PatternNoteCut();
+        song.Add(child);
+        const string start = "Note(0, 0, _O(2))";
+        const string repeated = "ChannelFilter(1, 0)";
+        const string direct = "Note(3, 0, _O(20))";
+        const string delayed = "Cut(4, 0, timeOffsetSeconds: 0.02)";
+        string source = "Tempo(0, 255); Speed(0, 1); " + start
+            + "; for (int i = 0; i < 64; i++) " + repeated
+            + "; " + direct + "; " + delayed + "; Cut(8, 0);";
+        ScriptPatternDefinition root = new((ObjectId)5U, "Fast nested F6")
+        {
+            RowCount = 12, ChannelCount = 1, Source = source,
+        };
+        song.Add(root);
+        RenderConfiguration config = new(sampleRate, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero,
+                positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory traceFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, root.Id) with
+        {
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+        };
+        PatternPlaybackRequest ordinaryRequest =
+            PatternPlaybackRequest.Create(song, root.Id);
+        IAudioOutputSource traced = traceFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(traceFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline), Is.True);
+            Assert.That(ordinaryFactory.TryTakePlaybackPositionTimeline(
+                ordinaryRequest, out PlaybackPositionTimeline? untraced), Is.True);
+            float[] tracePcm = new float[sampleRate];
+            float[] ordinaryPcm = new float[sampleRate];
+            bool audible = false;
+            for (int block = 0; block < 2; block++)
+            {
+                traced.Render(tracePcm.Length, tracePcm);
+                ordinary.Render(ordinaryPcm.Length, ordinaryPcm);
+                for (int frame = 0; frame < tracePcm.Length; frame++)
+                {
+                    if (Math.Abs(tracePcm[frame] - ordinaryPcm[frame])
+                        > 0.000001f)
+                        Assert.Fail($"F6 fast nested rendering shifted audio: "
+                            + $"rate={sampleRate}, block={block}, frame={frame}");
+                    audible |= Math.Abs(ordinaryPcm[frame]) > 0.00001f;
+                }
+                Assert.That(timeline!.Entries.Count, Is.LessThanOrEqualTo(1024));
+                Assert.That(timeline.Entries.Zip(timeline.Entries.Skip(1))
+                    .All(pair => pair.First.Offset <= pair.Second.Offset),
+                    Is.True, "nested event and F6 cursor timestamps must be ordered");
+            }
+            SequenceCallsite nestedSite = new(
+                source.IndexOf(start, StringComparison.Ordinal), start.Length);
+            SequenceCallsite directSite = new(
+                source.IndexOf(direct, StringComparison.Ordinal), direct.Length);
+            SequenceCallsite delayedSite = new(
+                source.IndexOf(delayed, StringComparison.Ordinal), delayed.Length);
+            Assert.Multiple(() =>
+            {
+                Assert.That(audible, Is.True,
+                    "both tracing and normal playback must render audible notes");
+                Assert.That(timeline!.Entries.Any(e => e.Position.PatternRow >= 5),
+                    Is.True, "the fast source must traverse multiple row boundaries");
+                Assert.That(timeline.Entries.Any(e =>
+                    e.Position.EditorPatternCallsite == nestedSite), Is.True);
+                Assert.That(timeline.Entries.Any(e =>
+                    e.Position.EditorPatternCallsite == directSite), Is.True);
+                Assert.That(timeline.Entries.Any(e =>
+                    e.Position.EditorPatternCallsite == delayedSite), Is.True);
+                Assert.That(timeline.EditorPendingPositionPeak,
+                    Is.InRange(1, 6),
+                    "future row backpressure should avoid a long-buffer queue, "
+                    + "even with fast timing, nesting and same-row action bursts");
+                Assert.That(untraced!.EditorPendingPositionPeak, Is.Zero);
+                Assert.That(untraced.Entries.All(e =>
+                    e.Position.EditorCallsiteSession is null
+                    && e.Position.EditorPatternCallsites is null), Is.True);
+            });
+            TestContext.Progress.WriteLine(
+                $"F6 fast nested boundary: sampleRate={sampleRate}, "
+                + $"pending peak={timeline!.EditorPendingPositionPeak}, "
+                + $"published positions={timeline.Entries.Count}.");
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
     [TestCase(48000, 5)]
     [TestCase(240000, 1)]
     public void LargePcmBufferLookaheadCanQueueSeveralRowsWithoutPublishingFuturePositions(
