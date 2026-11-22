@@ -269,6 +269,65 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void SilentFlattenedPatternStaysBlueUntilItsOwnNaturalEnd()
+    {
+        SongDocument song = new();
+        DataPatternDefinition silentChild = new((ObjectId)2U, "Silent child")
+        {
+            RowCount = 8, ChannelCount = 1,
+        };
+        song.Add(silentChild);
+        const string call = "Note(0, 0, _O(2))";
+        ScriptPatternDefinition root = new((ObjectId)5U, "Root")
+        {
+            RowCount = 16, ChannelCount = 1, Source = call + ";",
+        };
+        song.Add(root);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, root.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            SequenceCallsite span = new(0, call.Length);
+            float[] samples = new float[512];
+            double seconds = 0;
+            PlaybackPatternPosition? AtRow(int target)
+            {
+                for (int i = 0; i < 700; i++)
+                {
+                    audio.Render(samples.Length, samples);
+                    seconds += samples.Length / 48000.0;
+                    PlaybackPatternPosition? position = timeline!.GetPositionAt(
+                        TimeSpan.FromSeconds(seconds));
+                    if (position?.PatternRow >= target)
+                        return position;
+                }
+                Assert.Fail($"Did not reach root row {target}");
+                return null;
+            }
+
+            Assert.That(AtRow(1)?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { span }),
+                "an empty nested pattern is still a playing logical note");
+            Assert.That(AtRow(7)?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { span }),
+                "last silent row belongs to the still-running pattern");
+            Assert.That(AtRow(9)?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "a naturally completed producer with no voices retires");
+            Assert.That(samples.All(value => value == 0f), Is.True,
+                "this case never creates a sounding renderer voice");
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [Test]
     public void OrdinaryPlaybackHasNoSustainedNoteTraceMetadata()
     {
         SongDocument song = new();
