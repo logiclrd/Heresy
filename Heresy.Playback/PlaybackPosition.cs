@@ -74,11 +74,36 @@ public sealed class PlaybackPositionTimeline
 	private readonly List<PlaybackPositionTimelineEntry>? _streamEntries;
 	private TimeSpan _streamEnd = TimeSpan.MaxValue;
 	private int _editorPendingPositionPeak;
+	private readonly long? _editorCallsiteSession;
+	private int _editorCallsiteTracingEnabled;
+
+	/// <summary>A disabled F6 trace never resumes; the music and ordinary
+	/// row cursor continue, without further authored source-call metadata.
+	/// This flag is read on the PCM worker and written on the UI thread.</summary>
+	public bool EditorCallsiteTracingEnabled =>
+		Volatile.Read(ref _editorCallsiteTracingEnabled) != 0;
+
+	/// <summary>The originating editor-F6 audition, if any.</summary>
+	public long? EditorCallsiteSession => _editorCallsiteSession;
+
+	/// <summary>Disable only the matching trace when its editor is left.
+	/// No audio stop, producer lock, UI callback, or source recompilation.</summary>
+	public bool DisableEditorCallsiteTracing(long session)
+	{
+		if (session <= 0 || _editorCallsiteSession != session)
+			return false;
+		return Interlocked.Exchange(ref _editorCallsiteTracingEnabled, 0) != 0;
+	}
+
 
 	/// <summary>A timeline populated incrementally by the real playback cursor,
 	/// rather than by eagerly traversing all future sequence orders.</summary>
-	public PlaybackPositionTimeline()
+	public PlaybackPositionTimeline(long? editorCallsiteSession = null)
 	{
+		if (editorCallsiteSession is <= 0)
+			throw new ArgumentOutOfRangeException(nameof(editorCallsiteSession));
+		_editorCallsiteSession = editorCallsiteSession;
+		_editorCallsiteTracingEnabled = editorCallsiteSession.HasValue ? 1 : 0;
 		_streamEntries = [];
 		_entries = _streamEntries;
 		Duration = TimeSpan.MaxValue;
