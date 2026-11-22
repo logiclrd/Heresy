@@ -218,9 +218,37 @@ public sealed class LazySongPlaybackTransportTests
 		probe.PatternCalls.Should().Be(1);
 	}
 
+	[Test]
+	public async Task DeactivationPreservesLazinessAndForwardsWhenActive()
+	{
+		int created = 0;
+		ProbeTransport? probe = null;
+		using LazySongPlaybackTransport lazy = new(() =>
+		{
+			created++;
+			return probe = new ProbeTransport();
+		});
+		IEditorCallsiteTraceLifecycleTransport lifecycle = lazy;
+		long session = EditorCallsiteSessionIds.Next();
+		Assert.That(lifecycle.DeactivateEditorCallsiteTrace(session), Is.False);
+		Assert.That(created, Is.Zero,
+			"stopping orphaned metadata must not start an audio backend");
+
+		await lazy.PlayEditorPatternAsync(
+			new SongDocument(), (ObjectId)5U, session);
+		Assert.That(created, Is.EqualTo(1));
+		Assert.That(lifecycle.DeactivateEditorCallsiteTrace(session), Is.True);
+		Assert.Multiple(() =>
+		{
+			Assert.That(probe!.DeactivatedTrace, Is.EqualTo(session));
+			Assert.That(probe.StopCalls, Is.Zero,
+				"deactivation must not stop audible playback");
+		});
+	}
+
 	private sealed class ProbeTransport
 		: ISongPlaybackTransport, IEditorSequencePlaybackTransport,
-			IEditorPatternPlaybackTransport,
+			IEditorPatternPlaybackTransport, IEditorCallsiteTraceLifecycleTransport,
 			IPlaybackRuntimeDiagnosticsTransport,
 			IPlaybackAudioHealthTransport, IPlaybackSnapshotTransport,
 			ILiveSynthEditTransport
@@ -272,6 +300,12 @@ public sealed class LazySongPlaybackTransportTests
 		public long? EditorPatternSession { get; private set; }
 		public long? EditorTraceId { get; private set; }
 		public int StopCalls { get; private set; }
+		public long? DeactivatedTrace { get; private set; }
+		public bool DeactivateEditorCallsiteTrace(long session)
+		{
+			DeactivatedTrace = session;
+			return true;
+		}
 		public Task PlayEditorSequenceAsync(
 			SongDocument document, ObjectId sequenceId, long editorCallsiteSession)
 		{
