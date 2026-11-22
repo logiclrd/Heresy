@@ -208,7 +208,10 @@ public sealed class PlaybackRequestAudioSourceFactory :
 						new PlaybackPatternPosition(id, row, sequence, order)));
 			}
 		}
-		LiveRecursiveSource live = new(plan, positions);
+		ObjectId? editorActivePatternId = request is PatternPlaybackRequest
+			{ EditorCallsiteSession: Guid } traceRequest
+			? traceRequest.PatternId : null;
+		LiveRecursiveSource live = new(plan, positions, editorActivePatternId);
 		lock (_gate)
 		{
 			_active.Clear();
@@ -260,7 +263,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 
 	private sealed class LiveRecursiveSource(
 		PreparedIncrementalPlaybackPlan plan,
-		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput,
+		PlaybackPositionTimeline? positions,
+		ObjectId? editorActivePatternId) : ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput,
 		IFirPreparationAudioSource, IDisposable
 	{
 		// Publication and note messages share FIFO ordering on the producer.
@@ -271,6 +275,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		private readonly ConcurrentQueue<LiveAction> _commands = new();
 		private readonly ConcurrentQueue<SequencingDiagnostic> _warnings = new();
 		private int _olderAudioVoiceCount;
+		private bool _hadActiveEditorNotes;
 		public int OlderAudioVoiceCount => Volatile.Read(ref _olderAudioVoiceCount);
 		public SequencingDiagnostic[] DrainRuntimeDiagnostics()
 		{
@@ -321,6 +326,24 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				}
 			}
 			plan.Source.Render(frameCount, destination);
+			if (editorActivePatternId is ObjectId traced && positions is not null)
+			{
+				// Snapshot real renderer voices after each PCM block. These
+				// snapshots share the already bounded transport timeline and
+				// never expose mutable voice objects to the UI thread.
+				SequenceCallsite[] active = plan.Source.Session
+					.CollectActiveEditorNoteCallsites();
+				if (active.Length != 0 || _hadActiveEditorNotes)
+				{
+					TimeSpan at = TimeSpan.FromSeconds(
+						plan.Source.Session.NextFrame / (double)Format.SampleRate);
+					PlaybackPatternPosition? current = positions.GetPositionAt(at);
+					if (current?.PatternId == traced)
+						positions.Append(new PlaybackPositionTimelineEntry(at,
+							current with { EditorActiveNoteCallsites = active }));
+				}
+				_hadActiveEditorNotes = active.Length != 0;
+			}
 			// The note list is owned by this producer. Publish only the
 			// scalar aggregate, never expose mutable PCM-owned voice objects.
 			Volatile.Write(ref _olderAudioVoiceCount,

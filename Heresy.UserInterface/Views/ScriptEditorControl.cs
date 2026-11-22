@@ -260,6 +260,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 	public void SetPlaybackPosition(PlaybackPatternPosition? position)
 	{
 		IReadOnlyList<Heresy.Core.Sequences.SequenceCallsite> spans = [];
+		IReadOnlyList<Heresy.Core.Sequences.SequenceCallsite> activeNotes = [];
 		if (_sequence is not null
 			&& _editorTraceSession is Guid session
 			&& position?.EditorCallsiteSession == session
@@ -280,8 +281,11 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			spans = position.EditorPatternCallsites
 				?? (position.EditorPatternCallsite is { } action
 					? [action] : []);
+			activeNotes = position.EditorActiveNoteCallsites ?? [];
 		}
 		_playbackRenderer.SetSpans(spans, _source.Document.TextLength);
+		_playbackRenderer.SetActiveNoteSpans(activeNotes,
+			_source.Document.TextLength);
 		_source.TextArea.TextView.Redraw();
 	}
 
