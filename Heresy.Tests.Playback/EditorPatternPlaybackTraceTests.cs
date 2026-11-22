@@ -770,13 +770,14 @@ public sealed class EditorPatternPlaybackTraceTests
         }
     }
 
-    [Test]
-    public void DenseF6ActionLoopsAndDelayedCutsKeepRecentTimelineBounded()
+    [TestCase(128)]
+    [TestCase(1024)]
+    public void DenseF6ActionLoopsAndDelayedCutsKeepRecentTimelineBounded(
+        int actionCount)
     {
-        // Exercise the existing one-event cursor lookahead and bounded UI
-        // history together. This checks the published timeline, NOT a
-        // hard peak-memory guarantee for the unpublished priority queue.
-        const int actionCount = 128;
+        // Stress one-row bursts and delayed lookahead. Measure private
+        // pending-queue peak, but do not pretend a single run proves an
+        // absolute bound for arbitrary future script programs.
         const int blocks = 350;
         const int sampleRate = 48000;
         const string note = "Note(0, 0, _O(20))";
@@ -881,12 +882,24 @@ public sealed class EditorPatternPlaybackTraceTests
                 Assert.That(maxPublished, Is.GreaterThan(512),
                     "the stress case must exceed the UI pruning threshold");
                 Assert.That(timeline!.Entries.Count, Is.LessThanOrEqualTo(1024));
-                Assert.That(untraced!.Entries.All(e =>
+                Assert.That(timeline.EditorPendingPositionPeak,
+                    Is.GreaterThan(0),
+                    "the diagnostic must observe F6 lookahead/enqueue");
+                Assert.That(untraced!.EditorPendingPositionPeak, Is.Zero,
+                    "ordinary playback does not enqueue editor metadata");
+                Assert.That(untraced.Entries.All(e =>
                     e.Position.EditorCallsiteSession is null
                     && e.Position.EditorPatternCallsites is null
                     && e.Position.EditorActiveNoteCallsites is null),
                     Is.True, "ordinary playback must remain uninstrumented");
             });
+            TestContext.Progress.WriteLine(
+                $"Editor F6 pending queue profile: authored helper calls/row={actionCount}, "
+                + $"rendered blocks={blocks}, peak queued unpublished events="
+                + $"{timeline!.EditorPendingPositionPeak}, "
+                + $"peak retained published positions={maxPublished}. "
+                + "Diagnostic only; no universal pending-queue memory limit "
+                + "is inferred from these workloads.");
         }
         finally
         {
