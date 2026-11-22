@@ -188,10 +188,10 @@ public sealed class LazySongPlaybackTransport
 	/// Silently falling back to ordinary PlaySequenceAsync loses the trace.
 	/// </summary>
 	public Task PlayEditorSequenceAsync(
-		SongDocument document, ObjectId sequenceId, Guid editorCallsiteSession)
+		SongDocument document, ObjectId sequenceId, long editorCallsiteSession)
 	{
-		if (editorCallsiteSession == Guid.Empty)
-			throw new ArgumentException("Editor trace ID cannot be empty.",
+		if (editorCallsiteSession <= 0)
+			throw new ArgumentException("Editor trace ID must be positive.",
 				nameof(editorCallsiteSession));
 		return (GetInner() as IEditorSequencePlaybackTransport
 			?? throw new NotSupportedException(
@@ -200,10 +200,10 @@ public sealed class LazySongPlaybackTransport
 	}
 
 	public Task PlayEditorPatternAsync(
-		SongDocument document, ObjectId patternId, Guid editorCallsiteSession)
+		SongDocument document, ObjectId patternId, long editorCallsiteSession)
 	{
-		if (editorCallsiteSession == Guid.Empty)
-			throw new ArgumentException("Editor trace ID cannot be empty.",
+		if (editorCallsiteSession <= 0)
+			throw new ArgumentException("Editor trace ID must be positive.",
 				nameof(editorCallsiteSession));
 		return (GetInner() as IEditorPatternPlaybackTransport
 			?? throw new NotSupportedException(
