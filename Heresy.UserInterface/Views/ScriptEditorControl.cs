@@ -317,16 +317,12 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			|| callsite.Start >= _source.Document.TextLength)
 			return;
 
-		var view = _source.TextArea.TextView;
-		if (!view.VisualLinesValid || view.VisualLines.Count == 0)
-			return;
-
+		// TextView may not yet have valid visual lines (for example,
+		// immediately after opening the editor). AvaloniaEdit's ScrollTo
+		// handles that state and brings the requested location into view
+		// without changing the caret or selection. The callsite guard above
+		// prevents repeated PCM snapshots from fighting manual scrolling.
 		_lastFollowedCallsite = callsite;
-		int visibleStart = view.VisualLines[0].FirstDocumentLine.Offset;
-		int visibleEnd = view.VisualLines[^1].LastDocumentLine.EndOffset;
-		if (callsite.Start >= visibleStart && callsite.Start <= visibleEnd)
-			return;
-
 		var location = _source.Document.GetLocation(callsite.Start);
 		_source.ScrollTo(location.Line, location.Column);
 	}
