@@ -109,6 +109,60 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void ShortNoteInsideOnePcmBufferHasDistinctSourceLifetimeBoundaries()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Sustained", "sustained.wav", LongMonoWave()));
+        const string note = "Note(0, 0, _O(20))";
+        const string cut = "Cut(0, 0, timeOffsetSeconds: 0.003)";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Brief F6")
+        {
+            RowCount = 16, ChannelCount = 1,
+            Source = note + "; " + cut + ";",
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            // 512 frames span 10.67 ms. Both events fall inside this one
+            // buffer, and a client-block-only snapshot would miss the note.
+            float[] buffer = new float[512];
+            audio.Render(buffer.Length, buffer);
+            SequenceCallsite origin = new(0, note.Length);
+
+            PlaybackPatternPosition? atStart =
+                timeline!.GetPositionAt(TimeSpan.FromSeconds(0.001));
+            PlaybackPatternPosition? afterCut =
+                timeline.GetPositionAt(TimeSpan.FromSeconds(0.004));
+            Assert.That(atStart?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { origin }),
+                "the origin must be blue between Note and Cut deadlines");
+            Assert.That(afterCut?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "the origin must clear at the actual Cut deadline");
+
+            PlaybackPositionTimelineEntry[] noteChanges =
+                timeline.Entries.Where(x =>
+                    x.Position.EditorActiveNoteCallsites is { Count: > 0 })
+                    .ToArray();
+            Assert.That(noteChanges, Is.Not.Empty);
+            Assert.That(noteChanges[0].Offset,
+                Is.LessThan(TimeSpan.FromSeconds(0.003)),
+                "the blue source must begin before the Cut within the buffer");
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [Test]
     public void VirtualNnaContinueRetainsOriginalNoteCallsiteUntilPastCut()
     {
         SongDocument song = new();

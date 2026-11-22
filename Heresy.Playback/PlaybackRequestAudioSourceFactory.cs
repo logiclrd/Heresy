@@ -228,7 +228,20 @@ public sealed class PlaybackRequestAudioSourceFactory :
 						new PlaybackPatternPosition(id, row, sequence, order)));
 			}
 		}
-		LiveRecursiveSource live = new(plan, positions, updateActiveEditorNotes);
+		if (updateActiveEditorNotes is not null)
+		{
+			// Install only for an editor-F6 Script Pattern. Each snapshot
+			// comes from the actual PCM producer immediately after a note
+			// event or a rendered segment, never from a UI-thread estimate.
+			plan.Source.SetEditorTraceBoundary(frame =>
+			{
+				SequenceCallsite[] active = plan.Source.Session
+					.CollectActiveEditorNoteCallsites();
+				updateActiveEditorNotes(active, TimeSpan.FromSeconds(
+					frame / (double)plan.Source.Format.SampleRate));
+			});
+		}
+		LiveRecursiveSource live = new(plan, positions);
 		lock (_gate)
 		{
 			_active.Clear();
@@ -280,8 +293,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 
 	private sealed class LiveRecursiveSource(
 		PreparedIncrementalPlaybackPlan plan,
-		PlaybackPositionTimeline? positions,
-		Action<SequenceCallsite[], TimeSpan>? updateActiveEditorNotes) : ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput,
+		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput,
 		IFirPreparationAudioSource, IDisposable
 	{
 		// Publication and note messages share FIFO ordering on the producer.
@@ -342,17 +354,6 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				}
 			}
 			plan.Source.Render(frameCount, destination);
-			if (updateActiveEditorNotes is not null)
-			{
-				// Only changed voice sets produce entries. The callback updates
-				// producer-owned state shared by row/action callbacks, so they
-				// cannot briefly erase the sustained blue source highlight.
-				SequenceCallsite[] active = plan.Source.Session
-					.CollectActiveEditorNoteCallsites();
-				TimeSpan at = TimeSpan.FromSeconds(
-					plan.Source.Session.NextFrame / (double)Format.SampleRate);
-				updateActiveEditorNotes(active, at);
-			}
 			// The note list is owned by this producer. Publish only the
 			// scalar aggregate, never expose mutable PCM-owned voice objects.
 			Volatile.Write(ref _olderAudioVoiceCount,

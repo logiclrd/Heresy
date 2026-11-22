@@ -29,6 +29,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	private readonly Action? _repeatRoot;
 	private readonly Func<NoteEvent, long, long, NoteEvent>? _transform;
 	private readonly Action? _afterRender;
+	private Action<long>? _editorTraceBoundary;
 	// Only one event may be prefetched. Cancellation invalidates it by
 	// actual Pattern cursor ID rather than retaining a growing tombstone set.
 	// The timeline can retire a just-started child while it is still
@@ -75,6 +76,14 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	public PlaybackSession Session => _session;
 	public bool IsComplete => _complete || _inputStopped;
 	public TimeSpan LogicalDuration => _timeline.Elapsed;
+
+	/// <summary>Only F6 editor-pattern audition installs a trace observer.
+	/// The same PCM worker reports post-event and post-render boundaries
+	/// in source-frame order, allowing very short notes inside one client
+	/// buffer to have distinct lifetimes. No tracing during normal playback.</summary>
+	internal void SetEditorTraceBoundary(Action<long> observer)
+		=> _editorTraceBoundary = observer
+			?? throw new ArgumentNullException(nameof(observer));
 
 	/// <summary>Produce at most the remaining logical arrangement frames.
 	/// On reaching the natural end, return a short frame count so the
@@ -301,6 +310,9 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 				{
 					FlushRetiredScopes();
 				}
+				// This event can start or end a voice before the next PCM
+				// block boundary. Retain its real sample-frame deadline.
+				_editorTraceBoundary?.Invoke(now);
 				continue;
 			}
 
@@ -321,6 +333,9 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			_session.Render(now, count,
 				destination.Slice(written * channels, count * channels));
 			written += count;
+			// Detect natural voice retirement, completion of a flattened
+			// producer, and release/fade, not just explicit Note commands.
+			_editorTraceBoundary?.Invoke(_session.NextFrame);
 		}
 		_afterRender?.Invoke();
 		return written;
