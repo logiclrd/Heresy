@@ -48,7 +48,7 @@ public sealed record PlaybackPatternPosition
 
 	/// <summary>Optional editor-F6 provenance. The ID distinguishes playback
 	/// sessions even if the same source is recompiled or edited in place.</summary>
-	public Guid? EditorCallsiteSession { get; init; }
+	public long? EditorCallsiteSession { get; init; }
 	public SequenceCallsite? EditorPlayCallsite { get; init; }
 	public SequenceCallsite? EditorPatternCallsite { get; init; }
 
