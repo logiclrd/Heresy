@@ -74,6 +74,92 @@ public sealed class EditorPatternCallsiteTests
     }
 
     [Test]
+    public void EditorF6TracesTimingAndPhysicalControlsWithoutChangingMusic()
+    {
+        // A multiline argument list checks that original Roslyn spans
+        // include the full authored expression, not just the identifier.
+        const string source = """
+            Tempo(0, 125);
+            Speed(1, 6);
+            Seek(2, 0, 0.25);
+            Pan(
+                3, 0,
+                x: 0.4,
+                y: -0.2);
+            Surround(4, 0, true);
+            Filter(5, 0, .4, .3);
+            FilterCutoff(6, 0, .7);
+            FilterResonance(7, 0, .6);
+            """;
+        string[] helpers = { "Tempo(", "Speed(", "Seek(", "Pan(",
+            "Surround(", "Filter(", "FilterCutoff(", "FilterResonance(" };
+        ScriptPatternDefinition pattern = new((ObjectId)11U, "Controls")
+        {
+            Source = source, RowCount = 12, ChannelCount = 1,
+        };
+        var ordinaryCompile = ScriptCompiler.CompileIncrementalPattern(pattern);
+        var tracedCompile = ScriptCompiler.CompileIncrementalPattern(pattern,
+            instrumentActionCallsites: true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(ordinaryCompile.Success, Is.True,
+                string.Join("; ", ordinaryCompile.Diagnostics.Select(d => d.Message)));
+            Assert.That(tracedCompile.Success, Is.True,
+                string.Join("; ", tracedCompile.Diagnostics.Select(d => d.Message)));
+        });
+        NoteEvent[] ordinary = ordinaryCompile.Program!
+            .EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(x => x.Note).ToArray();
+        NoteEvent[] traced = tracedCompile.Program!
+            .EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(x => x.Note).ToArray();
+        Assert.That(ordinary, Has.Length.EqualTo(helpers.Length));
+        Assert.That(traced, Has.Length.EqualTo(helpers.Length));
+        for (int i = 0; i < helpers.Length; i++)
+        {
+            int start = source.IndexOf(helpers[i], StringComparison.Ordinal);
+            int end = i + 1 < helpers.Length
+                ? source.LastIndexOf(");", source.IndexOf(helpers[i + 1],
+                    StringComparison.Ordinal) - 1, StringComparison.Ordinal) + 1
+                : source.LastIndexOf(");", StringComparison.Ordinal) + 1;
+            Assert.Multiple(() =>
+            {
+                Assert.That(ordinary[i].EditorCallsite, Is.Null);
+                Assert.That(ordinary[i].EditorPatternRow, Is.Null);
+                Assert.That(traced[i].EditorCallsite,
+                    Is.EqualTo(new SequenceCallsite(start, end - start)));
+                Assert.That(traced[i].EditorPatternRow, Is.EqualTo(i));
+                Assert.That(ordinary[i].Offset, Is.EqualTo(traced[i].Offset));
+                Assert.That(ordinary[i].Target, Is.EqualTo(traced[i].Target));
+                Assert.That(ordinary[i].Commands.Select(c => c.GetType()),
+                    Is.EqualTo(traced[i].Commands.Select(c => c.GetType())));
+                Assert.That(ordinary[i].Commands.Select(c => c.ToString()),
+                    Is.EqualTo(traced[i].Commands.Select(c => c.ToString())));
+            });
+        }
+        Assert.That(pattern.Source, Is.EqualTo(source));
+    }
+
+    [TestCase("Tempo(default(SequenceCallsite), 0, 125);")]
+    [TestCase("Speed(default(SequenceCallsite), 0, 6);")]
+    [TestCase("Pan(default(SequenceCallsite), 0, 0, .2);")]
+    [TestCase("FilterResonance(default(SequenceCallsite), 0, 0, .5);")]
+    public void AuthoredSourceCannotSpoofControlCallsites(string source)
+    {
+        ScriptPatternDefinition pattern = new((ObjectId)1U, "Restricted")
+        {
+            RowCount = 4, ChannelCount = 1, Source = source,
+        };
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(pattern).Success,
+            Is.False);
+        var traced = ScriptCompiler.CompileIncrementalPattern(pattern,
+            instrumentActionCallsites: true);
+        Assert.That(traced.Success, Is.False);
+        Assert.That(traced.Diagnostics,
+            Has.Some.Property("Code").EqualTo("HRS2001"));
+    }
+
+    [Test]
     public void EditorF6TracesAllVoiceEndingHelpersWithoutChangingCommands()
     {
         const string source = """

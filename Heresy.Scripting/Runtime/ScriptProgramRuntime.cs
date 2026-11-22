@@ -289,6 +289,47 @@ public abstract class PatternScriptProgram
 		=> EmitWithEditorCallsite(callsite,
 			() => CutAllVirtual(row, timeOffsetSeconds));
 
+	// Editor-F6-only provenance for global timing and physical-channel
+	// playback controls. All actual parameter validation and emission
+	// remain in the existing authored overloads.
+	protected void Tempo(SequenceCallsite callsite, double row, double ticksPerDiachron)
+		=> EmitWithEditorCallsite(callsite,
+			() => Tempo(row, ticksPerDiachron));
+
+	protected void Speed(SequenceCallsite callsite, double row, int ticksPerRow)
+		=> EmitWithEditorCallsite(callsite,
+			() => Speed(row, ticksPerRow));
+
+	protected void Seek(SequenceCallsite callsite, double row, int channel,
+		double playbackSeconds, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Seek(row, channel, playbackSeconds, timeOffsetSeconds));
+
+	protected void Pan(SequenceCallsite callsite, double row, int channel,
+		double x, double y = 0, double z = 0, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Pan(row, channel, x, y, z, timeOffsetSeconds));
+
+	protected void Surround(SequenceCallsite callsite, double row, int channel,
+		bool enabled, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Surround(row, channel, enabled, timeOffsetSeconds));
+
+	protected void Filter(SequenceCallsite callsite, double row, int channel,
+		double cutoff, double resonance, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Filter(row, channel, cutoff, resonance, timeOffsetSeconds));
+
+	protected void FilterCutoff(SequenceCallsite callsite, double row, int channel,
+		double cutoff, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => FilterCutoff(row, channel, cutoff, timeOffsetSeconds));
+
+	protected void FilterResonance(SequenceCallsite callsite, double row,
+		int channel, double resonance, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => FilterResonance(row, channel, resonance, timeOffsetSeconds));
+
 	private void AppendNoteStart(
 		double row,
 		ChannelTarget target,

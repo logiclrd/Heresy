@@ -93,6 +93,61 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void SameRowGlobalAndPhysicalActionsAppearTogetherInPlayback()
+    {
+        SongDocument song = new();
+        // The global tempo/speed changes must be traced at their real
+        // musical deadline, with no reordering or dropped same-row spans.
+        const string source = """
+            Tempo(0, 125);
+            Speed(0, 6);
+            Pan(0, 0, 0.4);
+            Surround(8, 0, true);
+            FilterCutoff(8, 0, .5);
+            """;
+        ScriptPatternDefinition script = new((ObjectId)5U, "Timed controls")
+        {
+            RowCount = 16, ChannelCount = 1, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        Guid session = Guid.NewGuid();
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = session };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            float[] samples = new float[512];
+            audio.Render(samples.Length, samples);
+            PlaybackPatternPosition? zero = timeline!.GetPositionAt(TimeSpan.Zero);
+            Assert.That(zero, Is.Not.Null);
+            Assert.That(zero!.EditorCallsiteSession, Is.EqualTo(session));
+            string[] first = { "Tempo(0, 125)", "Speed(0, 6)", "Pan(0, 0, 0.4)" };
+            Assert.That(zero.EditorPatternCallsites, Is.EquivalentTo(first.Select(
+                call => new SequenceCallsite(source.IndexOf(call, StringComparison.Ordinal),
+                    call.Length))));
+            for (int i = 0; i < 2000; i++)
+                audio.Render(samples.Length, samples);
+            var later = timeline.Entries
+                .Where(x => x.Position.PatternRow == 8
+                    && x.Position.EditorPatternCallsites is { Count: 2 })
+                .Select(x => x.Position).LastOrDefault();
+            Assert.That(later, Is.Not.Null);
+            string[] second = { "Surround(8, 0, true)", "FilterCutoff(8, 0, .5)" };
+            Assert.That(later!.EditorPatternCallsites, Is.EquivalentTo(second.Select(
+                call => new SequenceCallsite(source.IndexOf(call, StringComparison.Ordinal),
+                    call.Length))));
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [Test]
     public void SameRowNoteOffAndCutActionsHaveIndependentPlaybackSpans()
     {
         SongDocument song = new();
