@@ -164,6 +164,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		// boundaries and scheduled actions must inherit the latest *actual*
 		// voice snapshot rather than temporarily clearing the blue overlay.
 		Action<HashSet<SequenceCallsite>, TimeSpan>? updateActiveEditorNotes = null;
+		Func<long?>? nextEditorPositionBoundaryFrame = null;
 		if (positions is not null)
 		{
 			if (request is SequencePlaybackRequest
@@ -299,6 +300,9 @@ public sealed class PlaybackRequestAudioSourceFactory :
 							nextPendingPositionFrame = frame;
 					}
 				}
+				nextEditorPositionBoundaryFrame = () =>
+					nextPendingPositionFrame == long.MaxValue
+						? null : nextPendingPositionFrame;
 				updateActiveEditorNotes = (next, at) =>
 				{
 					// Row/action metadata is visible only once the PCM clock
@@ -358,8 +362,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				updateActiveEditorNotes(scratch, TimeSpan.FromSeconds(
 					frame / (double)plan.Source.Format.SampleRate));
 			}, () => positions?.EditorCallsiteTracingEnabled == true,
-				() => nextPendingPositionFrame == long.MaxValue
-					? null : nextPendingPositionFrame);
+				nextEditorPositionBoundaryFrame);
 		}
 		LiveRecursiveSource live = new(plan, positions);
 		lock (_gate)
