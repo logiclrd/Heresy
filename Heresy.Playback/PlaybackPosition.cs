@@ -56,6 +56,10 @@ public sealed record PlaybackPatternPosition
 	/// Pattern row. Each timeline entry owns an immutable snapshot; this
 	/// transient editor metadata is never stored in the song.</summary>
 	public IReadOnlyList<SequenceCallsite>? EditorPatternCallsites { get; init; }
+
+	/// <summary>Actual currently sounding Note invocation spans, separate
+	/// from short-lived scheduled command activation highlights.</summary>
+	public IReadOnlyList<SequenceCallsite>? EditorActiveNoteCallsites { get; init; }
 }
 
 public sealed record PlaybackPositionTimelineEntry(

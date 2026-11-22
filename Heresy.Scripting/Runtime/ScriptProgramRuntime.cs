@@ -692,6 +692,9 @@ public abstract class PatternScriptProgram
 			|| Math.Abs(timeOffsetSeconds) > TimeSpan.MaxValue.TotalSeconds)
 			throw new ArgumentOutOfRangeException(nameof(timeOffsetSeconds));
 		Checkpoint();
+		if (command is StartNoteCommand start
+			&& _editorActionCallsite is { } origin)
+			command = start with { EditorOriginCallsite = origin };
 		_output.Append(
 			new NoteEvent(
 				new MusicalTime(TimeSpan.FromSeconds(timeOffsetSeconds), row),

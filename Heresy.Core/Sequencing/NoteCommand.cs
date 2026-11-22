@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
+
+using Heresy.Core.Sequences;
 using System.Numerics;
 
 using Heresy.Core.Envelopes;
@@ -74,6 +77,11 @@ public sealed record StartNoteCommand(
 	/// event-local layer; direct callers can supply custom typed overrides.
 	/// Prepared scripts map EventFilterDefinitionId to this property.</summary>
 	public FilterInstance? EventFilterConfiguration { get; init; }
+
+	/// <summary>Editor-F6-only original source span of a note start;
+	/// preserved into the renderer voice through NNA and release tails.</summary>
+	[JsonIgnore]
+	public SequenceCallsite? EditorOriginCallsite { get; init; }
 }
 
 /// <summary>Begin the live note-volume controller for one non-mixdown

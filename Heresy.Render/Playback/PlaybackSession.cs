@@ -5,6 +5,7 @@ using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
+using Heresy.Core.Sequences;
 using Heresy.Core.Timing;
 using Heresy.Core.Filters;
 using Heresy.Render.Configuration;
@@ -469,6 +470,29 @@ public sealed class PlaybackSession
 	}
 
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
+
+	/// <summary>Editor-only snapshot of note origins of *actual* surviving
+	/// renderer voices, including displaced NNA voices. Caller must be the
+	/// PCM producer. Ordinary playback never requests this snapshot.</summary>
+	public SequenceCallsite[] CollectActiveEditorNoteCallsites()
+	{
+		HashSet<SequenceCallsite>? spans = null;
+		void Add(PlaybackVoice? voice)
+		{
+			if (voice?.EditorOriginCallsite is { } origin)
+				(spans ??= []).Add(origin);
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+			Add(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			Add(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			Add(channel.CurrentVoice);
+		foreach (PlaybackVoice displaced in _virtualVoices)
+			Add(displaced);
+		return spans is null ? [] : spans.OrderBy(x => x.Start).ToArray();
+	}
+
 
 	/// <summary>Live source-controller registrations still owned by
 	/// active producer scopes. Descendants retain their controller objects
@@ -1836,6 +1860,7 @@ public sealed class PlaybackSession
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
 			OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId,
+			EditorOriginCallsite = start.EditorOriginCallsite,
 		};
 
 		channel.AttachVoice(
@@ -3027,6 +3052,7 @@ public sealed class PlaybackSession
 			enclosingEventFilters: BuildEnclosingEventFilters(enclosingSources));
 
 		voice.OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId;
+		voice.EditorOriginCallsite = start.EditorOriginCallsite;
 		voice.OriginPatternCursorId = _activePatternCursorId;
 		channel.AttachVoice(voice, eventFrame);
 	}
