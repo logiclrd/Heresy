@@ -771,6 +771,131 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void DenseF6ActionLoopsAndDelayedCutsKeepRecentTimelineBounded()
+    {
+        // Exercise the existing one-event cursor lookahead and bounded UI
+        // history together. This checks the published timeline, NOT a
+        // hard peak-memory guarantee for the unpublished priority queue.
+        const int actionCount = 128;
+        const int blocks = 350;
+        const int sampleRate = 48000;
+        const string note = "Note(0, 0, _O(20))";
+        const string action = "ChannelFilter(0, 0)";
+        const string delayed = "Cut(0, 0, timeOffsetSeconds: 2.0)";
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long sound", "long.wav", LongMonoWave()));
+        ScriptPatternDefinition script = new((ObjectId)5U, "Dense repeating F6")
+        {
+            RowCount = 2, ChannelCount = 1,
+            Source = note + "; for (int i = 0; i < " + actionCount
+                + "; i++) " + action + "; " + delayed
+                + "; ChannelFilter(1, 0);",
+        };
+        song.Add(script);
+        RenderConfiguration config = new(sampleRate, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero,
+                positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id, repeat: true) with
+        {
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+        };
+        PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
+            song, script.Id, repeat: true);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline),
+                Is.True);
+            Assert.That(ordinaryFactory.TryTakePlaybackPositionTimeline(
+                ordinaryRequest, out PlaybackPositionTimeline? untraced),
+                Is.True);
+            SequenceCallsite actionSpan = new(
+                script.Source.IndexOf(action, StringComparison.Ordinal),
+                action.Length);
+            SequenceCallsite cutSpan = new(
+                script.Source.IndexOf(delayed, StringComparison.Ordinal),
+                delayed.Length);
+            float[] tracedPcm = new float[512];
+            float[] ordinaryPcm = new float[512];
+            bool audible = false;
+            bool sawDelayedCut = false;
+            int maxPublished = 0;
+            for (int block = 0; block < blocks; block++)
+            {
+                Array.Clear(tracedPcm);
+                Array.Clear(ordinaryPcm);
+                traced.Render(tracedPcm.Length, tracedPcm);
+                ordinary.Render(ordinaryPcm.Length, ordinaryPcm);
+                for (int frame = 0; frame < tracedPcm.Length; frame++)
+                {
+                    if (Math.Abs(tracedPcm[frame] - ordinaryPcm[frame])
+                        > 0.000001f)
+                        Assert.Fail(
+                            $"Dense F6 traced/untraced PCM diverged: block {block}, frame {frame}");
+                    audible |= Math.Abs(ordinaryPcm[frame]) > 0.00001f;
+                }
+
+                int retained = timeline!.Entries.Count;
+                maxPublished = Math.Max(maxPublished, retained);
+                Assert.That(retained, Is.LessThanOrEqualTo(1024),
+                    $"The UI history may not grow indefinitely (block {block})");
+                Assert.That(timeline.Entries.Zip(timeline.Entries.Skip(1))
+                    .All(pair => pair.First.Offset <= pair.Second.Offset),
+                    Is.True, $"The UI timeline moved backwards in block {block}");
+
+                // The delayed source call may have been emitted during
+                // preparation but is not visible until its real due time.
+                double elapsedSeconds = (block + 1) * 512.0 / sampleRate;
+                bool dueCut = timeline.Entries.Any(e =>
+                    e.Position.EditorPatternCallsite == cutSpan);
+                if (elapsedSeconds < 2.0)
+                    Assert.That(dueCut, Is.False,
+                        "future delayed callsites must not activate early");
+                sawDelayedCut |= dueCut;
+
+                if (block == 0)
+                {
+                    PlaybackPatternPosition? zero = timeline.GetPositionAt(
+                        TimeSpan.Zero);
+                    Assert.That(zero?.EditorPatternCallsites,
+                        Does.Contain(actionSpan));
+                    Assert.That(timeline.Entries.Count(e =>
+                        e.Position.EditorPatternCallsite == actionSpan),
+                        Is.EqualTo(actionCount),
+                        "repeated helper calls still have distinct activations");
+                }
+            }
+            Assert.Multiple(() =>
+            {
+                Assert.That(audible, Is.True);
+                Assert.That(sawDelayedCut, Is.True,
+                    "eventually publish delayed Cut at its due deadline");
+                Assert.That(maxPublished, Is.GreaterThan(512),
+                    "the stress case must exceed the UI pruning threshold");
+                Assert.That(timeline!.Entries.Count, Is.LessThanOrEqualTo(1024));
+                Assert.That(untraced!.Entries.All(e =>
+                    e.Position.EditorCallsiteSession is null
+                    && e.Position.EditorPatternCallsites is null
+                    && e.Position.EditorActiveNoteCallsites is null),
+                    Is.True, "ordinary playback must remain uninstrumented");
+            });
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
     public void RepeatedF6PatternWithOffsetCutsNeverPublishesTimelineBackwards()
     {
         SongDocument song = new();
