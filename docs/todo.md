@@ -483,6 +483,21 @@ Do not reintroduce completed-task checklists here.
   separate from a read-only API-reference UI, which must document
   **only the functions currently available**.
 
+- [ ] **Relax restricted-C# allocations for Script Patterns and Script
+  Sequences (issue #58).** User-authored Pattern/Sequence scripts should
+  be permitted to allocate managed objects; the current restricted syntax
+  and semantic API must be reviewed and safely broadened, not simply
+  disabled. Keep compiler safety, deterministic streaming, work/memory
+  limits, source remapping and note/event ordering intact. The engine's
+  hot paths should avoid new allocations in code that systematically
+  executes more than roughly 100 times per musical row; in cooler paths,
+  try to avoid allocations rather than banning modest per-action/row
+  metadata. Repeated user allocation in tight loops merits resource
+  safeguards, but is not automatically forbidden by the engine policy.
+  **Separate future TODO; do not implement in F6 trace PR #50.**
+  Full discovery/acceptance: https://github.com/logiclrd/Heresy/issues/58
+  General policy: [allocation policy](allocation-policy.md).
+
 - [ ] **Revisit Instrument model, common tone editor, and procedural
   Script Instrument authoring (exploratory design; no implementation yet).**
   Currently `InstrumentDefinition` (Data Instrument) and
@@ -494,6 +509,20 @@ Do not reintroduce completed-task checklists here.
   cumbersome; this was observed while accepting PR #47 (math helpers
   compiled in Instrument expressions but were not auditioned through
   a fully configured Script Instrument).
+
+  **Updated future design (2026-11-22):** Consider richer procedural
+  control over the generated Instrument/tone object, including an
+  **initialization/setup block** preparing data for reuse by a
+  **per-note handler**. Setup allocations are permitted **without warning**;
+  per-note allocations are permitted **with an advisory warning**, not
+  rejected merely for allocating. Define initialization lifetime,
+  output-object ownership, generation isolation and advisory detection
+  during discovery. Do not apply these semantics to the current three
+  Script Instrument expressions. The general engine allocation policy
+  remains strict for systematically hot paths (>~100 calls/row) and
+  advisory/avoid-when-practical elsewhere.
+  **Planning contract (not current API):**
+  [Script Instrument rework](script-instrument-rework-plan.md).
 
   Investigate whether a Script Instrument is effectively a **superset**
   of a Data Instrument, should reuse the **same fully featured editable
