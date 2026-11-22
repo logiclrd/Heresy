@@ -173,6 +173,93 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void ConcurrentNaturalEndsWithinOneBufferKeepIndependentSourceSpans()
+    {
+        SongDocument song = new();
+        // Independent note origins finish at about 2 ms and 6 ms,
+        // both inside one 512-frame output block at 48 kHz.
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Early ending", "early.wav", MonoWave(16)));
+        song.Add(SampleDefinition.CreateImported((ObjectId)21U,
+            "Later ending", "later.wav", MonoWave(48)));
+        const string early = "Note(0, 0, _O(20))";
+        const string late = "Note(0, 1, _O(21))";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Overlapping EOF")
+        {
+            RowCount = 16, ChannelCount = 2,
+            Source = early + "; " + late + ";",
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+        PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
+            song, script.Id);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline),
+                Is.True);
+            float[] withTrace = new float[512];
+            float[] withoutTrace = new float[512];
+            traced.Render(withTrace.Length, withTrace);
+            ordinary.Render(withoutTrace.Length, withoutTrace);
+
+            SequenceCallsite earlySpan = new(0, early.Length);
+            SequenceCallsite lateSpan = new(early.Length + 2, late.Length);
+            Assert.That(timeline!.GetPositionAt(TimeSpan.FromMilliseconds(1))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { earlySpan, lateSpan }),
+                "both Notes have independent origins while both sound");
+            Assert.That(timeline.GetPositionAt(TimeSpan.FromMilliseconds(3))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { lateSpan }),
+                "the earlier Sample EOF must not clear the other Note");
+            Assert.That(timeline.GetPositionAt(TimeSpan.FromMilliseconds(7))
+                    ?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "the last origin clears at its own natural EOF");
+
+            PlaybackPositionTimelineEntry[] changes = timeline.Entries
+                .Where(e => e.Offset > TimeSpan.Zero &&
+                    e.Offset < TimeSpan.FromMilliseconds(7) &&
+                    e.Position.EditorActiveNoteCallsites is not null)
+                .ToArray();
+            Assert.That(changes.Any(e =>
+                e.Offset >= TimeSpan.FromMilliseconds(1.5) &&
+                e.Offset <= TimeSpan.FromMilliseconds(2.5) &&
+                e.Position.EditorActiveNoteCallsites!.SequenceEqual(
+                    new[] { lateSpan })),
+                Is.True, "the first completion has its own in-block boundary");
+            Assert.That(changes.Any(e =>
+                e.Offset >= TimeSpan.FromMilliseconds(5.5) &&
+                e.Offset <= TimeSpan.FromMilliseconds(6.5) &&
+                e.Position.EditorActiveNoteCallsites!.Count == 0),
+                Is.True, "the second completion has its own in-block boundary");
+            Assert.That(timeline.Entries.Count, Is.LessThan(20),
+                "ordinary buffer boundaries must not multiply trace entries");
+
+            Assert.That(withTrace.Any(x => Math.Abs(x) > 0.00001f),
+                Is.True, "both Samples must actually produce PCM");
+            for (int frame = 0; frame < withTrace.Length; frame++)
+                Assert.That(withTrace[frame], Is.EqualTo(withoutTrace[frame])
+                    .Within(0.000001f),
+                    $"F6 tracing changed combined PCM at frame {frame}");
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
     public void RepeatedF6PatternWithOffsetCutsNeverPublishesTimelineBackwards()
     {
         SongDocument song = new();
