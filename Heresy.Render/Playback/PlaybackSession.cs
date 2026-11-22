@@ -476,6 +476,45 @@ public sealed class PlaybackSession
 	/// voices (including displaced NNA or release). A flattened source is
 	/// playing across silent gaps in its child pattern, even if no descendant
 	/// voice currently exists. Caller must be the PCM producer.</summary>
+	/// <summary>Next provable natural/release/fade voice-completion
+	/// frame relevant to an editor-F6 Note callsite. Used only by the
+	/// instrumented PCM producer to expose a short note's exact blue
+	/// lifetime even when no other musical event splits its output block.
+	/// Unknown or unbounded lifetimes are intentionally not predicted.
+	/// Never call from the UI thread or from normal playback.</summary>
+	public long? GetNextEditorOriginCompletionFrameExclusive(long fromFrame)
+	{
+		long? earliest = null;
+		void Consider(PlaybackVoice? voice)
+		{
+			if (voice is null)
+				return;
+			bool traced = voice.EditorOriginCallsite.HasValue;
+			if (!traced)
+				foreach (FlattenedSourceVolume scope in voice.EnclosingSourceVolumes)
+					if (scope.EditorOriginCallsite.HasValue)
+					{
+						traced = true;
+						break;
+					}
+			if (!traced)
+				return;
+			long? end = GetEffectiveVoiceEndFrameExclusive(voice, fromFrame);
+			if (end is long frame && frame > fromFrame
+				&& (!earliest.HasValue || frame < earliest.Value))
+				earliest = frame;
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackVoice displaced in _virtualVoices)
+			Consider(displaced);
+		return earliest;
+	}
+
 	public SequenceCallsite[] CollectActiveEditorNoteCallsites()
 	{
 		HashSet<SequenceCallsite>? spans = null;

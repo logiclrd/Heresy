@@ -109,6 +109,70 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void NaturalSampleEndInsideSinglePcmBufferHasExactBlueLifetimeAndPcmParity()
+    {
+        SongDocument song = new();
+        // Sixteen frames at 8 kHz end after approximately 2 ms at
+        // 48 kHz output, entirely inside a single 512-frame buffer.
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Two millisecond Sample", "brief.wav", MonoWave(16)));
+        const string note = "Note(0, 0, _O(20))";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Natural ending")
+        {
+            RowCount = 16, ChannelCount = 1, Source = note + ";",
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+        PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
+            song, script.Id);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline),
+                Is.True);
+            float[] withTrace = new float[512];
+            float[] withoutTrace = new float[512];
+            traced.Render(withTrace.Length, withTrace);
+            ordinary.Render(withoutTrace.Length, withoutTrace);
+
+            SequenceCallsite sourceSpan = new(0, note.Length);
+            Assert.That(timeline!.GetPositionAt(TimeSpan.FromMilliseconds(1))
+                    ?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { sourceSpan }),
+                "the note must be blue during its natural sample playback");
+            Assert.That(timeline.GetPositionAt(TimeSpan.FromMilliseconds(3))
+                    ?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "blue clears at the natural end, not buffer end");
+            Assert.That(timeline.Entries.Any(e =>
+                    e.Offset > TimeSpan.Zero
+                    && e.Offset < TimeSpan.FromMilliseconds(3)
+                    && e.Position.EditorActiveNoteCallsites is { Count: 0 }),
+                Is.True, "a precise in-buffer note-end transition is published");
+
+            Assert.That(withTrace.Any(x => Math.Abs(x) > 0.00001f),
+                Is.True, "the test's Sample produces audible PCM");
+            for (int i = 0; i < withTrace.Length; i++)
+                Assert.That(withTrace[i], Is.EqualTo(withoutTrace[i])
+                    .Within(0.000001f),
+                    $"F6 instrumentation changed PCM at frame {i}");
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
     public void RepeatedF6PatternWithOffsetCutsNeverPublishesTimelineBackwards()
     {
         SongDocument song = new();
@@ -492,10 +556,11 @@ public sealed class EditorPatternPlaybackTraceTests
         finally { (audio as IDisposable)?.Dispose(); }
     }
 
-    private static byte[] LongMonoWave()
+    private static byte[] LongMonoWave() => MonoWave(8000 * 2);
+
+    private static byte[] MonoWave(int frames)
     {
         const int sampleRate = 8000;
-        const int frames = sampleRate * 2;
         using MemoryStream stream = new();
         using BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true);
         writer.Write(Encoding.ASCII.GetBytes("RIFF"));

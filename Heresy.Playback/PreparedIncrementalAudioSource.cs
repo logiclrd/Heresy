@@ -326,6 +326,16 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			if (_endInputAtNaturalCompletion && _complete && !_session.InputEnded && !_inputStopped)
 				boundary = Math.Min(boundary,
 					FrameTime.Ceiling(_timeline.Elapsed, Format.SampleRate));
+			if (_editorTraceBoundary is not null
+				&& _session.GetNextEditorOriginCompletionFrameExclusive(now)
+					is long naturalEnd)
+			{
+				// Only editor-F6 rendering splits at a known actual
+				// voice end. Ordinary PCM work stays on the original fast
+				// path. The existing post-segment callback records the
+				// transition at this precise sample-frame boundary.
+				boundary = Math.Min(boundary, naturalEnd);
+			}
 			if (boundary <= now)
 				throw new InvalidOperationException(
 					"Incremental rendering could not advance its musical clock.");
