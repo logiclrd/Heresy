@@ -770,15 +770,16 @@ public sealed class EditorPatternPlaybackTraceTests
         }
     }
 
-    [Test]
-    public void LargePcmBufferLookaheadCanQueueSeveralRowsWithoutPublishingFuturePositions()
+    [TestCase(48000, 5)]
+    [TestCase(240000, 1)]
+    public void LargePcmBufferLookaheadCanQueueSeveralRowsWithoutPublishingFuturePositions(
+        int framesPerBlock, int blocks)
     {
-        // Small PCM buffers exercised action bursts, but not the number of
-        // otherwise-silent root rows the cursor can traverse in one render
-        // call. This is a deliberately longer block, not an assertion that
-        // arbitrary authored scripts have a universal queue-size bound.
+        // F6-only metadata backpressure splits long PCM buffers at due
+        // presentation rows, preserving one chronological event stream and
+        // identical PCM. Without backpressure the 48k-frame case peaked at
+        // nine unpublished positions rather than the earlier measured two.
         const int sampleRate = 48000;
-        const int framesPerBlock = 48000;
         const string note = "Note(0, 0, _O(20))";
         const string cut = "Cut(32, 0)";
         SongDocument song = new();
@@ -817,7 +818,7 @@ public sealed class EditorPatternPlaybackTraceTests
             float[] ordinaryPcm = new float[framesPerBlock];
             bool audible = false;
 
-            for (int block = 0; block < 5; block++)
+            for (int block = 0; block < blocks; block++)
             {
                 Array.Clear(tracedPcm);
                 Array.Clear(ordinaryPcm);
@@ -831,7 +832,8 @@ public sealed class EditorPatternPlaybackTraceTests
                     audible |= Math.Abs(ordinaryPcm[frame]) > 0.00001f;
                 }
 
-                TimeSpan renderedThrough = TimeSpan.FromSeconds(block + 1);
+                TimeSpan renderedThrough = TimeSpan.FromSeconds(
+                    (block + 1) * framesPerBlock / (double)sampleRate);
                 Assert.That(timeline!.Entries.Zip(timeline.Entries.Skip(1))
                     .All(pair => pair.First.Offset <= pair.Second.Offset),
                     Is.True, $"F6 row positions moved backwards in block {block}");
@@ -842,22 +844,26 @@ public sealed class EditorPatternPlaybackTraceTests
                 if (block == 0)
                 {
                     Assert.That(timeline.EditorPendingPositionPeak,
-                        Is.GreaterThan(2),
-                        "one long PCM block can traverse several silent rows; "
-                        + "the earlier measured peak of two is not a hard bound");
+                        Is.InRange(1, 3),
+                        "F6 should flush due rows incrementally rather than "
+                        + "retaining the whole output block's row history");
                     Assert.That(timeline.Entries.Any(e =>
                         e.Position.PatternRow >= 5), Is.True,
                         "multiple due row boundaries must be published on the first block");
-                    Assert.That(timeline.Entries.Any(e =>
-                        e.Position.EditorPatternCallsite == cutSpan), Is.False,
-                        "a future Cut must not light up before it is due");
+                    if (renderedThrough < TimeSpan.FromSeconds(3))
+                        Assert.That(timeline.Entries.Any(e =>
+                            e.Position.EditorPatternCallsite == cutSpan), Is.False,
+                            "a future Cut must not light up before it is due");
                 }
             }
 
             Assert.Multiple(() =>
             {
                 Assert.That(audible, Is.True);
-                Assert.That(timeline!.Entries.Any(e =>
+                Assert.That(timeline!.EditorPendingPositionPeak,
+                    Is.InRange(1, 3),
+                    "large buffers must not retain every silent row before flushing");
+                Assert.That(timeline.Entries.Any(e =>
                     e.Position.EditorPatternCallsite == cutSpan
                     && e.Offset > TimeSpan.FromSeconds(1)), Is.True,
                     "the distant Cut must activate at its due PCM time");
@@ -871,8 +877,8 @@ public sealed class EditorPatternPlaybackTraceTests
                 $"F6 large-buffer lookahead: frames/block={framesPerBlock}, "
                 + $"peak unpublished positions={timeline!.EditorPendingPositionPeak}, "
                 + $"retained published positions={timeline.Entries.Count}. "
-                + "This workload disproves a fixed peak-of-two inference, "
-                + "but establishes no universal queue bound.");
+                + "Future row metadata is flushed at PCM segment boundaries "
+                + "without changing the audio event stream.");
         }
         finally
         {
