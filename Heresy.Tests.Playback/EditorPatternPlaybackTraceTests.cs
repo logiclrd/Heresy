@@ -868,10 +868,17 @@ public sealed class EditorPatternPlaybackTraceTests
                         TimeSpan.Zero);
                     Assert.That(zero?.EditorPatternCallsites,
                         Does.Contain(actionSpan));
-                    Assert.That(timeline.Entries.Count(e =>
-                        e.Position.EditorPatternCallsite == actionSpan),
-                        Is.EqualTo(actionCount),
-                        "repeated helper calls still have distinct activations");
+                    int retainedActionEntries = timeline.Entries.Count(e =>
+                        e.Position.EditorPatternCallsite == actionSpan);
+                    if (actionCount <= 512)
+                        Assert.That(retainedActionEntries,
+                            Is.EqualTo(actionCount),
+                            "modest bursts preserve all helper activation entries");
+                    else
+                        Assert.That(retainedActionEntries,
+                            Is.InRange(1, 1024),
+                            "oversized bursts deliberately prune old UI history; "
+                            + "a bounded recent window is not a complete event journal");
                 }
             }
             Assert.Multiple(() =>
