@@ -171,6 +171,86 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void FlattenedNestedPatternsKeepDistinctNoteOriginsUntilDescendantsEnd()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long sustained", "sustained.wav", LongMonoWave()));
+
+        // A flattened Script Note is only an instigator, not a renderer voice.
+        // Real notes start two levels below it. Reusing the same nested
+        // source must not coalesce independent invocation-owned origins.
+        DataPatternDefinition leaf = new((ObjectId)2U, "Leaf")
+        {
+            RowCount = 16, ChannelCount = 1,
+        };
+        leaf.Grid.GetOrCreateCell(2, 0).Note =
+            new StartPatternNote((ObjectId)20U);
+        song.Add(leaf);
+        DataPatternDefinition middle = new((ObjectId)3U, "Middle")
+        {
+            RowCount = 16, ChannelCount = 1,
+        };
+        middle.Grid.GetOrCreateCell(0, 0).Note =
+            new StartPatternNote(leaf.Id);
+        song.Add(middle);
+
+        const string first = "Note(0, 0, _O(3))";
+        const string second = "Note(0, 1, _O(3))";
+        string source = first + "; " + second +
+            "; Cut(8, 0); Cut(12, 1);";
+        ScriptPatternDefinition root = new((ObjectId)5U, "Flattened owners")
+        {
+            RowCount = 16, ChannelCount = 2, Source = source,
+        };
+        song.Add(root);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, root.Id) with { EditorCallsiteSession = Guid.NewGuid() };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            SequenceCallsite firstSpan = new(source.IndexOf(first,
+                StringComparison.Ordinal), first.Length);
+            SequenceCallsite secondSpan = new(source.IndexOf(second,
+                StringComparison.Ordinal), second.Length);
+            float[] samples = new float[512];
+            double seconds = 0;
+            PlaybackPatternPosition? AtRow(int target)
+            {
+                for (int i = 0; i < 700; i++)
+                {
+                    audio.Render(samples.Length, samples);
+                    seconds += samples.Length / 48000.0;
+                    var pos = timeline!.GetPositionAt(TimeSpan.FromSeconds(seconds));
+                    if (pos?.PatternRow >= target)
+                        return pos;
+                }
+                Assert.Fail($"Did not reach root row {target}");
+                return null;
+            }
+
+            Assert.That(AtRow(1)?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "a flattened instigator with no child voice is not blue");
+            Assert.That(AtRow(3)?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { firstSpan, secondSpan }),
+                "nested descendant voices carry their distinct top-level origins");
+            Assert.That(AtRow(9)?.EditorActiveNoteCallsites,
+                Is.EquivalentTo(new[] { secondSpan }),
+                "Cut only retires the first nested source's descendants");
+            Assert.That(AtRow(13)?.EditorActiveNoteCallsites ?? [],
+                Is.Empty, "both instigators cease when their voices are retired");
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [Test]
     public void OrdinaryPlaybackHasNoSustainedNoteTraceMetadata()
     {
         SongDocument song = new();
