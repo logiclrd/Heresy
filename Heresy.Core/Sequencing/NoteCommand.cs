@@ -157,6 +157,12 @@ public sealed record BeginFlattenedSourceVolumeCommand(
 	/// flattened logical note passes its initial Filter to each descendant
 	/// voice without inserting a private mixdown.</summary>
 	public FilterInstance? EventFilterConfiguration { get; init; }
+
+	/// <summary>Editor-F6-only authored Note origin of this flattened
+	/// instigator; descendants retain it through their scope reference.
+	/// No synthetic parent voice is created for a flattened source.</summary>
+	[JsonIgnore]
+	public SequenceCallsite? EditorOriginCallsite { get; init; }
 }
 
 /// <summary>Lifecycle operation on a flattened instigating note.

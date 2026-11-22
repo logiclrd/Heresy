@@ -479,8 +479,17 @@ public sealed class PlaybackSession
 		HashSet<SequenceCallsite>? spans = null;
 		void Add(PlaybackVoice? voice)
 		{
-			if (voice?.EditorOriginCallsite is { } origin)
+			if (voice is null)
+				return;
+			if (voice.EditorOriginCallsite is { } origin)
 				(spans ??= []).Add(origin);
+			// A flattened Pattern or Sequence has no parent renderer voice.
+			// The descendants are the actual sounds, including displaced
+			// NNA tails; their retained scope controllers identify each
+			// originating script Note without inventing an audio lifetime.
+			foreach (FlattenedSourceVolume ancestor in voice.EnclosingSourceVolumes)
+				if (ancestor.EditorOriginCallsite is { } source)
+					(spans ??= []).Add(source);
 		}
 		foreach (PlaybackChannelState channel in _channels.Values)
 			Add(channel.CurrentVoice);
@@ -2881,7 +2890,8 @@ public sealed class PlaybackSession
 			begin.InitialVolume, _tickClock,
 			_context.Configuration.SampleRate,
 			begin.EventFilterConfiguration,
-			begin.InitialPitchMultiplier);
+			begin.InitialPitchMultiplier,
+			begin.EditorOriginCallsite);
 		_sourceVolumes.Add(begin.ChildScopeId, source);
 		channel.CurrentFlattenedSource = source;
 		channel.CaptureCurrentNoteVolume(begin.InitialVolume);

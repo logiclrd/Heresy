@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 
 using Heresy.Core.Sequencing;
+using Heresy.Core.Sequences;
 
 namespace Heresy.Render.Playback;
 
@@ -45,7 +46,8 @@ internal sealed class FlattenedSourceVolume
 	public FlattenedSourceVolume(long scopeId, double volume,
 		TrackerTickClock clock, int sampleRate,
 		FilterInstance? eventFilter = null,
-		double initialPitchMultiplier = 1.0)
+		double initialPitchMultiplier = 1.0,
+		SequenceCallsite? editorOriginCallsite = null)
 	{
 		if (scopeId <= 0)
 			throw new ArgumentOutOfRangeException(nameof(scopeId));
@@ -56,6 +58,7 @@ internal sealed class FlattenedSourceVolume
 		if (!(initialPitchMultiplier > 0.0) || !double.IsFinite(initialPitchMultiplier))
 			throw new ArgumentOutOfRangeException(nameof(initialPitchMultiplier));
 		_initialPitchMultiplier = initialPitchMultiplier;
+		EditorOriginCallsite = editorOriginCallsite;
 		ScopeId = scopeId;
 		EventFilterConfiguration = eventFilter?.Clone();
 		_volume = volume;
@@ -64,6 +67,11 @@ internal sealed class FlattenedSourceVolume
 	}
 
 	public long ScopeId { get; }
+
+	/// <summary>Author's editor-F6 callsite which instigated the entire
+	/// flattened source. Survives scope producer retirement because actual
+	/// descendant voices retain their owning controller by reference.</summary>
+	internal SequenceCallsite? EditorOriginCallsite { get; }
 
 	/// <summary>Optional authored event-local Filter on the flattened
 	/// instigating note. Descendants clone it into their own DSP chains.</summary>

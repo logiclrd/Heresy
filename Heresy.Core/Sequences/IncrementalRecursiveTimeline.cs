@@ -600,6 +600,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								EventFilterConfiguration =
 									start.EventFilterConfiguration?.Clone(),
 								InitialPitchMultiplier = start.PitchMultiplier,
+								EditorOriginCallsite = start.EditorOriginCallsite,
 							});
 							try
 							{
