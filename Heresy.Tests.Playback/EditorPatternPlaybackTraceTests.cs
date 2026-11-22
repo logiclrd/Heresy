@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Linq;
@@ -804,6 +805,163 @@ public sealed class EditorPatternPlaybackTraceTests
                 "this case never creates a sounding renderer voice");
         }
         finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    // Diagnostic profile only: timing and allocation amounts are not CI
+    // correctness budgets. Ordinary transport must not install any F6
+    // callsite metadata, while both producer paths render identical PCM.
+    [Test]
+    public void CompareOrdinaryAndEditorF6PatternProducerCostsWithoutTimingThresholds()
+    {
+        const int sampleRate = 48000;
+        const int blockFrames = 512;
+        const int warmupBlocks = 64;
+        const int measuredBlocks = 96;
+        const int rounds = 7;
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Steady profile sample", "steady.wav", LongMonoWave()));
+        const string note = "Note(0, 0, _O(20))";
+        ScriptPatternDefinition script = new((ObjectId)5U, "F6 profile")
+        {
+            RowCount = 8, ChannelCount = 1,
+            Source = note + "; NoteVirtual(2, 7U, _O(20)); "
+                + "Cut(4, 0); CutVirtual(6, 7U);",
+        };
+        song.Add(script);
+        RenderConfiguration config = new(sampleRate, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+
+        // Each independent request freezes the same song. A session ID is
+        // the entire switch enabling editor-only compiler and PCM callbacks.
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
+            song, script.Id, repeat: true);
+        long editorSession = EditorCallsiteSessionIds.Next();
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id, repeat: true) with
+        {
+            EditorCallsiteSession = editorSession,
+        };
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        try
+        {
+            Assert.That(ordinaryFactory.TryTakePlaybackPositionTimeline(
+                ordinaryRequest, out PlaybackPositionTimeline? ordinaryTimeline),
+                Is.True);
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? tracedTimeline),
+                Is.True);
+            Assert.That(ordinaryTimeline, Is.Not.Null);
+            Assert.That(tracedTimeline, Is.Not.Null);
+
+            float[] ordinaryPcm = new float[blockFrames];
+            float[] tracedPcm = new float[blockFrames];
+            bool audible = false;
+            for (int block = 0; block < warmupBlocks; block++)
+            {
+                Array.Clear(ordinaryPcm);
+                Array.Clear(tracedPcm);
+                ordinary.Render(blockFrames, ordinaryPcm);
+                traced.Render(blockFrames, tracedPcm);
+                for (int frame = 0; frame < blockFrames; frame++)
+                {
+                    if (Math.Abs(ordinaryPcm[frame] - tracedPcm[frame]) > 0.000001f)
+                        Assert.Fail(
+                            $"Editor F6 tracing changed PCM in warmup block {block} frame {frame}.");
+                    audible |= Math.Abs(ordinaryPcm[frame]) > 0.00001f;
+                }
+            }
+            Assert.That(audible, Is.True, "profile must exercise audible voices");
+            Assert.That(tracedTimeline!.Entries.Any(e =>
+                e.Position.EditorCallsiteSession == editorSession
+                && e.Position.EditorPatternCallsites is { Count: > 0 }),
+                Is.True, "the F6 side must actually publish authored callsite events");
+
+            double[] ordinaryMicros = new double[rounds];
+            double[] tracedMicros = new double[rounds];
+            long[] ordinaryBytes = new long[rounds];
+            long[] tracedBytes = new long[rounds];
+
+            void Measure(IAudioOutputSource output, float[] pcm,
+                double[] micros, long[] bytes, int round)
+            {
+                long beforeAllocation = GC.GetAllocatedBytesForCurrentThread();
+                long start = Stopwatch.GetTimestamp();
+                for (int block = 0; block < measuredBlocks; block++)
+                {
+                    Array.Clear(pcm);
+                    output.Render(blockFrames, pcm);
+                }
+                micros[round] = Stopwatch.GetElapsedTime(start).TotalMilliseconds
+                    * 1000 / measuredBlocks;
+                bytes[round] = GC.GetAllocatedBytesForCurrentThread()
+                    - beforeAllocation;
+            }
+
+            // Keep both producers on the same absolute playback position
+            // for every pair. Alternating the order reduces fixed order bias.
+            for (int round = 0; round < rounds; round++)
+            {
+                if (round % 2 == 0)
+                {
+                    Measure(ordinary, ordinaryPcm, ordinaryMicros, ordinaryBytes, round);
+                    Measure(traced, tracedPcm, tracedMicros, tracedBytes, round);
+                }
+                else
+                {
+                    Measure(traced, tracedPcm, tracedMicros, tracedBytes, round);
+                    Measure(ordinary, ordinaryPcm, ordinaryMicros, ordinaryBytes, round);
+                }
+            }
+
+            // No ordinary row (including subsequent pattern repetitions)
+            // may contain a traced active voice, action or session identity.
+            Assert.That(ordinaryTimeline!.Entries, Is.Not.Empty);
+            Assert.That(ordinaryTimeline.Entries.All(e =>
+                e.Position.EditorCallsiteSession is null
+                && e.Position.EditorPatternCallsite is null
+                && e.Position.EditorPatternCallsites is null
+                && e.Position.EditorActiveNoteCallsites is null),
+                Is.True, "ordinary playback must remain uninstrumented");
+            Assert.That(tracedTimeline.Entries.Any(e =>
+                e.Position.EditorCallsiteSession == editorSession
+                && e.Position.EditorActiveNoteCallsites is { Count: > 0 }),
+                Is.True, "the traced path must exercise actual sounding origins");
+
+            static double Median(double[] values)
+            {
+                double[] ordered = values.OrderBy(value => value).ToArray();
+                return ordered[ordered.Length / 2];
+            }
+
+            double ordinaryUs = Median(ordinaryMicros);
+            double tracedUs = Median(tracedMicros);
+            long ordinaryAllocated = ordinaryBytes.Sum();
+            long tracedAllocated = tracedBytes.Sum();
+            Assert.That(double.IsFinite(ordinaryUs) && double.IsFinite(tracedUs),
+                Is.True);
+            TestContext.Progress.WriteLine(
+                $"Editor F6 producer profile: sample rate={sampleRate}, "
+                + $"block frames={blockFrames}, warmup blocks={warmupBlocks}, "
+                + $"paired rounds={rounds}, blocks/arm/round={measuredBlocks}, "
+                + $"ordinary median us/block={ordinaryUs:F3}, "
+                + $"traced median us/block={tracedUs:F3}, "
+                + $"traced/ordinary median ratio={tracedUs / ordinaryUs:F3}, "
+                + $"ordinary total render-thread allocation bytes={ordinaryAllocated}, "
+                + $"traced total render-thread allocation bytes={tracedAllocated}. "
+                + "Measurements include producer callback/timeline maintenance "
+                + "but exclude compiler preparation, UI painting and device jitter.");
+        }
+        finally
+        {
+            (ordinary as IDisposable)?.Dispose();
+            (traced as IDisposable)?.Dispose();
+        }
     }
 
     [Test]
