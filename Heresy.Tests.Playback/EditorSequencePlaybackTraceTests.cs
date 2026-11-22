@@ -1,4 +1,6 @@
 using System;
+using System.Linq;
+using System.Threading.Tasks;
 using System.Numerics;
 
 using Heresy.Core.Objects;
@@ -15,6 +17,24 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class EditorSequencePlaybackTraceTests
 {
+    [Test]
+    public void EditorF6SessionIdAllocatorIsMonotonicAndUniqueAcrossThreads()
+    {
+        long before = EditorCallsiteSessionIds.Next();
+        const int count = 4096;
+        long[] ids = new long[count];
+        Parallel.For(0, count, i =>
+            ids[i] = EditorCallsiteSessionIds.Next());
+
+        Assert.That(ids, Is.All.GreaterThan(0L),
+            "zero and negative IDs are reserved and may not identify a session");
+        Assert.That(ids.Distinct().Count(), Is.EqualTo(count),
+            "parallel editor initiators must never allocate duplicate sessions");
+        long after = EditorCallsiteSessionIds.Next();
+        Assert.That(after, Is.GreaterThan(ids.Max()));
+        Assert.That(ids.Min(), Is.GreaterThan(before));
+    }
+
     [Test]
     public void SourceFactoryDeliversPlayProvenanceOnlyForEditorTraceRequest()
     {
@@ -36,7 +56,7 @@ public sealed class EditorSequencePlaybackTraceTests
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
         });
         PlaybackRequestAudioSourceFactory factory = new(config);
-        Guid session = Guid.NewGuid();
+        long session = EditorCallsiteSessionIds.Next();
         SequencePlaybackRequest traceRequest =
             SequencePlaybackRequest.Create(document, sequence.Id) with
             {
