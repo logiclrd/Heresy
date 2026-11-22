@@ -7,6 +7,7 @@ using System.Threading;
 using Heresy.Core.Diagnostics;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
+using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Filters;
