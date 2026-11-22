@@ -3718,7 +3718,7 @@ public sealed class MainWindow : Window
 			{
 				if (_playbackTransport is IEditorPatternPlaybackTransport patternTracing)
 				{
-					Guid session = Guid.NewGuid();
+					long session = EditorCallsiteSessionIds.Next();
 					script.BeginEditorPatternTrace(session);
 					await patternTracing.PlayEditorPatternAsync(
 						_workspace.Document, scriptPatternId, session);
@@ -3739,7 +3739,7 @@ public sealed class MainWindow : Window
 			{
 				if (_playbackTransport is IEditorSequencePlaybackTransport tracing)
 				{
-					Guid session = Guid.NewGuid();
+					long session = EditorCallsiteSessionIds.Next();
 					script.BeginEditorSequenceTrace(session);
 					await tracing.PlayEditorSequenceAsync(
 						_workspace.Document, scriptSequenceId, session);
