@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Threading;
 
 using AvaloniaEdit;
@@ -59,14 +60,14 @@ public sealed class ScriptCuaClipboardShortcutTests
                 source.Select(0, 5);
                 Assert.That(Press(source.TextArea, Key.Insert, KeyModifiers.Control).Handled,
                     Is.True);
-                Assert.That(await window.Clipboard!.GetTextAsync(), Is.EqualTo("alpha"));
+                Assert.That(await window.Clipboard!.TryGetTextAsync(), Is.EqualTo("alpha"));
                 Assert.That(source.Text, Is.EqualTo("alpha beta"));
 
                 source.Select(6, 4);
                 Assert.That(Press(source.TextArea, Key.Delete, KeyModifiers.Shift).Handled,
                     Is.True);
                 Assert.That(source.Text, Is.EqualTo("alpha "));
-                Assert.That(await window.Clipboard!.GetTextAsync(), Is.EqualTo("beta"));
+                Assert.That(await window.Clipboard!.TryGetTextAsync(), Is.EqualTo("beta"));
 
                 source.CaretOffset = source.Text.Length;
                 Assert.That(Press(source.TextArea, Key.Insert, KeyModifiers.Shift).Handled,
@@ -115,7 +116,7 @@ public sealed class ScriptCuaClipboardShortcutTests
                 box.Text = "xyz";
                 box.SelectAll();
                 Assert.That(Press(box, Key.Insert, KeyModifiers.Control).Handled, Is.True);
-                Assert.That(await window.Clipboard!.GetTextAsync(), Is.EqualTo("xyz"));
+                Assert.That(await window.Clipboard!.TryGetTextAsync(), Is.EqualTo("xyz"));
                 Assert.That(Press(box, Key.Delete, KeyModifiers.Shift).Handled, Is.True);
                 Assert.That(box.Text, Is.Empty);
                 Assert.That(Press(box, Key.Insert, KeyModifiers.Shift).Handled, Is.True);
