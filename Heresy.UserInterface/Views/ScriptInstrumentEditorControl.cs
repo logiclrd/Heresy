@@ -87,11 +87,15 @@ public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEd
         ScriptEditorFonts.ApplyTo(_expression);
         ScriptEditorFonts.ApplyTo(_pitchExpression);
         ScriptEditorFonts.ApplyTo(_nnaExpression);
+        ScriptCuaClipboardShortcuts.Attach(_expression);
+        ScriptCuaClipboardShortcuts.Attach(_pitchExpression);
+        ScriptCuaClipboardShortcuts.Attach(_nnaExpression);
         _nnaFadeMilliseconds = new TextBox
         {
             Text = InstrumentNnaEditorValues.FormatMilliseconds(definition.NnaFadeDuration),
             Width = 115,
         };
+        ScriptCuaClipboardShortcuts.Attach(_nnaFadeMilliseconds);
         _loadedNnaExpression = definition.NnaExpression;
         _loadedNnaFade = definition.NnaFadeDuration;
         _expression.PropertyChanged += OnSourceTextPropertyChanged;
@@ -109,6 +113,8 @@ public sealed class ScriptInstrumentEditorControl : UserControl, IScriptSourceEd
         _toneNna.SelectionChanged += (_, _) =>
             _toneNnaFade.IsVisible = _toneNna.SelectedItem is InstrumentNnaAction.Fade;
         _ratio = new TextBox { Text = "1", MinWidth = 115 };
+        ScriptCuaClipboardShortcuts.Attach(_toneNnaFade);
+        ScriptCuaClipboardShortcuts.Attach(_ratio);
         _sound = new ComboBox { MinWidth = 260 };
         _envelopes = Enumerable.Range(0, 4)
             .Select(_ => new ComboBox { MinWidth = 260 })
