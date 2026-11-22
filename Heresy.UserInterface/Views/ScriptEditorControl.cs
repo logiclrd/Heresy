@@ -290,10 +290,15 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 					? [action] : []);
 			activeNotes = position.EditorActiveNoteCallsites ?? [];
 		}
-		_playbackRenderer.SetSpans(spans, _source.Document.TextLength);
-		_playbackRenderer.SetActiveNoteSpans(activeNotes,
-			_source.Document.TextLength);
-		_source.TextArea.TextView.Redraw();
+		bool greenChanged = _playbackRenderer.SetSpans(
+			spans, _source.Document.TextLength);
+		bool blueChanged = _playbackRenderer.SetActiveNoteSpans(
+			activeNotes, _source.Document.TextLength);
+		// The playback transport polls positions more often than the visible
+		// highlight membership changes. Avoid repainting unchanged overlays,
+		// but continue to process follow requests on every notification.
+		if (greenChanged || blueChanged)
+			_source.TextArea.TextView.Redraw();
 		FollowActivatedCallsite(spans);
 	}
 
