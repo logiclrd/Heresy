@@ -59,7 +59,7 @@ public sealed class ScriptSequencePlayHighlightTests
         pattern.Source = "Note(0, 0, _O(2)); Cut(8, 0);";
         ScriptEditorControl editor = new(workspace, pattern, () => { }, _ => { });
         TextEditor source = Field<TextEditor>(editor, "_source");
-        Guid session = Guid.NewGuid();
+        long session = EditorCallsiteSessionIds.Next();
         editor.BeginEditorPatternTrace(session);
 
         SequenceCallsite note = new(0, "Note(0, 0, _O(2))".Length);
@@ -119,7 +119,7 @@ public sealed class ScriptSequencePlayHighlightTests
         pattern.Source = "Note(0, 0, _O(2)); ChannelFilter(0, 0);";
         ScriptEditorControl editor = new(workspace, pattern, () => { }, _ => { });
         TextEditor source = Field<TextEditor>(editor, "_source");
-        Guid session = Guid.NewGuid();
+        long session = EditorCallsiteSessionIds.Next();
         editor.BeginEditorPatternTrace(session);
         SequenceCallsite note = new(0, "Note(0, 0, _O(2))".Length);
         int filterStart = pattern.Source.IndexOf("ChannelFilter(", StringComparison.Ordinal);
@@ -142,7 +142,7 @@ public sealed class ScriptSequencePlayHighlightTests
         editor.SetPlaybackPosition(row);
         Assert.That(ShownCallsites(editor), Has.Count.EqualTo(2));
 
-        editor.SetPlaybackPosition(row with { EditorCallsiteSession = Guid.NewGuid() });
+        editor.SetPlaybackPosition(row with { EditorCallsiteSession = EditorCallsiteSessionIds.Next() });
         Assert.That(ShownCallsites(editor), Is.Empty);
         editor.SetPlaybackPosition(row);
         source.Text += " // modified";
@@ -161,7 +161,7 @@ public sealed class ScriptSequencePlayHighlightTests
         const int start = 7;
         SequenceCallsite callsite = new(start, "Play(_O(17))".Length);
 
-        Guid first = Guid.NewGuid();
+        long first = EditorCallsiteSessionIds.Next();
         editor.BeginEditorSequenceTrace(first);
         PlaybackPatternPosition active = new((ObjectId)17U, 0, sequence.Id, 0)
         {
@@ -183,7 +183,7 @@ public sealed class ScriptSequencePlayHighlightTests
         editor.SetPlaybackPosition(active);
         Assert.That(ShownCallsite(editor), Is.EqualTo(callsite));
 
-        Guid second = Guid.NewGuid();
+        long second = EditorCallsiteSessionIds.Next();
         editor.BeginEditorSequenceTrace(second);
         Assert.That(ShownCallsite(editor), Is.Null);
         editor.SetPlaybackPosition(active);
@@ -244,7 +244,7 @@ public sealed class ScriptSequencePlayHighlightTests
 
             // A new F6 compiles a distinct session. Old queued events
             // cannot light a different playback snapshot's source.
-            Guid oldSession = transport.TraceSession!.Value;
+            long oldSession = transport.TraceSession!.Value;
             Assert.That(Press(source, Key.F6).Handled, Is.True);
             Assert.That(transport.TraceSession, Is.Not.EqualTo(oldSession));
             transport.Publish(visible);
@@ -306,7 +306,7 @@ public sealed class ScriptSequencePlayHighlightTests
                 DispatcherPriority.Background);
             Assert.That(ShownCallsite(editor), Is.EqualTo(span));
 
-            Guid oldSession = transport.TracePatternSession!.Value;
+            long oldSession = transport.TracePatternSession!.Value;
             Assert.That(Press(source, Key.F6).Handled, Is.True);
             Assert.That(transport.TracePatternSession, Is.Not.EqualTo(oldSession));
             transport.Publish(active);
@@ -342,9 +342,9 @@ public sealed class ScriptSequencePlayHighlightTests
     {
         public ObjectId? TraceSequence { get; private set; }
         public ObjectId? TracePattern { get; private set; }
-        public Guid? TracePatternSession { get; private set; }
+        public long? TracePatternSession { get; private set; }
         public int NormalPatternPlays { get; private set; }
-        public Guid? TraceSession { get; private set; }
+        public long? TraceSession { get; private set; }
         public int NormalSequencePlays { get; private set; }
         public PlaybackPatternPosition? CurrentPlaybackPosition { get; private set; }
         public event EventHandler<PlaybackPositionChangedEventArgs>? PlaybackPositionChanged;
@@ -357,7 +357,7 @@ public sealed class ScriptSequencePlayHighlightTests
         }
 
         public Task PlayEditorSequenceAsync(
-            SongDocument document, ObjectId sequenceId, Guid editorCallsiteSession)
+            SongDocument document, ObjectId sequenceId, long editorCallsiteSession)
         {
             TraceSequence = sequenceId;
             TraceSession = editorCallsiteSession;
@@ -366,7 +366,7 @@ public sealed class ScriptSequencePlayHighlightTests
         }
 
         public Task PlayEditorPatternAsync(
-            SongDocument document, ObjectId patternId, Guid editorCallsiteSession)
+            SongDocument document, ObjectId patternId, long editorCallsiteSession)
         {
             TracePattern = patternId;
             TracePatternSession = editorCallsiteSession;
