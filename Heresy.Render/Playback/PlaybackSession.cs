@@ -510,37 +510,36 @@ public sealed class PlaybackSession
 		return earliest;
 	}
 
-	/// <summary>Editor-only snapshot of the source notes whose logical
-	/// invocations are still producing, plus origins of surviving rendered
-	/// voices (including displaced NNA or release). A flattened source is
-	/// playing across silent gaps in its child pattern, even if no descendant
-	/// voice currently exists. Caller must be the PCM producer.</summary>
-	public SequenceCallsite[] CollectActiveEditorNoteCallsites()
+	/// <summary>Editor-only origins whose logical source invocations are
+	/// still producing, plus origins of surviving rendered voices (including
+	/// displaced NNA and release). A flattened source stays active during
+	/// silent gaps in its child Pattern. Called only by the PCM producer.
+	/// Reusing the destination avoids per-boundary HashSet/array allocation;
+	/// callers must snapshot it before publishing to another thread.</summary>
+	public void CollectActiveEditorNoteCallsites(
+		HashSet<SequenceCallsite> destination)
 	{
-		HashSet<SequenceCallsite>? spans = null;
+		ArgumentNullException.ThrowIfNull(destination);
+		destination.Clear();
+
 		void Add(PlaybackVoice? voice)
 		{
 			if (voice is null)
 				return;
 			if (voice.EditorOriginCallsite is { } origin)
-				(spans ??= []).Add(origin);
-			// A flattened Pattern or Sequence has no parent renderer voice.
-			// The descendants are the actual sounds, including displaced
-			// NNA tails; their retained scope controllers identify each
-			// originating script Note without inventing an audio lifetime.
+				destination.Add(origin);
+			// Flattened Pattern/Sequence starts have no parent audio voice.
+			// Descendants (including displaced voices) retain their
+			// ancestor controllers and therefore their authored origin.
 			foreach (FlattenedSourceVolume ancestor in voice.EnclosingSourceVolumes)
 				if (ancestor.EditorOriginCallsite is { } source)
-					(spans ??= []).Add(source);
+					destination.Add(source);
 		}
-		// Non-mixdown Pattern/Sequence starts have NO parent PlaybackVoice.
-		// Their active producer scopes are live logical notes even during
-		// silence between descendant notes. The producer unregisters each
-		// controller on natural completion, Cut, or source termination;
-		// retired controllers can still be referenced by sounding children,
-		// which Add() handles independently below.
+		// Live producer scopes count even during a silent gap between
+		// nested notes. Retired scopes can remain referenced by voices.
 		foreach (FlattenedSourceVolume source in _sourceVolumes.Values)
 			if (source.EditorOriginCallsite is { } activeOrigin)
-				(spans ??= []).Add(activeOrigin);
+				destination.Add(activeOrigin);
 		foreach (PlaybackChannelState channel in _channels.Values)
 			Add(channel.CurrentVoice);
 		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
@@ -549,7 +548,15 @@ public sealed class PlaybackSession
 			Add(channel.CurrentVoice);
 		foreach (PlaybackVoice displaced in _virtualVoices)
 			Add(displaced);
-		return spans is null ? [] : spans.OrderBy(x => x.Start).ToArray();
+	}
+
+	/// <summary>Independent immutable sorted snapshot for callers that
+	/// need a standalone copy rather than a reusable PCM-worker scratch set.</summary>
+	public SequenceCallsite[] CollectActiveEditorNoteCallsites()
+	{
+		HashSet<SequenceCallsite> spans = [];
+		CollectActiveEditorNoteCallsites(spans);
+		return spans.Count == 0 ? [] : spans.OrderBy(x => x.Start).ToArray();
 	}
 
 
