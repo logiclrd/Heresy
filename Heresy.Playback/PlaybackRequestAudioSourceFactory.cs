@@ -15,6 +15,7 @@ using Heresy.Render.Realtime;
 using Heresy.Render.FmSynthesis;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
+using Heresy.Render.Timing;
 using Heresy.Scripting.Analysis;
 
 namespace Heresy.Playback;
@@ -204,6 +205,10 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				PriorityQueue<QueuedEditorPatternPosition,
 					(long Ticks, long Order)> pendingPositions = new();
 				long nextPositionOrder = 0;
+				// The first future due row acts as a soft render boundary.
+				// Do not let a large PCM buffer accumulate all its silent rows.
+				long nextPendingPositionFrame = long.MaxValue;
+				int traceSampleRate = plan.Source.Format.SampleRate;
 				void QueuePosition(QueuedEditorPatternPosition position)
 				{
 					// After leaving the Script editor, keep only musical
@@ -213,6 +218,10 @@ public sealed class PlaybackRequestAudioSourceFactory :
 						return;
 					pendingPositions.Enqueue(position,
 						(position.At.Ticks, nextPositionOrder++));
+					long dueFrame = FrameTime.Ceiling(position.At, traceSampleRate);
+					if (dueFrame > plan.Source.NextFrame
+						&& dueFrame < nextPendingPositionFrame)
+						nextPendingPositionFrame = dueFrame;
 					// F6-only diagnostic; capture the burst/lookahead peak
 					// before any due events are flushed. No retained journal.
 					positions.RecordEditorPendingPositionCount(pendingPositions.Count);
@@ -278,6 +287,17 @@ public sealed class PlaybackRequestAudioSourceFactory :
 								}));
 						}
 					}
+					// The earliest entry has either been published or is
+					// still due at this PCM boundary. Further queued rows
+					// can establish their own future boundary on enqueue.
+					nextPendingPositionFrame = long.MaxValue;
+					if (pendingPositions.TryPeek(out _, out var nextPriority))
+					{
+						long frame = FrameTime.Ceiling(
+							TimeSpan.FromTicks(nextPriority.Ticks), traceSampleRate);
+						if (frame > plan.Source.NextFrame)
+							nextPendingPositionFrame = frame;
+					}
 				}
 				updateActiveEditorNotes = (next, at) =>
 				{
@@ -337,7 +357,9 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				// expensive blue-voice snapshots nor records green spans.
 				updateActiveEditorNotes(scratch, TimeSpan.FromSeconds(
 					frame / (double)plan.Source.Format.SampleRate));
-			}, () => positions?.EditorCallsiteTracingEnabled == true);
+			}, () => positions?.EditorCallsiteTracingEnabled == true,
+				() => nextPendingPositionFrame == long.MaxValue
+					? null : nextPendingPositionFrame);
 		}
 		LiveRecursiveSource live = new(plan, positions);
 		lock (_gate)
