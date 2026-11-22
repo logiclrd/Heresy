@@ -271,9 +271,11 @@ public sealed class ScriptSequencePlayHighlightTests
 
         // A second invocation of the first authored site has no new
         // visual identity; it still paints the original first site.
-        editor.SetPlaybackPosition(firstOrder with
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(
+            (ObjectId)17U, 0, sequence.Id, 2)
         {
-            SequenceEntryIndex = 2,
+            EditorCallsiteSession = session,
+            EditorPlayCallsite = firstSpan,
         });
         Assert.That(ShownCallsite(editor), Is.EqualTo(firstSpan));
         Assert.That(source.Text, Is.EqualTo(sequence.Source),
