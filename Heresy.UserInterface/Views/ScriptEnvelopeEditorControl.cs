@@ -49,6 +49,7 @@ public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEdit
 			MinWidth = 350,
 		};
 		ScriptEditorFonts.ApplyTo(_source);
+		ScriptCuaClipboardShortcuts.Attach(_source);
 		_source.PropertyChanged += (_, change) =>
 		{
 			if (change.Property == TextBox.TextProperty)
@@ -62,6 +63,7 @@ public sealed class ScriptEnvelopeEditorControl : UserControl, IScriptSourceEdit
 			PlaceholderText = "Blank = unbounded",
 			MinWidth = 160,
 		};
+		ScriptCuaClipboardShortcuts.Attach(_release);
 		Content = Build();
 	}
 
