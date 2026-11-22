@@ -53,13 +53,19 @@ public sealed record PlaybackPatternPosition
 	public SequenceCallsite? EditorPlayCallsite { get; init; }
 	public SequenceCallsite? EditorPatternCallsite { get; init; }
 
-	/// <summary>All distinct authored actions activated in the current
-	/// Pattern row. Each timeline entry owns an immutable snapshot; this
-	/// transient editor metadata is never stored in the song.</summary>
+	/// <summary>All distinct authored *source spans* activated in the
+	/// current Pattern row. Each execution still creates its own timed
+	/// position entry; repeated executions of one span paint one green
+	/// region. Each entry owns an immutable membership snapshot.
+	/// This transient editor metadata is never stored in the song.</summary>
 	public IReadOnlyList<SequenceCallsite>? EditorPatternCallsites { get; init; }
 
-	/// <summary>Actual currently sounding Note invocation spans, separate
-	/// from short-lived scheduled command activation highlights.</summary>
+	/// <summary>Union of authored Note source spans with at least one
+	/// live physical voice or flattened logical source (also through
+	/// silent child gaps and release tails). Separate live instances that
+	/// originated at the same span paint only one blue region; a span
+	/// stays blue until its last owning voice/source is finished.
+	/// This display membership is not a unique invocation identifier.</summary>
 	public IReadOnlyList<SequenceCallsite>? EditorActiveNoteCallsites { get; init; }
 }
 
