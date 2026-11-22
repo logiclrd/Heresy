@@ -770,6 +770,117 @@ public sealed class EditorPatternPlaybackTraceTests
         }
     }
 
+    [Test]
+    public void LargePcmBufferLookaheadCanQueueSeveralRowsWithoutPublishingFuturePositions()
+    {
+        // Small PCM buffers exercised action bursts, but not the number of
+        // otherwise-silent root rows the cursor can traverse in one render
+        // call. This is a deliberately longer block, not an assertion that
+        // arbitrary authored scripts have a universal queue-size bound.
+        const int sampleRate = 48000;
+        const int framesPerBlock = 48000;
+        const string note = "Note(0, 0, _O(20))";
+        const string cut = "Cut(32, 0)";
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long source", "long.wav", LongMonoWave()));
+        ScriptPatternDefinition script = new((ObjectId)5U, "Sparse long-block F6")
+        {
+            RowCount = 64, ChannelCount = 1,
+            Source = note + "; " + cut + ";",
+        };
+        song.Add(script);
+        RenderConfiguration config = new(sampleRate, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id) with
+        {
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+        };
+        PatternPlaybackRequest ordinaryRequest = PatternPlaybackRequest.Create(
+            song, script.Id);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline), Is.True);
+            Assert.That(ordinaryFactory.TryTakePlaybackPositionTimeline(
+                ordinaryRequest, out PlaybackPositionTimeline? untraced), Is.True);
+            SequenceCallsite cutSpan = new(
+                script.Source.IndexOf(cut, StringComparison.Ordinal), cut.Length);
+            float[] tracedPcm = new float[framesPerBlock];
+            float[] ordinaryPcm = new float[framesPerBlock];
+            bool audible = false;
+
+            for (int block = 0; block < 5; block++)
+            {
+                Array.Clear(tracedPcm);
+                Array.Clear(ordinaryPcm);
+                traced.Render(framesPerBlock, tracedPcm);
+                ordinary.Render(framesPerBlock, ordinaryPcm);
+                for (int frame = 0; frame < framesPerBlock; frame++)
+                {
+                    if (Math.Abs(tracedPcm[frame] - ordinaryPcm[frame]) > 0.000001f)
+                        Assert.Fail(
+                            $"Large-buffer F6 changed PCM: block {block}, frame {frame}");
+                    audible |= Math.Abs(ordinaryPcm[frame]) > 0.00001f;
+                }
+
+                TimeSpan renderedThrough = TimeSpan.FromSeconds(block + 1);
+                Assert.That(timeline!.Entries.Zip(timeline.Entries.Skip(1))
+                    .All(pair => pair.First.Offset <= pair.Second.Offset),
+                    Is.True, $"F6 row positions moved backwards in block {block}");
+                Assert.That(timeline.Entries.All(e => e.Offset <= renderedThrough),
+                    Is.True, "the cursor must not publish future row lookahead");
+                Assert.That(timeline.Entries.Count, Is.LessThanOrEqualTo(1024));
+
+                if (block == 0)
+                {
+                    Assert.That(timeline.EditorPendingPositionPeak,
+                        Is.GreaterThan(2),
+                        "one long PCM block can traverse several silent rows; "
+                        + "the earlier measured peak of two is not a hard bound");
+                    Assert.That(timeline.Entries.Any(e =>
+                        e.Position.PatternRow >= 5), Is.True,
+                        "multiple due row boundaries must be published on the first block");
+                    Assert.That(timeline.Entries.Any(e =>
+                        e.Position.EditorPatternCallsite == cutSpan), Is.False,
+                        "a future Cut must not light up before it is due");
+                }
+            }
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(audible, Is.True);
+                Assert.That(timeline!.Entries.Any(e =>
+                    e.Position.EditorPatternCallsite == cutSpan
+                    && e.Offset > TimeSpan.FromSeconds(1)), Is.True,
+                    "the distant Cut must activate at its due PCM time");
+                Assert.That(untraced!.EditorPendingPositionPeak, Is.Zero);
+                Assert.That(untraced.Entries.All(e =>
+                    e.Position.EditorCallsiteSession is null
+                    && e.Position.EditorPatternCallsites is null
+                    && e.Position.EditorActiveNoteCallsites is null), Is.True);
+            });
+            TestContext.Progress.WriteLine(
+                $"F6 large-buffer lookahead: frames/block={framesPerBlock}, "
+                + $"peak unpublished positions={timeline!.EditorPendingPositionPeak}, "
+                + $"retained published positions={timeline.Entries.Count}. "
+                + "This workload disproves a fixed peak-of-two inference, "
+                + "but establishes no universal queue bound.");
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
     [TestCase(128)]
     [TestCase(1024)]
     public void DenseF6ActionLoopsAndDelayedCutsKeepRecentTimelineBounded(
