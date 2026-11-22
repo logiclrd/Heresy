@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Sequences;
@@ -72,6 +73,7 @@ public sealed class PlaybackPositionTimeline
 	private readonly object _streamGate = new();
 	private readonly List<PlaybackPositionTimelineEntry>? _streamEntries;
 	private TimeSpan _streamEnd = TimeSpan.MaxValue;
+	private int _editorPendingPositionPeak;
 
 	/// <summary>A timeline populated incrementally by the real playback cursor,
 	/// rather than by eagerly traversing all future sequence orders.</summary>
@@ -81,6 +83,21 @@ public sealed class PlaybackPositionTimeline
 		_entries = _streamEntries;
 		Duration = TimeSpan.MaxValue;
 		Repeat = false;
+	}
+
+	/// <summary>Largest unpublished F6 Pattern position queue depth observed
+	/// during this playback timeline. Diagnostic only: no event-dropping
+	/// policy, no additional allocations, and zero on untraced playback.
+	/// Written by the dedicated producer and safe to sample from the UI.</summary>
+	public int EditorPendingPositionPeak =>
+		Volatile.Read(ref _editorPendingPositionPeak);
+
+	internal void RecordEditorPendingPositionCount(int count)
+	{
+		// Only the editor-F6 Pattern queue calls this (one integer comparison
+		// per row/action notification). No lock or allocation on the PCM worker.
+		if (count > _editorPendingPositionPeak)
+			Volatile.Write(ref _editorPendingPositionPeak, count);
 	}
 
 	public void Append(PlaybackPositionTimelineEntry entry)
