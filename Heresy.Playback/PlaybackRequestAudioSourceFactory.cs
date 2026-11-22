@@ -181,6 +181,9 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				// RowBegan is called again when a repeating Pattern loops;
 				// no previous-cycle callsite must leak into the next cycle.
 				List<SequenceCallsite> activeActions = [];
+				// Published arrays are immutable; repeated activations from the
+				// same authored callsite must not clone unchanged snapshots.
+				SequenceCallsite[] actionSnapshot = [];
 				SequenceCallsite[] activeNotes = [];
 				int? activeRow = null;
 
@@ -211,7 +214,13 @@ public sealed class PlaybackRequestAudioSourceFactory :
 							int displayRow = activeRow ?? pending.Row;
 							activeRow ??= displayRow;
 							if (!activeActions.Contains(callsite))
+							{
 								activeActions.Add(callsite);
+								actionSnapshot = activeActions.ToArray();
+							}
+							// Preserve an entry for every due activation, including
+							// repeats from loops, but share the frozen membership
+							// array with earlier entries when nothing has changed.
 							positions.Append(new PlaybackPositionTimelineEntry(
 								pending.At,
 								new PlaybackPatternPosition(pending.PatternId,
@@ -219,7 +228,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 								{
 									EditorCallsiteSession = patternSession,
 									EditorPatternCallsite = callsite,
-									EditorPatternCallsites = activeActions.ToArray(),
+									EditorPatternCallsites = actionSnapshot,
 									EditorActiveNoteCallsites = activeNotes,
 								}));
 						}
@@ -227,6 +236,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 						{
 							activeRow = pending.Row;
 							activeActions.Clear();
+							actionSnapshot = [];
 							positions.Append(new PlaybackPositionTimelineEntry(
 								pending.At,
 								new PlaybackPatternPosition(pending.PatternId,
