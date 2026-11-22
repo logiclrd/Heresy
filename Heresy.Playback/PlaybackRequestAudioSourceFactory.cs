@@ -153,7 +153,12 @@ public sealed class PlaybackRequestAudioSourceFactory :
 					error.Message, new ScriptSourceSpan(0, 0))]);
 		}
 		PlaybackPositionTimeline? positions = request is AdHocPlaybackRequest
-			? null : new PlaybackPositionTimeline();
+			? null : new PlaybackPositionTimeline(request switch
+			{
+				PatternPlaybackRequest pattern => pattern.EditorCallsiteSession,
+				SequencePlaybackRequest sequence => sequence.EditorCallsiteSession,
+				_ => null,
+			});
 		// Only editor-traced Script Patterns install this callback. Row
 		// boundaries and scheduled actions must inherit the latest *actual*
 		// voice snapshot rather than temporarily clearing the blue overlay.
@@ -170,8 +175,10 @@ public sealed class PlaybackRequestAudioSourceFactory :
 						positions.Append(new PlaybackPositionTimelineEntry(at,
 							new PlaybackPatternPosition(id, row, sequence, order)
 							{
-								EditorCallsiteSession = session,
-								EditorPlayCallsite = callsite,
+								EditorCallsiteSession =
+									positions.EditorCallsiteTracingEnabled ? session : null,
+								EditorPlayCallsite =
+									positions.EditorCallsiteTracingEnabled ? callsite : null,
 							}));
 			}
 			else if (request is PatternPlaybackRequest
@@ -199,6 +206,11 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				long nextPositionOrder = 0;
 				void QueuePosition(QueuedEditorPatternPosition position)
 				{
+					// After leaving the Script editor, keep only musical
+					// row-position tracking. No new authored action metadata.
+					if (position.ActionCallsite is not null
+						&& !positions.EditorCallsiteTracingEnabled)
+						return;
 					pendingPositions.Enqueue(position,
 						(position.At.Ticks, nextPositionOrder++));
 					// F6-only diagnostic; capture the burst/lookahead peak
@@ -212,6 +224,19 @@ public sealed class PlaybackRequestAudioSourceFactory :
 					{
 						QueuedEditorPatternPosition pending =
 							pendingPositions.Dequeue();
+						if (!positions.EditorCallsiteTracingEnabled)
+						{
+							// A due row still updates transport position after the
+							// editor has gone away; previously queued F6 action
+							// spans are discarded without touching musical events.
+							if (pending.ActionCallsite is null)
+								positions.Append(new PlaybackPositionTimelineEntry(
+									pending.At,
+									new PlaybackPatternPosition(pending.PatternId,
+										pending.Row, pending.SequenceId,
+										pending.SequenceEntryIndex)));
+							continue;
+						}
 						if (pending.ActionCallsite is { } callsite)
 						{
 							// Delayed authored actions activate on their
@@ -260,6 +285,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 					// reaches it, and always before the voice-state update
 					// at the same sample-frame boundary.
 					PublishPositionsThrough(at);
+					if (!positions.EditorCallsiteTracingEnabled)
+						return;
 					// Only a changed voice set allocates a frozen array and
 					// appends a new position. Row/action entries share it.
 					if (activeNotes.Length == next.Count
@@ -303,10 +330,14 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			HashSet<SequenceCallsite> scratch = [];
 			plan.Source.SetEditorTraceBoundary(frame =>
 			{
-				plan.Source.Session.CollectActiveEditorNoteCallsites(scratch);
+				if (positions?.EditorCallsiteTracingEnabled == true)
+					plan.Source.Session.CollectActiveEditorNoteCallsites(scratch);
+				// The producer still flushes due plain row positions after
+				// the originating editor is gone, but it neither collects
+				// expensive blue-voice snapshots nor records green spans.
 				updateActiveEditorNotes(scratch, TimeSpan.FromSeconds(
 					frame / (double)plan.Source.Format.SampleRate));
-			});
+			}, () => positions?.EditorCallsiteTracingEnabled == true);
 		}
 		LiveRecursiveSource live = new(plan, positions);
 		lock (_gate)
