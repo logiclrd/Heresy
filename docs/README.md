@@ -41,6 +41,7 @@ tests supersede contradictory old prose.
 | Native seek semantics and replay warnings | [Source-seek hints](source-seek-hints.md) |
 | PCM ring, speakers, device settings, filters | [Audio output](audio-output.md) |
 | Export, formats, progress, cancellation and parity | [Export workflow](export-workflow.md) |
+| Engine hot-path versus cooler-path managed allocations; author-script policy | [Managed allocation policy](allocation-policy.md) |
 | Live song vs. frozen playback revisions | [Playback snapshots](playback-snapshots.md) |
 | Desktop splash, icon and maximize state | [Application branding](application-branding.md) |
 
@@ -57,6 +58,7 @@ tests supersede contradictory old prose.
 | Six pane roots, legacy four-/five-pane migration | [Document panes](document-panes.md) |
 | Implemented node-envelope model, interactive graph and sustain gestures | [Node envelope design](node-envelope-design.md), [Envelope graph](envelope-graph.md) |
 | Eleven-column tone grid, chromatic notation and NNA | [Instrument tone grid](instrument-tone-grid-model.md) |
+| **Future exploratory design:** procedural Script Instrument, initialization/reuse and per-note allocation advisory | [Script Instrument rework plan](script-instrument-rework-plan.md) |
 
 ## Documentation maintenance
 
