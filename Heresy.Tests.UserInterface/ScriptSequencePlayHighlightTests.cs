@@ -202,6 +202,99 @@ public sealed class ScriptSequencePlayHighlightTests
     }
 
     [AvaloniaTest]
+    public void UnchangedF6PositionNotificationsReuseOverlayArrays()
+    {
+        DocumentWorkspace workspace = new();
+        var pattern = ScriptDocumentEditor.CreateScriptPattern(
+            workspace, "Repeated overlay poll");
+        pattern.Source = "Note(0, 0, _O(20)); Cut(2, 0);";
+        ScriptEditorControl editor = new(
+            workspace, pattern, () => { }, _ => { });
+        TextEditor source = Field<TextEditor>(editor, "_source");
+        long session = EditorCallsiteSessionIds.Next();
+        editor.BeginEditorPatternTrace(session);
+        SequenceCallsite note = new(0, "Note(0, 0, _O(20))".Length);
+        SequenceCallsite cut = new(
+            pattern.Source.IndexOf("Cut(", StringComparison.Ordinal),
+            "Cut(2, 0)".Length);
+        PlaybackPatternPosition position =
+            new(pattern.Id, 2, null, null)
+            {
+                EditorCallsiteSession = session,
+                EditorPatternCallsites = [note, cut],
+                EditorActiveNoteCallsites = [note],
+            };
+
+        editor.SetPlaybackPosition(position);
+        IReadOnlyList<SequenceCallsite> initialGreen = ShownCallsites(editor);
+        IReadOnlyList<SequenceCallsite> initialBlue =
+            ShownActiveNoteCallsites(editor);
+        Assert.Multiple(() =>
+        {
+            Assert.That(initialGreen, Is.EquivalentTo(new[] { note, cut }));
+            Assert.That(initialBlue, Is.EquivalentTo(new[] { note }));
+            Assert.That(ShownCallsite(editor), Is.EqualTo(cut));
+        });
+
+        // New position records/arrays with unchanged displayed contents
+        // should neither replace cached snapshots nor request a redraw.
+        editor.SetPlaybackPosition(position with
+        {
+            EditorPatternCallsites = [note, cut],
+            EditorActiveNoteCallsites = [note],
+        });
+        Assert.That(ShownCallsites(editor), Is.SameAs(initialGreen));
+        Assert.That(ShownActiveNoteCallsites(editor),
+            Is.SameAs(initialBlue));
+
+        // The renderer still sanitizes duplicated or malformed spans.
+        // Sanitization with the same visible result must keep the cache.
+        SequenceCallsite invalid = new(
+            pattern.Source.Length + 2, 3);
+        editor.SetPlaybackPosition(position with
+        {
+            EditorPatternCallsites = [note, cut, note, invalid],
+            EditorActiveNoteCallsites = [note, invalid, note],
+        });
+        Assert.That(ShownCallsites(editor), Is.SameAs(initialGreen));
+        Assert.That(ShownActiveNoteCallsites(editor),
+            Is.SameAs(initialBlue));
+
+        // A blue-only lifetime transition must invalidate blue without
+        // touching the green action overlay.
+        editor.SetPlaybackPosition(position with
+        {
+            EditorPatternCallsites = [note, cut],
+            EditorActiveNoteCallsites = [],
+        });
+        Assert.Multiple(() =>
+        {
+            Assert.That(ShownCallsites(editor), Is.SameAs(initialGreen));
+            Assert.That(ShownActiveNoteCallsites(editor), Is.Empty);
+            Assert.That(ShownActiveNoteCallsites(editor),
+                Is.Not.SameAs(initialBlue));
+        });
+
+        // New green membership also produces a distinct frozen snapshot.
+        editor.SetPlaybackPosition(position with
+        {
+            EditorPatternCallsites = [cut],
+            EditorActiveNoteCallsites = [],
+        });
+        Assert.That(ShownCallsites(editor),
+            Is.EquivalentTo(new[] { cut }));
+        Assert.That(ShownCallsites(editor), Is.Not.SameAs(initialGreen));
+
+        // A text edit invalidates the session spans even if audio keeps
+        // playing, and subsequent stale positions cannot reapply them.
+        source.Text += " // source modified";
+        Assert.That(ShownCallsites(editor), Is.Empty);
+        editor.SetPlaybackPosition(position);
+        Assert.That(ShownCallsites(editor), Is.Empty);
+        Assert.That(ShownActiveNoteCallsites(editor), Is.Empty);
+    }
+
+    [AvaloniaTest]
     public void FollowPlaybackOptInRequestsNavigationWithoutMovingSelection()
     {
         DocumentWorkspace workspace = new();
