@@ -38,6 +38,12 @@ public sealed class ScriptSequencePlayHighlightTests
         return Field<SequenceCallsite?>(renderer, "_span");
     }
 
+    private static IReadOnlyList<SequenceCallsite> ShownCallsites(ScriptEditorControl editor)
+    {
+        object renderer = Field<object>(editor, "_playbackRenderer");
+        return Field<IReadOnlyList<SequenceCallsite>>(renderer, "_spans");
+    }
+
     private static KeyEventArgs Press(Control control, Key key)
     {
         KeyEventArgs args = new()
@@ -47,6 +53,44 @@ public sealed class ScriptSequencePlayHighlightTests
         };
         control.RaiseEvent(args);
         return args;
+    }
+
+    [AvaloniaTest]
+    public void PatternRowRendersAllSimultaneousCallsitesAndClearsOnRowOrEdit()
+    {
+        DocumentWorkspace workspace = new();
+        var pattern = ScriptDocumentEditor.CreateScriptPattern(workspace, "Test");
+        pattern.Source = "Note(0, 0, _O(2)); ChannelFilter(0, 0);";
+        ScriptEditorControl editor = new(workspace, pattern, () => { }, _ => { });
+        TextEditor source = Field<TextEditor>(editor, "_source");
+        Guid session = Guid.NewGuid();
+        editor.BeginEditorPatternTrace(session);
+        SequenceCallsite note = new(0, "Note(0, 0, _O(2))".Length);
+        int filterStart = pattern.Source.IndexOf("ChannelFilter(", StringComparison.Ordinal);
+        SequenceCallsite filter = new(filterStart, "ChannelFilter(0, 0)".Length);
+        PlaybackPatternPosition row = new(pattern.Id, 0, null, null)
+        {
+            EditorCallsiteSession = session,
+            EditorPatternCallsites = [note, filter],
+            EditorPatternCallsite = filter,
+        };
+        editor.SetPlaybackPosition(row);
+        Assert.That(ShownCallsites(editor), Is.EquivalentTo(new[] { note, filter }));
+        Assert.That(source.Text, Is.EqualTo(pattern.Source));
+
+        editor.SetPlaybackPosition(new PlaybackPatternPosition(pattern.Id, 1, null, null)
+        {
+            EditorCallsiteSession = session,
+        });
+        Assert.That(ShownCallsites(editor), Is.Empty);
+        editor.SetPlaybackPosition(row);
+        Assert.That(ShownCallsites(editor), Has.Count.EqualTo(2));
+
+        editor.SetPlaybackPosition(row with { EditorCallsiteSession = Guid.NewGuid() });
+        Assert.That(ShownCallsites(editor), Is.Empty);
+        editor.SetPlaybackPosition(row);
+        source.Text += " // modified";
+        Assert.That(ShownCallsites(editor), Is.Empty);
     }
 
     [AvaloniaTest]
