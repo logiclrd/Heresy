@@ -2036,6 +2036,109 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void LeavingScriptEditorDisablesF6MetadataWithoutStoppingPcm()
+    {
+        // Deactivation is one-way and tied to the originating editor
+        // session; it cannot stop or alter the musical PCM stream.
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long sound", "long.wav", LongMonoWave()));
+        const string note = "Note(0, 0, _O(20))";
+        const string after = "ChannelFilter(1, 0)";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Editor exit")
+        {
+            RowCount = 4, ChannelCount = 1,
+            Source = note + "; " + after + "; Cut(2, 0);",
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero,
+                positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory normalFactory = new(config);
+        long session = EditorCallsiteSessionIds.Next();
+        PatternPlaybackRequest tracedRequest = PatternPlaybackRequest.Create(
+            song, script.Id, repeat: true) with
+        {
+            EditorCallsiteSession = session,
+        };
+        PatternPlaybackRequest normalRequest = PatternPlaybackRequest.Create(
+            song, script.Id, repeat: true);
+        IAudioOutputSource traced = tracedFactory.Create(tracedRequest);
+        IAudioOutputSource ordinary = normalFactory.Create(normalRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(
+                tracedRequest, out PlaybackPositionTimeline? timeline), Is.True);
+            Assert.That(normalFactory.TryTakePlaybackPositionTimeline(
+                normalRequest, out PlaybackPositionTimeline? untraced), Is.True);
+            Assert.That(timeline, Is.Not.Null);
+            Assert.That(timeline!.EditorCallsiteSession, Is.EqualTo(session));
+            Assert.That(timeline.EditorCallsiteTracingEnabled, Is.True);
+            Assert.That(untraced!.EditorCallsiteSession, Is.Null);
+            Assert.That(untraced.EditorCallsiteTracingEnabled, Is.False);
+
+            float[] tracedPcm = new float[512];
+            float[] ordinaryPcm = new float[512];
+            traced.Render(tracedPcm.Length, tracedPcm);
+            ordinary.Render(ordinaryPcm.Length, ordinaryPcm);
+            Assert.That(timeline.Entries.Any(e =>
+                e.Position.EditorPatternCallsites is { Count: > 0 }), Is.True,
+                "the opening F6 row must show an authored call");
+            Assert.That(timeline.DisableEditorCallsiteTracing(session + 1),
+                Is.False, "another editor cannot cancel this trace");
+            Assert.That(timeline.EditorCallsiteTracingEnabled, Is.True);
+            Assert.That(timeline.DisableEditorCallsiteTracing(session), Is.True);
+            Assert.That(timeline.DisableEditorCallsiteTracing(session), Is.False);
+            Assert.That(timeline.EditorCallsiteTracingEnabled, Is.False);
+
+            bool audible = tracedPcm.Any(x => Math.Abs(x) > 0.00001f);
+            int oldEntries = timeline.Entries.Count;
+            for (int block = 0; block < 220; block++)
+            {
+                Array.Clear(tracedPcm);
+                Array.Clear(ordinaryPcm);
+                traced.Render(tracedPcm.Length, tracedPcm);
+                ordinary.Render(ordinaryPcm.Length, ordinaryPcm);
+                for (int frame = 0; frame < tracedPcm.Length; frame++)
+                {
+                    if (Math.Abs(tracedPcm[frame] - ordinaryPcm[frame])
+                        > 0.000001f)
+                        Assert.Fail(
+                            $"Trace deactivation changed PCM: block {block}, frame {frame}");
+                    audible |= Math.Abs(tracedPcm[frame]) > 0.00001f;
+                }
+            }
+            TimeSpan afterExit = TimeSpan.FromSeconds(512.0 / 48000.0);
+            PlaybackPositionTimelineEntry[] subsequent = timeline.Entries
+                .Where(e => e.Offset > afterExit).ToArray();
+            Assert.Multiple(() =>
+            {
+                Assert.That(audible, Is.True);
+                Assert.That(subsequent, Is.Not.Empty,
+                    "ordinary row positions should continue to advance");
+                Assert.That(subsequent.All(e =>
+                    e.Position.EditorPatternCallsite is null
+                    && e.Position.EditorPatternCallsites is null
+                    && e.Position.EditorActiveNoteCallsites is null
+                    && e.Position.EditorCallsiteSession is null), Is.True,
+                    "no later green/blue metadata after editor exit");
+                Assert.That(timeline.Entries.Count, Is.GreaterThan(oldEntries),
+                    "audio playback should keep publishing row positions");
+                Assert.That(untraced.Entries.All(e =>
+                    e.Position.EditorCallsiteSession is null), Is.True);
+            });
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
     public void PatternRequestDeliversDueActionButOrdinaryRequestHasNoTrace()
     {
         SongDocument song = new();
