@@ -1277,6 +1277,189 @@ public sealed class EditorPatternPlaybackTraceTests
         }
     }
 
+    // Diagnostic high-repetition comparison, separate from the sparse
+    // ordinary-versus-F6 producer profile. Both traced programs schedule
+    // exactly the same commands; only the authored source spans differ.
+    // The result is reported, not used as a shared-runner speed threshold.
+    [Test]
+    public void CompareSameCallsiteAndDistinctCallsiteF6ActionCosts()
+    {
+        const int sampleRate = 48000;
+        const int blockFrames = 512;
+        const int actionCount = 24;
+        const int warmupBlocks = 48;
+        const int measuredBlocks = 96;
+        const int rounds = 5;
+        const string note = "Note(0, 0, _O(20))";
+        const string action = "ChannelFilter(0, 0)";
+        const string cut = "Cut(2, 0)";
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Paired long sample", "paired.wav", LongMonoWave()));
+        ScriptPatternDefinition repeated = new((ObjectId)5U, "One authored call")
+        {
+            RowCount = 4, ChannelCount = 1,
+            Source = note + "; for (int i = 0; i < " + actionCount
+                + "; i++) " + action + "; " + cut + ";",
+        };
+        ScriptPatternDefinition distinct = new((ObjectId)6U, "Distinct authored calls")
+        {
+            RowCount = 4, ChannelCount = 1,
+            Source = note + "; "
+                + string.Concat(Enumerable.Repeat(action + "; ", actionCount))
+                + cut + ";",
+        };
+        song.Add(repeated);
+        song.Add(distinct);
+        RenderConfiguration config = new(sampleRate, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero,
+                positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory repeatedFactory = new(config);
+        PlaybackRequestAudioSourceFactory distinctFactory = new(config);
+        PatternPlaybackRequest repeatedRequest = PatternPlaybackRequest.Create(
+            song, repeated.Id, repeat: true) with
+        {
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+        };
+        PatternPlaybackRequest distinctRequest = PatternPlaybackRequest.Create(
+            song, distinct.Id, repeat: true) with
+        {
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+        };
+        IAudioOutputSource repeatedAudio = repeatedFactory.Create(repeatedRequest);
+        IAudioOutputSource distinctAudio = distinctFactory.Create(distinctRequest);
+        try
+        {
+            Assert.That(repeatedFactory.TryTakePlaybackPositionTimeline(
+                repeatedRequest, out PlaybackPositionTimeline? repeatedTimeline),
+                Is.True);
+            Assert.That(distinctFactory.TryTakePlaybackPositionTimeline(
+                distinctRequest, out PlaybackPositionTimeline? distinctTimeline),
+                Is.True);
+            float[] repeatedPcm = new float[blockFrames];
+            float[] distinctPcm = new float[blockFrames];
+            bool audible = false;
+
+            // This parity check covers note, all control activations, Cut,
+            // and the beginning of the second root Pattern repetition.
+            for (int block = 0; block < warmupBlocks; block++)
+            {
+                Array.Clear(repeatedPcm);
+                Array.Clear(distinctPcm);
+                repeatedAudio.Render(blockFrames, repeatedPcm);
+                distinctAudio.Render(blockFrames, distinctPcm);
+                for (int frame = 0; frame < blockFrames; frame++)
+                {
+                    if (Math.Abs(repeatedPcm[frame] - distinctPcm[frame]) > 0.000001f)
+                        Assert.Fail(
+                            $"Identical F6 music diverged at block {block}, frame {frame}.");
+                    audible |= Math.Abs(repeatedPcm[frame]) > 0.00001f;
+                }
+            }
+            Assert.That(audible, Is.True,
+                "the dense-action comparison must render audible PCM");
+
+            SequenceCallsite repeatedSpan = new(
+                repeated.Source.IndexOf(action, StringComparison.Ordinal),
+                action.Length);
+            SequenceCallsite noteSpan = new(0, note.Length);
+            var repeatedActions = repeatedTimeline!.Entries
+                .Where(e => e.Offset == TimeSpan.Zero
+                    && e.Position.EditorPatternCallsite == repeatedSpan)
+                .ToArray();
+            var distinctActions = distinctTimeline!.Entries
+                .Where(e => e.Offset == TimeSpan.Zero
+                    && e.Position.EditorPatternCallsite is { } span
+                    && span != noteSpan)
+                .ToArray();
+            Assert.That(repeatedActions, Has.Length.EqualTo(actionCount));
+            Assert.That(distinctActions, Has.Length.EqualTo(actionCount));
+            IReadOnlyList<SequenceCallsite>? shared =
+                repeatedActions[0].Position.EditorPatternCallsites;
+            for (int i = 0; i < actionCount; i++)
+            {
+                Assert.That(repeatedActions[i].Position.EditorPatternCallsites,
+                    Is.SameAs(shared),
+                    "the repeated source call must reuse one immutable array");
+                Assert.That(repeatedActions[i].Position.EditorPatternCallsites,
+                    Has.Count.EqualTo(2), "one Note plus one distinct helper");
+                Assert.That(distinctActions[i].Position.EditorPatternCallsites,
+                    Has.Count.EqualTo(i + 2),
+                    "each separately authored helper expands the green set");
+                if (i > 0)
+                    Assert.That(distinctActions[i].Position.EditorPatternCallsites,
+                        Is.Not.SameAs(distinctActions[i - 1]
+                            .Position.EditorPatternCallsites),
+                        "different source spans must freeze separate arrays");
+            }
+
+            double[] repeatedMicros = new double[rounds];
+            double[] distinctMicros = new double[rounds];
+            long[] repeatedBytes = new long[rounds];
+            long[] distinctBytes = new long[rounds];
+            void Measure(IAudioOutputSource source, float[] pcm,
+                double[] micros, long[] bytes, int round)
+            {
+                long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+                long start = Stopwatch.GetTimestamp();
+                for (int block = 0; block < measuredBlocks; block++)
+                {
+                    Array.Clear(pcm);
+                    source.Render(blockFrames, pcm);
+                }
+                micros[round] = Stopwatch.GetElapsedTime(start)
+                    .TotalMilliseconds * 1000 / measuredBlocks;
+                bytes[round] = GC.GetAllocatedBytesForCurrentThread()
+                    - beforeBytes;
+            }
+            for (int round = 0; round < rounds; round++)
+            {
+                if ((round & 1) == 0)
+                {
+                    Measure(repeatedAudio, repeatedPcm,
+                        repeatedMicros, repeatedBytes, round);
+                    Measure(distinctAudio, distinctPcm,
+                        distinctMicros, distinctBytes, round);
+                }
+                else
+                {
+                    Measure(distinctAudio, distinctPcm,
+                        distinctMicros, distinctBytes, round);
+                    Measure(repeatedAudio, repeatedPcm,
+                        repeatedMicros, repeatedBytes, round);
+                }
+            }
+            static double Median(double[] numbers)
+            {
+                double[] ordered = numbers.OrderBy(x => x).ToArray();
+                return ordered[ordered.Length / 2];
+            }
+            double repeatedUs = Median(repeatedMicros);
+            double distinctUs = Median(distinctMicros);
+            Assert.That(double.IsFinite(repeatedUs) && double.IsFinite(distinctUs),
+                Is.True);
+            TestContext.Progress.WriteLine(
+                $"Editor F6 dense-action profile: sample rate={sampleRate}, "
+                + $"block frames={blockFrames}, actions/loop={actionCount}, "
+                + $"root pattern rows=4, warmup blocks={warmupBlocks}, "
+                + $"paired rounds={rounds}, blocks/arm/round={measuredBlocks}, "
+                + $"single-source-span median us/block={repeatedUs:F3}, "
+                + $"distinct-source-spans median us/block={distinctUs:F3}, "
+                + $"single-source-span render-thread bytes={repeatedBytes.Sum()}, "
+                + $"distinct-source-spans render-thread bytes={distinctBytes.Sum()}. "
+                + "Both arms are editor-F6 traced; source shape changes compiler "
+                + "instructions and highlight-set cardinality, so their difference "
+                + "is diagnostic, not an isolated snapshot-allocation benchmark.");
+        }
+        finally
+        {
+            (repeatedAudio as IDisposable)?.Dispose();
+            (distinctAudio as IDisposable)?.Dispose();
+        }
+    }
+
     [Test]
     public void OrdinaryPlaybackHasNoSustainedNoteTraceMetadata()
     {
