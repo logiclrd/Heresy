@@ -161,6 +161,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 				MinWidth = 520,
 			};
 		ScriptEditorFonts.ApplyTo(_source);
+		ScriptCuaClipboardShortcuts.Attach(_source);
 		_source.TextArea.TextView.ElementGenerators.Add(
 			_referenceGenerator);
 		_source.TextArea.TextView.LineTransformers.Add(
@@ -867,11 +868,15 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 	}
 
 	private static TextBox NumberBox(int value)
-		=> new()
+	{
+		TextBox box = new()
 		{
 			Text = value.ToString(CultureInfo.CurrentCulture),
 			Width = 80,
 		};
+		ScriptCuaClipboardShortcuts.Attach(box);
+		return box;
+	}
 
 	private static int ParseInt(
 		TextBox box,
