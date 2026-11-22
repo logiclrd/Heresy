@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
@@ -27,6 +28,23 @@ public readonly record struct SequencePlaybackPosition
 public abstract record PlaybackRequest(
 	SongDocumentSnapshot Snapshot);
 
+/// <summary>One process-wide, positive identifier per editor-F6 playback.
+/// No ID survives application restart or is stored in a song. Atomically
+/// allocate across editors and potential concurrent callers.</summary>
+public static class EditorCallsiteSessionIds
+{
+	private static long _next;
+
+	public static long Next()
+	{
+		long id = Interlocked.Increment(ref _next);
+		if (id <= 0)
+			throw new InvalidOperationException(
+				"Editor playback session identifiers are exhausted.");
+		return id;
+	}
+}
+
 public sealed record SequencePlaybackRequest(
 	SongDocumentSnapshot Snapshot,
 	ObjectId SequenceId,
@@ -35,7 +53,7 @@ public sealed record SequencePlaybackRequest(
 {
 	/// <summary>Present only for a Script Sequence launched by F6 in its
 	/// source editor. Ordinary playback requests never set this property.</summary>
-	public Guid? EditorCallsiteSession { get; init; }
+	public long? EditorCallsiteSession { get; init; }
 
 	public static SequencePlaybackRequest Create(
 		SongDocument document,
@@ -64,7 +82,7 @@ public sealed record PatternPlaybackRequest(
 {
 	/// <summary>Only a Script Pattern's F6 audition opts into authored
 	/// action provenance.</summary>
-	public Guid? EditorCallsiteSession { get; init; }
+	public long? EditorCallsiteSession { get; init; }
 
 	public static PatternPlaybackRequest Create(
 		SongDocument document,
