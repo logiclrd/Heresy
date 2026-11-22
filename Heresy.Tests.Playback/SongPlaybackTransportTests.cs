@@ -850,8 +850,10 @@ public sealed class SongPlaybackTransportTests
 		: IBackgroundPlaybackSourceFactory, IPlaybackPositionTimelineProvider
 	{
 		public PlaybackPositionTimeline? Timeline { get; private set; }
+		private bool _pending;
 		public IAudioOutputSource Create(PlaybackRequest request)
 		{
+			_pending = true;
 			Timeline = new PlaybackPositionTimeline(request switch
 			{
 				PatternPlaybackRequest pattern => pattern.EditorCallsiteSession,
@@ -863,8 +865,8 @@ public sealed class SongPlaybackTransportTests
 		public bool TryTakePlaybackPositionTimeline(PlaybackRequest request,
 			out PlaybackPositionTimeline? timeline)
 		{
-			timeline = Timeline;
-			Timeline = null;
+			timeline = _pending ? Timeline : null;
+			_pending = false;
 			return timeline is not null;
 		}
 	}
