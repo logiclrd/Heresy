@@ -553,6 +553,117 @@ public sealed class EditorPatternPlaybackTraceTests
     }
 
     [Test]
+    public void RepeatedSameHelperInvocationReusesFrozenActionCallsiteSnapshot()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long sound", "long.wav", LongMonoWave()));
+        const string note = "Note(0, 0, _O(20))";
+        const string repeated = "ChannelFilter(0, 0)";
+        const string independent = "Pan(0, 0, 0.4)";
+        const string nextRow = "ChannelFilter(1, 0)";
+        const int invocations = 24;
+        string source = note + "; for (int i = 0; i < "
+            + invocations + "; i++) " + repeated + "; "
+            + independent + "; " + nextRow + ";";
+        ScriptPatternDefinition script = new((ObjectId)5U,
+            "Repeated F6 authored call")
+        {
+            RowCount = 8, ChannelCount = 1, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero,
+                positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory tracedFactory = new(config);
+        PlaybackRequestAudioSourceFactory ordinaryFactory = new(config);
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, script.Id) with
+        {
+            EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+        };
+        PatternPlaybackRequest ordinaryRequest =
+            PatternPlaybackRequest.Create(song, script.Id);
+        IAudioOutputSource traced = tracedFactory.Create(request);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(ordinaryRequest);
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            float[] withTrace = new float[512];
+            float[] withoutTrace = new float[512];
+            for (int block = 0; block < 18; block++)
+            {
+                Array.Clear(withTrace);
+                Array.Clear(withoutTrace);
+                traced.Render(withTrace.Length, withTrace);
+                ordinary.Render(withoutTrace.Length, withoutTrace);
+                for (int i = 0; i < withTrace.Length; i++)
+                    Assert.That(withTrace[i],
+                        Is.EqualTo(withoutTrace[i]).Within(0.000001f),
+                        $"F6 duplicate-source trace changed PCM block {block}, frame {i}");
+            }
+
+            SequenceCallsite noteSpan = new(
+                source.IndexOf(note, StringComparison.Ordinal), note.Length);
+            SequenceCallsite repeatedSpan = new(
+                source.IndexOf(repeated, StringComparison.Ordinal),
+                repeated.Length);
+            SequenceCallsite independentSpan = new(
+                source.IndexOf(independent, StringComparison.Ordinal),
+                independent.Length);
+            PlaybackPositionTimelineEntry[] repeatedEntries =
+                timeline!.Entries.Where(e =>
+                    e.Position.EditorPatternCallsite == repeatedSpan).ToArray();
+            Assert.That(repeatedEntries, Has.Length.EqualTo(invocations),
+                "every loop invocation still emits its own due-time position");
+            IReadOnlyList<SequenceCallsite>? sameSnapshot =
+                repeatedEntries[0].Position.EditorPatternCallsites;
+            Assert.That(sameSnapshot,
+                Is.EquivalentTo(new[] { noteSpan, repeatedSpan }));
+            foreach (PlaybackPositionTimelineEntry entry in repeatedEntries)
+            {
+                Assert.That(entry.Position.EditorPatternCallsites,
+                    Is.SameAs(sameSnapshot),
+                    "unchanged green-membership arrays must be shared, not cloned");
+                Assert.That(entry.Position.EditorActiveNoteCallsites,
+                    Is.EquivalentTo(new[] { noteSpan }));
+            }
+
+            PlaybackPositionTimelineEntry independentEntry =
+                timeline.Entries.First(e =>
+                    e.Position.EditorPatternCallsite == independentSpan);
+            Assert.Multiple(() =>
+            {
+                Assert.That(independentEntry.Position.EditorPatternCallsites,
+                    Is.EquivalentTo(new[]
+                    {
+                        noteSpan, repeatedSpan, independentSpan,
+                    }));
+                Assert.That(independentEntry.Position.EditorPatternCallsites,
+                    Is.Not.SameAs(sameSnapshot),
+                    "a different helper call must freeze the expanded set");
+                Assert.That(sameSnapshot,
+                    Is.EquivalentTo(new[] { noteSpan, repeatedSpan }),
+                    "previously published arrays must remain unchanged");
+                Assert.That(timeline.GetPositionAt(TimeSpan.Zero)
+                    ?.EditorPatternCallsites,
+                    Is.EquivalentTo(new[]
+                    {
+                        noteSpan, repeatedSpan, independentSpan,
+                    }));
+            });
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
     public void QueuedF6RowsAndDelayedCallsKeepDueTimesAndStableOrderAcrossLoops()
     {
         SongDocument song = new();
