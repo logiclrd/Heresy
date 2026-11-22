@@ -74,6 +74,77 @@ public sealed class EditorPatternCallsiteTests
     }
 
     [Test]
+    public void EditorF6TracesAllVoiceEndingHelpersWithoutChangingCommands()
+    {
+        const string source = """
+            Off(0, 0);
+            Cut(1, 0);
+            OffVirtual(2, 7);
+            CutVirtual(3, 7);
+            OffVirtualInScope(4);
+            CutVirtualInScope(5);
+            OffAllVirtual(6);
+            CutAllVirtual(7);
+            """;
+        string[] names = { "Off(", "Cut(", "OffVirtual(", "CutVirtual(",
+            "OffVirtualInScope(", "CutVirtualInScope(", "OffAllVirtual(",
+            "CutAllVirtual(" };
+        ScriptPatternDefinition pattern = new((ObjectId)7U, "Voice endings")
+        {
+            RowCount = 10, ChannelCount = 1, Source = source,
+        };
+        var normal = ScriptCompiler.CompileIncrementalPattern(pattern);
+        var traced = ScriptCompiler.CompileIncrementalPattern(pattern,
+            instrumentActionCallsites: true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(normal.Success, Is.True,
+                string.Join("; ", normal.Diagnostics.Select(d => d.Message)));
+            Assert.That(traced.Success, Is.True,
+                string.Join("; ", traced.Diagnostics.Select(d => d.Message)));
+        });
+        NoteEvent[] ordinary = normal.Program!.EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(x => x.Note).ToArray();
+        NoteEvent[] annotated = traced.Program!.EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(x => x.Note).ToArray();
+        Assert.That(annotated.Length, Is.EqualTo(names.Length));
+        for (int i = 0; i < annotated.Length; i++)
+        {
+            int first = source.IndexOf(names[i], StringComparison.Ordinal);
+            int end = source.IndexOf(')', first) + 1;
+            Assert.Multiple(() =>
+            {
+                Assert.That(ordinary[i].EditorCallsite, Is.Null);
+                Assert.That(annotated[i].EditorCallsite,
+                    Is.EqualTo(new SequenceCallsite(first, end - first)));
+                Assert.That(annotated[i].EditorPatternRow, Is.EqualTo(i));
+                Assert.That(ordinary[i].Target, Is.EqualTo(annotated[i].Target));
+                Assert.That(ordinary[i].Offset, Is.EqualTo(annotated[i].Offset));
+                Assert.That(ordinary[i].Commands.Select(x => x.GetType()),
+                    Is.EqualTo(annotated[i].Commands.Select(x => x.GetType())));
+            });
+        }
+        Assert.That(pattern.Source, Is.EqualTo(source));
+    }
+
+    [TestCase("Off(default(SequenceCallsite), 0, 0);")]
+    [TestCase("CutAllVirtual(default(SequenceCallsite), 0);")]
+    public void AuthoredSourceCannotSpoofVoiceEndingCallsites(string source)
+    {
+        ScriptPatternDefinition pattern = new((ObjectId)1U, "Restricted")
+        {
+            RowCount = 4, ChannelCount = 1, Source = source,
+        };
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(pattern).Success,
+            Is.False);
+        var traced = ScriptCompiler.CompileIncrementalPattern(pattern,
+            instrumentActionCallsites: true);
+        Assert.That(traced.Success, Is.False);
+        Assert.That(traced.Diagnostics,
+            Has.Some.Property("Code").EqualTo("HRS2001"));
+    }
+
+    [Test]
     public void AuthorCannotCallGeneratedOnlyPatternOverloads()
     {
         ScriptPatternDefinition pattern = new((ObjectId)1U, "Restricted")

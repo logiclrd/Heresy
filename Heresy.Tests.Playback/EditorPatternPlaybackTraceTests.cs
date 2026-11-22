@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Numerics;
 
 using Heresy.Core.Objects;
@@ -87,6 +88,56 @@ public sealed class EditorPatternPlaybackTraceTests
             }));
             Assert.That(later!.EditorPatternCallsites, Is.Null,
                 "later row boundaries clear both action highlights");
+        }
+        finally { (audio as IDisposable)?.Dispose(); }
+    }
+
+    [Test]
+    public void SameRowNoteOffAndCutActionsHaveIndependentPlaybackSpans()
+    {
+        SongDocument song = new();
+        const string source = "Off(0, 0); Cut(0, 0); Off(8, 0); Cut(8, 0);";
+        ScriptPatternDefinition script = new((ObjectId)5U, "Actions")
+        {
+            RowCount = 16, ChannelCount = 1, Source = source,
+        };
+        song.Add(script);
+        RenderConfiguration config = new(48000, new[]
+        {
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0),
+        });
+        PlaybackRequestAudioSourceFactory factory = new(config);
+        Guid session = Guid.NewGuid();
+        PatternPlaybackRequest request = PatternPlaybackRequest.Create(
+            song, script.Id) with { EditorCallsiteSession = session };
+        IAudioOutputSource audio = factory.Create(request);
+        try
+        {
+            Assert.That(factory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            float[] samples = new float[512];
+            audio.Render(samples.Length, samples);
+            PlaybackPatternPosition? zero = timeline!.GetPositionAt(TimeSpan.Zero);
+            Assert.That(zero!.EditorPatternCallsites, Is.EquivalentTo(new[]
+            {
+                new SequenceCallsite(0, "Off(0, 0)".Length),
+                new SequenceCallsite(source.IndexOf("Cut(0, 0)", StringComparison.Ordinal),
+                    "Cut(0, 0)".Length),
+            }));
+            for (int i = 0; i < 300; i++)
+                audio.Render(samples.Length, samples);
+            var eight = timeline.Entries
+                .Where(x => x.Position.PatternRow == 8
+                    && x.Position.EditorPatternCallsites is { Count: 2 })
+                .Select(x => x.Position).LastOrDefault();
+            Assert.That(eight, Is.Not.Null);
+            Assert.That(eight!.EditorPatternCallsites, Is.EquivalentTo(new[]
+            {
+                new SequenceCallsite(source.IndexOf("Off(8, 0)", StringComparison.Ordinal),
+                    "Off(8, 0)".Length),
+                new SequenceCallsite(source.IndexOf("Cut(8, 0)", StringComparison.Ordinal),
+                    "Cut(8, 0)".Length),
+            }));
         }
         finally { (audio as IDisposable)?.Dispose(); }
     }

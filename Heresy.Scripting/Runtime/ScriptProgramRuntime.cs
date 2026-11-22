@@ -246,6 +246,49 @@ public abstract class PatternScriptProgram
 		=> EmitWithEditorCallsite(callsite,
 			() => ChannelFilterVirtual(row, virtualId, definitionId, timeOffsetSeconds));
 
+	// Editor-F6-only provenance for voice-ending operations. Delegate to
+	// the authored overloads so validation, channel scoping and note
+	// commands remain identical to ordinary playback.
+	protected void Off(SequenceCallsite callsite, double row, int channel,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Off(row, channel, timeOffsetSeconds));
+
+	protected void Cut(SequenceCallsite callsite, double row, int channel,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Cut(row, channel, timeOffsetSeconds));
+
+	protected void OffVirtual(SequenceCallsite callsite, double row, uint virtualId,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => OffVirtual(row, virtualId, timeOffsetSeconds));
+
+	protected void CutVirtual(SequenceCallsite callsite, double row, uint virtualId,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => CutVirtual(row, virtualId, timeOffsetSeconds));
+
+	protected void OffVirtualInScope(SequenceCallsite callsite, double row,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => OffVirtualInScope(row, timeOffsetSeconds));
+
+	protected void CutVirtualInScope(SequenceCallsite callsite, double row,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => CutVirtualInScope(row, timeOffsetSeconds));
+
+	protected void OffAllVirtual(SequenceCallsite callsite, double row,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => OffAllVirtual(row, timeOffsetSeconds));
+
+	protected void CutAllVirtual(SequenceCallsite callsite, double row,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => CutAllVirtual(row, timeOffsetSeconds));
+
 	private void AppendNoteStart(
 		double row,
 		ChannelTarget target,

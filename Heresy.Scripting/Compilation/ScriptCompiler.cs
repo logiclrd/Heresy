@@ -798,7 +798,10 @@ public static class ScriptCompiler
 			&& method.Parameters[0].Type.Name == "SequenceCallsite"
 			&& (method.Name is "Play" or "Note" or "NoteVirtual"
 				or "NoteFilter" or "NoteFilterVirtual"
-				or "ChannelFilter" or "ChannelFilterVirtual")
+				or "ChannelFilter" or "ChannelFilterVirtual"
+				or "Off" or "Cut" or "OffVirtual" or "CutVirtual"
+				or "OffVirtualInScope" or "CutVirtualInScope"
+				or "OffAllVirtual" or "CutAllVirtual")
 			&& !allowInjectedPlayCallsites)
 			return false;
 
@@ -992,7 +995,10 @@ public static class ScriptCompiler
 			if (node.Expression is not IdentifierNameSyntax name
 				|| name.Identifier.ValueText is not
 					("Note" or "NoteVirtual" or "NoteFilter" or "NoteFilterVirtual"
-						or "ChannelFilter" or "ChannelFilterVirtual"))
+						or "ChannelFilter" or "ChannelFilterVirtual"
+						or "Off" or "Cut" or "OffVirtual" or "CutVirtual"
+						or "OffVirtualInScope" or "CutVirtualInScope"
+						or "OffAllVirtual" or "CutAllVirtual"))
 				return rewritten;
 			ArgumentSyntax span = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(
 				$"new SequenceCallsite({node.SpanStart}, {node.Span.Length})"));
