@@ -96,42 +96,37 @@ public sealed class ScriptCuaClipboardShortcutTests
             ScriptInstrumentDocumentEditor.Create(workspace, "Instrument", "-1");
         ScriptInstrumentEditorControl instrument = new(workspace, instrumentDefinition,
             () => { }, _ => { });
-        foreach (TextBox box in new[]
+        Window envelopeWindow = new() { Content = envelope };
+        Window instrumentWindow = new() { Content = instrument };
+        envelopeWindow.Show();
+        instrumentWindow.Show();
+        try
         {
-            Field<TextBox>(envelope, "_source"),
-            Field<TextBox>(envelope, "_release"),
-            Field<TextBox>(instrument, "_expression"),
-            Field<TextBox>(instrument, "_pitchExpression"),
-            Field<TextBox>(instrument, "_nnaExpression"),
-            Field<TextBox>(instrument, "_ratio"),
-        })
-        {
-            Window window = new() { Content = box == Field<TextBox>(envelope, "_source")
-                || box == Field<TextBox>(envelope, "_release") ? envelope : instrument };
-            // A control cannot have two parents. Attach its owning editor
-            // only once when the relevant loop switches editor.
-            if (box.Parent is not null)
+            foreach ((TextBox box, Window window) in new[]
             {
-                // Check gestures on the TextBox without changing its parent.
-                // The listener was installed on the field at construction.
-                box.Text = "xyz";
-                box.SelectAll();
-                Assert.That(Press(box, Key.Insert, KeyModifiers.Control).Handled, Is.True);
-                Assert.That(Press(box, Key.Delete, KeyModifiers.Shift).Handled, Is.True);
-                Assert.That(Press(box, Key.Insert, KeyModifiers.Shift).Handled, Is.True);
-                continue;
-            }
-            window.Show();
-            try
+                (Field<TextBox>(envelope, "_source"), envelopeWindow),
+                (Field<TextBox>(envelope, "_release"), envelopeWindow),
+                (Field<TextBox>(instrument, "_expression"), instrumentWindow),
+                (Field<TextBox>(instrument, "_pitchExpression"), instrumentWindow),
+                (Field<TextBox>(instrument, "_nnaExpression"), instrumentWindow),
+                (Field<TextBox>(instrument, "_ratio"), instrumentWindow),
+            })
             {
                 box.Text = "xyz";
                 box.SelectAll();
                 Assert.That(Press(box, Key.Insert, KeyModifiers.Control).Handled, Is.True);
+                Assert.That(await window.Clipboard!.GetTextAsync(), Is.EqualTo("xyz"));
                 Assert.That(Press(box, Key.Delete, KeyModifiers.Shift).Handled, Is.True);
+                Assert.That(box.Text, Is.Empty);
                 Assert.That(Press(box, Key.Insert, KeyModifiers.Shift).Handled, Is.True);
                 await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                Assert.That(box.Text, Is.EqualTo("xyz"));
             }
-            finally { window.Close(); }
+        }
+        finally
+        {
+            envelopeWindow.Close();
+            instrumentWindow.Close();
         }
     }
 }
