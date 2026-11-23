@@ -185,6 +185,11 @@ internal sealed class ScriptRuntimeOperationVerifier
                     visitor.Add(record,
                         "Record generated members require a separate audit.");
                     break;
+                case TypeDeclarationSyntax typeDeclaration
+                    when typeDeclaration.ParameterList is not null:
+                    visitor.Add(typeDeclaration.ParameterList,
+                        "Primary constructor and base-call lowering requires a separate audit.");
+                    break;
                 case UnsafeStatementSyntax unsafeStatement:
                     visitor.Add(unsafeStatement, "Unsafe code is not approved.");
                     break;
@@ -300,10 +305,13 @@ internal sealed class ScriptRuntimeOperationVerifier
                     ScriptMemberUse.CallOrMethodGroup, withOperation.Syntax);
                 break;
             case IEventAssignmentOperation eventAssignment:
-                CheckMember(eventAssignment.Adds
-                    ? eventAssignment.EventReference.Event.AddMethod
-                    : eventAssignment.EventReference.Event.RemoveMethod,
-                    ScriptMemberUse.CallOrMethodGroup, eventAssignment.Syntax);
+                if (eventAssignment.EventReference is IEventReferenceOperation reference)
+                    CheckMember(eventAssignment.Adds
+                        ? reference.Event.AddMethod
+                        : reference.Event.RemoveMethod,
+                        ScriptMemberUse.CallOrMethodGroup, eventAssignment.Syntax);
+                else
+                    Add(eventAssignment.Syntax, "Event accessor could not be resolved.");
                 break;
             case ITypeOfOperation:
                 Add(operation.Syntax, "Runtime type objects are unavailable.");
@@ -544,6 +552,8 @@ internal sealed class ScriptRuntimeOperationVerifier
     }
 
     private void Add(SyntaxNode syntax, string reason)
-        => _findings.Add(new ScriptRuntimeOperationFinding(
-            syntax.Span, reason));
+        => Add(syntax.Span, reason);
+
+    private void Add(TextSpan span, string reason)
+        => _findings.Add(new ScriptRuntimeOperationFinding(span, reason));
 }
