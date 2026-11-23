@@ -4151,9 +4151,18 @@ public sealed class PatternEditorControl : UserControl
 	{
 		// The status glyphs stay separate from the fixed-width Note name,
 		// so CUT and OFF cannot be clipped by their indication prefix.
+		// Put [mix] before optional speed details so it cannot be hidden
+		// by a long nondefault speed suffix.
+		const string mixdownSuffix = " [mix]";
+		bool isMixdown = noteText.EndsWith(
+			mixdownSuffix, StringComparison.Ordinal);
+		string fullText = noteText;
+		if (isMixdown)
+			noteText = noteText[..^mixdownSuffix.Length];
 		string indicators = prefix.Replace(" ", string.Empty);
 		ToolTip.SetTip(suffix, string.IsNullOrEmpty(indicators)
-			? noteText : indicators + " " + noteText);
+			? fullText : indicators + " " + fullText);
+		string mixdown = isMixdown ? mixdownSuffix : string.Empty;
 		if (noteText.Length >= 3
 			&& noteText[0] is >= 'A' and <= 'G'
 			&& noteText[1] is '-' or '#'
@@ -4164,13 +4173,13 @@ public sealed class PatternEditorControl : UserControl
 				end++;
 			note.Text = noteText[..2];
 			octave.Text = noteText[2..end];
-			suffix.Text = indicators + noteText[end..];
+			suffix.Text = indicators + mixdown + noteText[end..];
 		}
 		else
 		{
 			note.Text = noteText;
 			octave.Text = string.Empty;
-			suffix.Text = indicators;
+			suffix.Text = indicators + mixdown;
 		}
 		// A Source badge can consume the shared 28-DIP area only when
 		// there is no lifecycle/seek hint, Mixdown, or musical suffix here.
