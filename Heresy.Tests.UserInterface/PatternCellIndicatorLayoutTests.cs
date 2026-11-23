@@ -140,8 +140,9 @@ public sealed class PatternCellIndicatorLayoutTests
             Assert.That(octaves[(0, 0)].Text, Is.EqualTo("4"));
             Assert.That(sourceFields[(0, 0)].Width, Is.EqualTo(96));
             Assert.That(cells[(0, 0)].Width, Is.EqualTo(280));
-            Assert.That(ToolTip.GetTip(sourceFields[(0, 0)]),
-                Is.EqualTo(leaf.Name));
+            Assert.That(ToolTip.GetTip(sourceFields[(0, 0)])?.ToString(),
+                Does.StartWith(leaf.Name + " <"),
+                "the Source tooltip preserves the full name and object ID");
         });
 
         // The Source's measured name gets only the remaining space,
