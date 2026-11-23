@@ -1110,7 +1110,6 @@ public sealed class PatternEditorControl : UserControl
 		TextBlock noteSuffix = new()
 		{
 			VerticalAlignment = VerticalAlignment.Center,
-			FontSize = 10,
 			TextTrimming = TextTrimming.CharacterEllipsis,
 			IsHitTestVisible = false,
 		};
