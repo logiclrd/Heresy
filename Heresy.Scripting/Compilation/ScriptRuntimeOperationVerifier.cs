@@ -59,6 +59,177 @@ internal sealed class ScriptRuntimeOperationVerifier
         return visitor._findings.Distinct().ToArray();
     }
 
+    /// <summary>
+    /// Inspect every authored executable declaration in one C# source tree,
+    /// rather than just an explicitly selected method body. This is a
+    /// pre-integration audit: the production compiler still retains its
+    /// existing restricted rules. A multi-tree input requires a separately
+    /// designed trust boundary and is rejected rather than partly inspected.
+    /// </summary>
+    internal static IReadOnlyList<ScriptRuntimeOperationFinding> AnalyzeSource(
+        CSharpCompilation compilation, ScriptRuntimeApiPolicy? policy = null)
+    {
+        ArgumentNullException.ThrowIfNull(compilation);
+        SyntaxTree[] trees = compilation.SyntaxTrees.ToArray();
+        if (trees.Length != 1)
+            throw new InvalidOperationException(
+                "The source audit requires exactly one authored C# tree.");
+
+        SyntaxTree tree = trees[0];
+        SyntaxNode root = tree.GetRoot();
+        ScriptRuntimeOperationVerifier visitor = new(
+            compilation.GetSemanticModel(tree),
+            policy ?? ScriptRuntimeApiPolicy.Default);
+
+        foreach (Diagnostic diagnostic in compilation.GetDiagnostics())
+        {
+            if (diagnostic.Severity == DiagnosticSeverity.Error
+                && diagnostic.Location.SourceTree == tree)
+                visitor.Add(diagnostic.Location.SourceSpan,
+                    "Unresolved C# source: " + diagnostic.Id);
+        }
+
+        foreach (SyntaxTrivia trivia in root.DescendantTrivia(descendIntoTrivia: true))
+        {
+            if (trivia.IsDirective)
+                visitor.Add(trivia.Span, "Source directives are not approved.");
+        }
+
+        // Every source declaration is visited. A declaration that can contain
+        // executable code must have its body or initializer bound separately;
+        // visiting only the entry method misses static and field initializers,
+        // lambda bodies, local functions and expression-bodied members.
+        foreach (SyntaxNode node in root.DescendantNodesAndSelf())
+        {
+            switch (node)
+            {
+                case MethodDeclarationSyntax method:
+                    visitor.AuditBody(method.Body, method.ExpressionBody?.Expression);
+                    visitor.RejectExtern(method.Modifiers, method);
+                    break;
+                case ConstructorDeclarationSyntax constructor:
+                    visitor.AuditBody(constructor.Body,
+                        constructor.ExpressionBody?.Expression);
+                    visitor.RejectExtern(constructor.Modifiers, constructor);
+                    if (constructor.Initializer is { } initializer)
+                    {
+                        ISymbol? target = visitor._model.GetSymbolInfo(initializer).Symbol;
+                        if (target is IMethodSymbol methodSymbol)
+                            visitor.CheckMember(methodSymbol, ScriptMemberUse.Construct,
+                                initializer);
+                        else
+                            visitor.Add(initializer,
+                                "Constructor initializer did not bind to a method.");
+                        foreach (ArgumentSyntax arg in initializer.ArgumentList.Arguments)
+                            visitor.AuditExecutable(arg.Expression);
+                    }
+                    break;
+                case AccessorDeclarationSyntax accessor:
+                    visitor.AuditBody(accessor.Body,
+                        accessor.ExpressionBody?.Expression);
+                    break;
+                case OperatorDeclarationSyntax op:
+                    visitor.AuditBody(op.Body, op.ExpressionBody?.Expression);
+                    break;
+                case ConversionOperatorDeclarationSyntax conversion:
+                    visitor.AuditBody(conversion.Body,
+                        conversion.ExpressionBody?.Expression);
+                    break;
+                case DestructorDeclarationSyntax destructor:
+                    visitor.AuditBody(destructor.Body,
+                        destructor.ExpressionBody?.Expression);
+                    if (visitor._model.GetDeclaredSymbol(destructor) is { } finalizer
+                        && visitor._policy.IsBlockedMember(finalizer,
+                            ScriptMemberUse.CallOrMethodGroup,
+                            visitor._compilation))
+                        visitor.Add(destructor, "User-defined finalizers are blocked.");
+                    break;
+                case LocalFunctionStatementSyntax local:
+                    visitor.AuditBody(local.Body, local.ExpressionBody?.Expression);
+                    visitor.RejectExtern(local.Modifiers, local);
+                    break;
+                case SimpleLambdaExpressionSyntax lambda:
+                    visitor.AuditExecutable(lambda.Body);
+                    break;
+                case ParenthesizedLambdaExpressionSyntax lambda:
+                    visitor.AuditExecutable(lambda.Body);
+                    break;
+                case AnonymousMethodExpressionSyntax anonymous:
+                    visitor.AuditExecutable(anonymous.Block);
+                    break;
+                case PropertyDeclarationSyntax property:
+                    visitor.AuditExecutable(property.ExpressionBody?.Expression);
+                    visitor.AuditExecutable(property.Initializer?.Value);
+                    break;
+                case IndexerDeclarationSyntax indexer:
+                    visitor.AuditExecutable(indexer.ExpressionBody?.Expression);
+                    break;
+                case EventDeclarationSyntax @event:
+                    visitor.AuditExecutable(@event.ExpressionBody?.Expression);
+                    break;
+                case FieldDeclarationSyntax field:
+                    foreach (VariableDeclaratorSyntax v in field.Declaration.Variables)
+                        visitor.AuditExecutable(v.Initializer?.Value);
+                    break;
+                case EventFieldDeclarationSyntax field:
+                    foreach (VariableDeclaratorSyntax v in field.Declaration.Variables)
+                        visitor.AuditExecutable(v.Initializer?.Value);
+                    break;
+                case ParameterSyntax parameter:
+                    visitor.AuditExecutable(parameter.Default?.Value);
+                    break;
+                case GlobalStatementSyntax statement:
+                    visitor.AuditExecutable(statement.Statement);
+                    break;
+                case AttributeListSyntax attribute:
+                    visitor.Add(attribute, "User-authored attributes require a separate review.");
+                    break;
+                case RecordDeclarationSyntax record:
+                    visitor.Add(record,
+                        "Record generated members require a separate audit.");
+                    break;
+                case UnsafeStatementSyntax unsafeStatement:
+                    visitor.Add(unsafeStatement, "Unsafe code is not approved.");
+                    break;
+                case PointerTypeSyntax pointer:
+                    visitor.Add(pointer, "Pointer types are not approved.");
+                    break;
+                case FunctionPointerTypeSyntax functionPointer:
+                    visitor.Add(functionPointer, "Function pointers are not approved.");
+                    break;
+            }
+        }
+
+        visitor.CheckTypeSyntax(root);
+        return visitor._findings.Distinct().OrderBy(x => x.Span.Start).ToArray();
+    }
+
+    private void AuditBody(BlockSyntax? body, ExpressionSyntax? expression)
+    {
+        AuditExecutable(body);
+        AuditExecutable(expression);
+    }
+
+    private void AuditExecutable(SyntaxNode? executable)
+    {
+        if (executable is null)
+            return;
+        IOperation? operation = _model.GetOperation(executable);
+        if (operation is null)
+        {
+            Add(executable, "Executable source could not be bound.");
+            return;
+        }
+        Visit(operation);
+    }
+
+    private void RejectExtern(SyntaxTokenList modifiers, SyntaxNode node)
+    {
+        if (modifiers.Any(SyntaxKind.ExternKeyword)
+            || modifiers.Any(SyntaxKind.UnsafeKeyword))
+            Add(node, "Extern or unsafe declarations are not approved.");
+    }
+
     private void Visit(IOperation operation)
     {
         if (operation.Kind == OperationKind.Invalid)
