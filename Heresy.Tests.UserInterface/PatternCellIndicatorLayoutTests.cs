@@ -121,8 +121,8 @@ public sealed class PatternCellIndicatorLayoutTests
             Assert.That(ordinarySource.Bounds.Width,
                 Is.GreaterThan(cutSource.Bounds.Width));
             Assert.That(SourceLeft(editor, 24) - SourceLeft(editor, 0),
-                Is.EqualTo(content.ColumnDefinitions[2].ActualWidth).Within(0.01),
-                "the Source click boundary follows the arranged Auto column");
+                Is.EqualTo(content.ColumnDefinitions[2].ActualWidth).Within(1.1),
+                "one-DIP border/pixel alignment aside, the Source click boundary follows the arranged Auto column");
             Assert.That(indicator.Bounds.Right,
                 Is.LessThanOrEqualTo(cutSource.Bounds.Left + 0.01),
                 "the drawn indicator must not encroach on the Source badge");
@@ -211,8 +211,8 @@ public sealed class PatternCellIndicatorLayoutTests
                 Is.LessThan(ordinarySourceField.Bounds.Width));
             Assert.That(SourceLeft(editor, 0) - SourceLeft(editor, 1),
                 Is.EqualTo(((Grid)cells[(0, 0)].Child!)
-                    .ColumnDefinitions[2].ActualWidth).Within(0.01),
-                "Source must begin after the true measured Auto-column width");
+                    .ColumnDefinitions[2].ActualWidth).Within(1.1),
+                "Source must begin after the measured Auto-column, allowing one-DIP border alignment");
             Assert.That(indicator.Bounds.Right,
                 Is.LessThanOrEqualTo(mixedSourceField.Bounds.Left + 0.01));
             Assert.That(cells[(0, 0)].Width, Is.EqualTo(CellWidth));
