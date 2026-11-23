@@ -30,10 +30,13 @@ namespace Heresy.UserInterface.Views;
 
 public sealed class PatternEditorControl : UserControl
 {
-	private const double CellWidth = 280;
+	// 10% wider than the original 280-DIP cell. All 28 extra DIPs are
+	// allocated to Source, not the Note/Octave or Volume/Effect stops.
+	private const double CellWidth = 308;
 	private const double RowHeaderWidth = 54;
 	private const double RowHeight = 28;
-	private const double SourceWidth = 96;
+	private const double SourceWidth = 124;
+	private const double SharedIndicatorWidth = 30;
 	private const double VolumeWidth = 34;
 	private const double EffectWidth = 54;
 	private const double NoteNameWidth = 44;
@@ -158,7 +161,6 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Dictionary<(int Row, int Channel), Border> _octaveFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _octaveTexts = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteSuffixTexts = [];
-	private readonly Dictionary<(int Row, int Channel), TextBlock> _mixdownBadges = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _sourceTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceNameBadges = [];
@@ -886,7 +888,6 @@ public sealed class PatternEditorControl : UserControl
 		_octaveFields.Clear();
 		_octaveTexts.Clear();
 		_noteSuffixTexts.Clear();
-		_mixdownBadges.Clear();
 		_sourceFields.Clear();
 		_sourceTexts.Clear();
 		_sourceNameBadges.Clear();
@@ -1107,19 +1108,20 @@ public sealed class PatternEditorControl : UserControl
 		TextBlock noteSuffix = new()
 		{
 			VerticalAlignment = VerticalAlignment.Center,
+			FontSize = 10,
 			TextTrimming = TextTrimming.CharacterEllipsis,
 			IsHitTestVisible = false,
 		};
-		// The note and octave fields retain their original fixed keyboard
-		// hit-test stops. Constrain the status/speed suffix to the remaining
-		// Note column, never permitting it to paint beneath Source.
+		// The Note and Octave stops are fixed. A third 30-DIP area is
+		// shared with the Source badge and belongs to Note only on rows
+		// with an indicator, Mixdown marker or nondefault musical suffix.
 		Grid noteParts = new() { ClipToBounds = true };
 		noteParts.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(NoteNameWidth)));
 		noteParts.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(NoteOctaveWidth)));
 		noteParts.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+			new ColumnDefinition(new GridLength(SharedIndicatorWidth)));
 		Grid.SetColumn(noteField, 0);
 		Grid.SetColumn(octaveField, 1);
 		Grid.SetColumn(noteSuffix, 2);
@@ -1135,48 +1137,29 @@ public sealed class PatternEditorControl : UserControl
 				VerticalAlignment = VerticalAlignment.Center,
 				TextTrimming = TextTrimming.CharacterEllipsis,
 			};
-		// A dedicated Mixdown marker sits within the bounded Source badge.
-		// Unlike the old trailing Note suffix, "[mix]" cannot be covered
-		// by the Source name. The name may ellipsize; its tooltip remains.
-		TextBlock mixdownBadge = new()
-		{
-			Text = "[mix]",
-			FontWeight = FontWeight.SemiBold,
-			FontSize = 10,
-			Margin = new Thickness(0, 0, 2, 0),
-			VerticalAlignment = VerticalAlignment.Center,
-			IsHitTestVisible = false,
-			IsVisible = false,
-		};
-		Grid sourceBadgeContents = new() { ClipToBounds = true };
-		sourceBadgeContents.ColumnDefinitions.Add(
-			new ColumnDefinition(GridLength.Auto));
-		sourceBadgeContents.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
-		Grid.SetColumn(mixdownBadge, 0);
-		Grid.SetColumn(sourceText, 1);
-		sourceBadgeContents.Children.Add(mixdownBadge);
-		sourceBadgeContents.Children.Add(sourceText);
+		// Source's badge occupies the shared 30 DIPs on ordinary rows.
+		// The name alone is rendered here; "[mix]" stays with the musical
+		// Note indicators immediately to the right of Note/Octave.
 		Border sourceNameBadge = new()
 		{
 			Background = Brushes.Transparent,
 			CornerRadius = new CornerRadius(2),
 			Padding = new Thickness(3, 0),
 			Margin = new Thickness(2, 0),
-			MaxWidth = SourceWidth - 6,
+			MaxWidth = SourceWidth + SharedIndicatorWidth - 6,
 			VerticalAlignment = VerticalAlignment.Center,
 			HorizontalAlignment = HorizontalAlignment.Stretch,
 			IsHitTestVisible = false,
-			Child = sourceBadgeContents,
+			Child = sourceText,
 		};
-		UpdateSourceNameBadge(sourceNameBadge, sourceText, mixdownBadge,
+		UpdateSourceNameBadge(sourceNameBadge, sourceText,
 			row.Pattern.Grid[row.PatternRow, channel]?.SourceId
 				?? ObjectId.None,
 			view.SourceText);
 		Border sourceField =
 			new()
 			{
-				Width = SourceWidth,
+				Width = SourceWidth + SharedIndicatorWidth,
 				Height = RowHeight - 4,
 				HorizontalAlignment = HorizontalAlignment.Stretch,
 				VerticalAlignment = VerticalAlignment.Center,
@@ -1282,7 +1265,7 @@ public sealed class PatternEditorControl : UserControl
 			(displayRow, channel), out FlattenedSourceEditorIndication? indication);
 		_seekIndications.TryGetValue(
 			(displayRow, channel), out ReplayRequiredSeekIndication? seek);
-		ApplyEditorIndications(note, octaveText, noteSuffix, mixdownBadge,
+		ApplyEditorIndications(note, octaveText, noteSuffix, sourceField,
 			noteField, octaveField, volumeField,
 			effects, view.NoteText, indication, seek);
 
@@ -1294,8 +1277,13 @@ public sealed class PatternEditorControl : UserControl
 		{
 			Background = GetSourceTintBrush(displayRow, channel),
 		};
+		// The Source field spans both the shared indicator area and its
+		// dedicated column when the row has no Note-side indicators.
 		content.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+			new ColumnDefinition(new GridLength(
+				NoteNameWidth + NoteOctaveWidth)));
+		content.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(SharedIndicatorWidth)));
 		content.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(SourceWidth)));
 		content.ColumnDefinitions.Add(
@@ -1307,14 +1295,14 @@ public sealed class PatternEditorControl : UserControl
 		// but beneath editable fields, independently coloured effect stickers
 		// and all cursor/focus borders. No overlay receives pointer input.
 		Grid rangeLayer = new() { IsHitTestVisible = false };
-		Grid.SetColumnSpan(rangeLayer, 4);
+		Grid.SetColumnSpan(rangeLayer, 5);
 		PopulateRangeOverlays(rangeLayer, _flattenedRanges!,
 			(displayRow, channel));
 		Grid.SetColumn(noteParts, 0);
-		Grid.SetColumn(sourceField, 1);
-		Grid.SetColumn(volumeField, 2);
+		Grid.SetColumnSpan(noteParts, 2);
+		Grid.SetColumn(volumeField, 3);
 		Grid.SetColumn(effects, 0);
-		Grid.SetColumnSpan(effects, 4);
+		Grid.SetColumnSpan(effects, 5);
 		content.Children.Add(rangeLayer);
 		content.Children.Add(noteParts);
 		content.Children.Add(sourceField);
@@ -1352,7 +1340,6 @@ public sealed class PatternEditorControl : UserControl
 		_octaveFields[(displayRow, channel)] = octaveField;
 		_octaveTexts[(displayRow, channel)] = octaveText;
 		_noteSuffixTexts[(displayRow, channel)] = noteSuffix;
-		_mixdownBadges[(displayRow, channel)] = mixdownBadge;
 		_sourceFields[(displayRow, channel)] = sourceField;
 		_sourceTexts[(displayRow, channel)] = sourceText;
 		_sourceNameBadges[(displayRow, channel)] = sourceNameBadge;
@@ -1388,7 +1375,10 @@ public sealed class PatternEditorControl : UserControl
 			PatternCellFieldGeometry.HitTest(
 				point.X,
 				CellWidth,
-				SourceWidth,
+				SourceWidth
+					+ (_noteSuffixTexts.TryGetValue((row, channel),
+						out TextBlock? suffix) && suffix.IsVisible
+							? 0 : SharedIndicatorWidth),
 				VolumeWidth,
 				EffectWidth,
 				effectCount,
