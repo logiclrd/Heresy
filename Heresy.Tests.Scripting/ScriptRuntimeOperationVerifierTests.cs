@@ -93,7 +93,7 @@ public sealed class ScriptRuntimeOperationVerifierTests
             using var cts = new CancellationTokenSource();
             cts.Cancel();
             bool stopped = cts.Token.IsCancellationRequested;
-            var timed = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            var timed = new CancellationTokenSource(1000);
             timed.Dispose();
             """;
         Check(source).Should().BeEmpty();
@@ -104,16 +104,16 @@ public sealed class ScriptRuntimeOperationVerifierTests
     [TestCase("new CultureInfo(\"en-US\")", "CultureInfo")]
     [TestCase("new StreamReader(\"song.txt\")", "StreamReader")]
     [TestCase("new StreamWriter(\"song.txt\")", "StreamWriter")]
-    [TestCase("ArrayPool<int>.Shared", "Shared")]
+    [TestCase("ArrayPool<int>.Shared.Rent(1)", "Shared")]
     [TestCase("new CancellationTokenSource().CancelAfter(5)", "CancelAfter")]
     [TestCase("new CancellationTokenSource().CancelAsync()", "System.Threading.Tasks.Task")]
     [TestCase("new CancellationToken().Register(() => {})", "Register")]
-    [TestCase("CultureInfo.ClearCachedData()", "ClearCachedData")]
+    [TestCase("CultureInfo.CurrentCulture.ClearCachedData()", "ClearCachedData")]
     [TestCase("TimeZoneInfo.ClearCachedData()", "ClearCachedData")]
     [TestCase("new DateTimeFormatInfo().SetAllDateTimePatterns(new[] { \"MM/dd\" }, 'd')", "SetAllDateTimePatterns")]
     [TestCase("Environment.Exit(3)", "Environment")]
     [TestCase("File.Delete(\"song.txt\")", "File")]
-    [TestCase("typeof(string)", "Runtime type")]
+    [TestCase("typeof(string).ToString()", "Runtime type")]
     public void DirectForbiddenCapabilitiesAreIdentified(string expression,
         string expected)
     {
