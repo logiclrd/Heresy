@@ -132,7 +132,7 @@ public sealed class ScriptAuthoredWrapperBoundaryTests
             """);
         ScriptAuthoredWrapperBoundary.Validate(tree, ScriptWrapperKind.Pattern)
             .Should().Contain(v => v.Reason.Contains("escaped") &&
-                v.Location is not null);
+                v.Location != null);
     }
 
     [Test]
