@@ -8,6 +8,7 @@ using Heresy.Core.Envelopes;
 using Heresy.Core.Objects;
 using Heresy.Render.FmSynthesis;
 using Heresy.Core.Sequencing;
+using Heresy.Core.Sequences;
 using Heresy.Core.Timing;
 using Heresy.Render.Envelopes;
 using Heresy.Render.Filters;
@@ -346,6 +347,10 @@ public sealed class PlaybackVoice
 	public ISound Sound { get; private set; }
 
 	internal ObjectId OriginSourceId { get; set; } = ObjectId.None;
+
+	/// <summary>Author's editor-F6-only Note invocation that actually
+	/// created this voice. It follows the voice into displaced NNA history.</summary>
+	internal SequenceCallsite? EditorOriginCallsite { get; set; }
 
 	// The PCM owner holds at most one deferred, latest-wins Synth revision.
 	// A bound FIR stage may need an invocation-local off-thread design

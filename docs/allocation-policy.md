@@ -1,0 +1,30 @@
+# Managed allocation policy for Heresy
+
+**Status (2026-11-22): owner-approved engineering guidance, not a fully implemented analyzer or a blanket restriction on authored scripts.** Related future Pattern/Sequence work: [issue #58](https://github.com/logiclrd/Heresy/issues/58); future Instrument rework: [Script Instrument plan](script-instrument-rework-plan.md); editor tracing: [issue #49](https://github.com/logiclrd/Heresy/issues/49).
+
+## Engine-owned paths
+
+- **Hot path:** avoid **new managed allocations** in code that systematically executes more than approximately **100 times per musical row**. Per-sample, per-voice, high-frequency renderer and device-callback code is subject to the strongest scrutiny. Treat this as a workload-based engineering classification heuristic, **not** a programmatically enforced literal 100-call threshold.
+- **Cooler path:** **try to avoid** allocations when a simple allocation-free alternative exists, but small, controlled allocations per Pattern/Sequence instance, musical row, note or control action are acceptable when the cost is negligible and the code is clearer or more reliable.
+- **Safety and measurement:** review allocation counts/sizes and work-frequency rather than banning all allocations; use measured profiling and stress tests. Do not introduce unbounded growth, per-sample callbacks to the UI, or device-callback allocation. An occasional allocation elsewhere is not itself a performance regression.
+
+## User-authored scripts
+
+- **Script Patterns / Script Sequences:** future compiler work should permit user-authored managed allocation in these contexts. Keep restricted language/type access, deterministic sequencing, CPU/event budgets and memory safety deliberately constrained. See [issue #58](https://github.com/logiclrd/Heresy/issues/58). **Not implemented by this document.**
+- **Future procedural Script Instruments:** explore a setup/initialization block and a per-note handler. Allocations in the setup block are **permitted without a warning**, because they can prepare state for reuse. Allocations in the per-note handler are **permitted but should trigger a non-blocking advisory warning**, encouraging reuse and moving work into setup. This is **future redesign guidance only** and does not change current three expression-based Instrument scripts. See [Instrument rework plan](script-instrument-rework-plan.md).
+- Engine-internal hot-path requirements should not be mechanically interpreted as a universal prohibition against author-created objects. Resource/work budgets, runtime validation and appropriate diagnostics still apply.
+
+## Editor-only F6 source highlighting
+
+Source-call provenance metadata is only opted into for **Script-editor F6 auditions**, not ordinary playback or export. Its allocation rate is coupled to the **musical events/row/control actions**, not automatically to the high-frequency PCM sample loop, so modest per-action metadata allocations are **acceptable** under this policy. Avoid repeated allocations per PCM frame and unnecessary duplicates. Already implemented immutable snapshot reuse, chronological scheduled-event metadata and bounded published timeline entries should remain.
+
+### Lossless, work-proportional F6 presentation (Option A; owner-approved 2026-11-22)
+
+- **Correctness before forced realtime throughput:** fully process legitimate authored notes, controls and presentation activations. Do **not** drop, silently merge or mis-time authored work merely to force a fixed processing-time or fixed-size F6 metadata budget. An extremely large user-authored workload may overrun realtime capacity; this is preferable to knowingly returning incorrect playback or source-activation results. Existing safety/runtime limits and errors remain in effect; this policy is not permission to bypass them.
+- **Bound incidental lookahead:** avoid growing a backlog of source-highlight positions solely because a PCM render buffer spans many future musical rows. The editor-F6 renderer uses the earliest queued future presentation deadline as a PCM segment boundary and processes prior structural cursor steps before advancing past that deadline. Keep ordinary playback/export out of this optional machinery.
+- **Scale with actual work:** simultaneous due-time authored actions may require memory and CPU proportional to their true count. Preserve each due activation record and its chronological ordering while allowing displayed source spans to be deduplicated for visual membership. Do not impose an arbitrary hard queue cap or an overflow-dropping policy. This is **not** a data-independent constant-space guarantee for adversarial scripts, and the observed two-entry queue peaks in tests are not a universal maximum.
+- **Bound retained *history* independently:** published UI timeline entries retain at most 1,024 recent entries; this is a recent-position window, not an archival event log. Pruning already published history does not authorize dropping unpublished due-time activations.
+
+**Editor lifecycle (implemented and owner-verified):** F6 tracing starts only from the Script editor. When that editor is left or replaced, the matching session stops collecting/publishing new green-action and blue-note provenance, including exact natural-completion scans, while continuing ordinary musical row reporting and PCM playback. Already-prepared musical commands may still carry lightweight source metadata; disabling tracing is not dynamic recompilation.
+
+The [issue #49 completion checklist](https://github.com/logiclrd/Heresy/issues/49) records acceptance evidence and outstanding PR gates. This document does **not** imply all heap allocations inside optional F6 tracing have been eliminated.

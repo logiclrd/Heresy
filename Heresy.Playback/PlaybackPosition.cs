@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Sequences;
 using Heresy.Render.Realtime;
 
 namespace Heresy.Playback;
@@ -44,6 +46,27 @@ public sealed record PlaybackPatternPosition
 	public int PatternRow { get; }
 	public ObjectId? SequenceId { get; }
 	public int? SequenceEntryIndex { get; }
+
+	/// <summary>Optional editor-F6 provenance. The ID distinguishes playback
+	/// sessions even if the same source is recompiled or edited in place.</summary>
+	public long? EditorCallsiteSession { get; init; }
+	public SequenceCallsite? EditorPlayCallsite { get; init; }
+	public SequenceCallsite? EditorPatternCallsite { get; init; }
+
+	/// <summary>All distinct authored *source spans* activated in the
+	/// current Pattern row. Each execution still creates its own timed
+	/// position entry; repeated executions of one span paint one green
+	/// region. Each entry owns an immutable membership snapshot.
+	/// This transient editor metadata is never stored in the song.</summary>
+	public IReadOnlyList<SequenceCallsite>? EditorPatternCallsites { get; init; }
+
+	/// <summary>Union of authored Note source spans with at least one
+	/// live physical voice or flattened logical source (also through
+	/// silent child gaps and release tails). Separate live instances that
+	/// originated at the same span paint only one blue region; a span
+	/// stays blue until its last owning voice/source is finished.
+	/// This display membership is not a unique invocation identifier.</summary>
+	public IReadOnlyList<SequenceCallsite>? EditorActiveNoteCallsites { get; init; }
 }
 
 public sealed record PlaybackPositionTimelineEntry(
@@ -56,15 +79,56 @@ public sealed class PlaybackPositionTimeline
 	private readonly object _streamGate = new();
 	private readonly List<PlaybackPositionTimelineEntry>? _streamEntries;
 	private TimeSpan _streamEnd = TimeSpan.MaxValue;
+	private int _editorPendingPositionPeak;
+	private readonly long? _editorCallsiteSession;
+	private int _editorCallsiteTracingEnabled;
+
+	/// <summary>A disabled F6 trace never resumes; the music and ordinary
+	/// row cursor continue, without further authored source-call metadata.
+	/// This flag is read on the PCM worker and written on the UI thread.</summary>
+	public bool EditorCallsiteTracingEnabled =>
+		Volatile.Read(ref _editorCallsiteTracingEnabled) != 0;
+
+	/// <summary>The originating editor-F6 audition, if any.</summary>
+	public long? EditorCallsiteSession => _editorCallsiteSession;
+
+	/// <summary>Disable only the matching trace when its editor is left.
+	/// No audio stop, producer lock, UI callback, or source recompilation.</summary>
+	public bool DisableEditorCallsiteTracing(long session)
+	{
+		if (session <= 0 || _editorCallsiteSession != session)
+			return false;
+		return Interlocked.Exchange(ref _editorCallsiteTracingEnabled, 0) != 0;
+	}
+
 
 	/// <summary>A timeline populated incrementally by the real playback cursor,
 	/// rather than by eagerly traversing all future sequence orders.</summary>
-	public PlaybackPositionTimeline()
+	public PlaybackPositionTimeline(long? editorCallsiteSession = null)
 	{
+		if (editorCallsiteSession is <= 0)
+			throw new ArgumentOutOfRangeException(nameof(editorCallsiteSession));
+		_editorCallsiteSession = editorCallsiteSession;
+		_editorCallsiteTracingEnabled = editorCallsiteSession.HasValue ? 1 : 0;
 		_streamEntries = [];
 		_entries = _streamEntries;
 		Duration = TimeSpan.MaxValue;
 		Repeat = false;
+	}
+
+	/// <summary>Largest unpublished F6 Pattern position queue depth observed
+	/// during this playback timeline. Diagnostic only: no event-dropping
+	/// policy, no additional allocations, and zero on untraced playback.
+	/// Written by the dedicated producer and safe to sample from the UI.</summary>
+	public int EditorPendingPositionPeak =>
+		Volatile.Read(ref _editorPendingPositionPeak);
+
+	internal void RecordEditorPendingPositionCount(int count)
+	{
+		// Only the editor-F6 Pattern queue calls this (one integer comparison
+		// per row/action notification). No lock or allocation on the PCM worker.
+		if (count > _editorPendingPositionPeak)
+			Volatile.Write(ref _editorPendingPositionPeak, count);
 	}
 
 	public void Append(PlaybackPositionTimelineEntry entry)

@@ -167,8 +167,89 @@ public sealed class LazySongPlaybackTransportTests
 		probe!.SharedPublished.Should().Equal(filterId);
 	}
 
+	[Test]
+	public async Task F6EditorTracePassesThroughLazyDesktopFacadeWithoutNormalFallback()
+	{
+		int created = 0;
+		ProbeTransport? probe = null;
+		using LazySongPlaybackTransport lazy = new(() =>
+		{
+			created++;
+			return probe = new ProbeTransport();
+		});
+		IEditorSequencePlaybackTransport editor = lazy;
+		created.Should().Be(0,
+			"the interface check itself must not initialize the audio system");
+
+		long session = EditorCallsiteSessionIds.Next();
+		SongDocument song = new();
+		await editor.PlayEditorSequenceAsync(song, (ObjectId)2U, session);
+
+		created.Should().Be(1);
+		probe!.EditorSequenceId.Should().Be((ObjectId)2U);
+		probe.EditorTraceId.Should().Be(session);
+		probe.SequenceCalls.Should().Be(0,
+			"normal playback loses the editor-only callsite metadata");
+
+		await lazy.PlaySequenceAsync(song, (ObjectId)2U);
+		probe.SequenceCalls.Should().Be(1);
+	}
+
+	[Test]
+	public async Task F6PatternTraceForwardsThroughLazyFacadeWithoutNormalFallback()
+	{
+		int created = 0;
+		ProbeTransport? probe = null;
+		using LazySongPlaybackTransport lazy = new(() =>
+		{
+			created++;
+			return probe = new ProbeTransport();
+		});
+		IEditorPatternPlaybackTransport editor = lazy;
+		created.Should().Be(0);
+		long session = EditorCallsiteSessionIds.Next();
+		SongDocument song = new();
+		await editor.PlayEditorPatternAsync(song, (ObjectId)5U, session);
+		created.Should().Be(1);
+		probe!.EditorPatternId.Should().Be((ObjectId)5U);
+		probe.EditorPatternSession.Should().Be(session);
+		probe.PatternCalls.Should().Be(0);
+		await lazy.PlayPatternAsync(song, (ObjectId)5U);
+		probe.PatternCalls.Should().Be(1);
+	}
+
+	[Test]
+	public async Task DeactivationPreservesLazinessAndForwardsWhenActive()
+	{
+		int created = 0;
+		ProbeTransport? probe = null;
+		using LazySongPlaybackTransport lazy = new(() =>
+		{
+			created++;
+			return probe = new ProbeTransport();
+		});
+		IEditorCallsiteTraceLifecycleTransport lifecycle = lazy;
+		long session = EditorCallsiteSessionIds.Next();
+		Assert.That(lifecycle.DeactivateEditorCallsiteTrace(session), Is.False);
+		Assert.That(created, Is.Zero,
+			"stopping orphaned metadata must not start an audio backend");
+
+		await lazy.PlayEditorPatternAsync(
+			new SongDocument(), (ObjectId)5U, session);
+		Assert.That(created, Is.EqualTo(1));
+		Assert.That(lifecycle.DeactivateEditorCallsiteTrace(session), Is.True);
+		Assert.Multiple(() =>
+		{
+			Assert.That(probe!.DeactivatedTrace, Is.EqualTo(session));
+			Assert.That(probe.StopCalls, Is.Zero,
+				"deactivation must not stop audible playback");
+		});
+	}
+
 	private sealed class ProbeTransport
-		: ISongPlaybackTransport, IPlaybackRuntimeDiagnosticsTransport,
+		: ISongPlaybackTransport, IEditorSequencePlaybackTransport,
+			IEditorPatternPlaybackTransport, IEditorCallsiteTraceLifecycleTransport,
+			IPlaybackRuntimeDiagnosticsTransport,
 			IPlaybackAudioHealthTransport, IPlaybackSnapshotTransport,
 			ILiveSynthEditTransport
 	{
@@ -213,7 +294,33 @@ public sealed class LazySongPlaybackTransportTests
 			=> Task.CompletedTask;
 
 		public int PatternCalls { get; private set; }
+		public int SequenceCalls { get; private set; }
+		public ObjectId? EditorSequenceId { get; private set; }
+		public ObjectId? EditorPatternId { get; private set; }
+		public long? EditorPatternSession { get; private set; }
+		public long? EditorTraceId { get; private set; }
 		public int StopCalls { get; private set; }
+		public long? DeactivatedTrace { get; private set; }
+		public bool DeactivateEditorCallsiteTrace(long session)
+		{
+			DeactivatedTrace = session;
+			return true;
+		}
+		public Task PlayEditorSequenceAsync(
+			SongDocument document, ObjectId sequenceId, long editorCallsiteSession)
+		{
+			EditorSequenceId = sequenceId;
+			EditorTraceId = editorCallsiteSession;
+			return Task.CompletedTask;
+		}
+
+		public Task PlayEditorPatternAsync(
+			SongDocument document, ObjectId patternId, long editorCallsiteSession)
+		{
+			EditorPatternId = patternId;
+			EditorPatternSession = editorCallsiteSession;
+			return Task.CompletedTask;
+		}
 
 		public Task PlaySongAsync(
 			SongDocument document)
@@ -223,7 +330,10 @@ public sealed class LazySongPlaybackTransportTests
 			SongDocument document,
 			ObjectId sequenceId,
 			SequencePlaybackPosition? startPosition = null)
-			=> Task.CompletedTask;
+		{
+			SequenceCalls++;
+			return Task.CompletedTask;
+		}
 
 		public Task PlayPatternAsync(
 			SongDocument document,

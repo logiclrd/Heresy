@@ -131,9 +131,19 @@ public static class ScriptCompiler
 	/// timeline until CPU checkpoint scheduling and full parity are ready.
 	/// </summary>
 	public static ScriptCompilationResult<IIncrementalRawPatternNoteGenerator>
-		CompileIncrementalPattern(ScriptPatternDefinition definition)
+		CompileIncrementalPattern(ScriptPatternDefinition definition,
+		bool instrumentActionCallsites = false)
 	{
 		ArgumentNullException.ThrowIfNull(definition);
+
+		// Validate canonical authored source before injecting trusted overloads.
+		if (instrumentActionCallsites)
+		{
+			IReadOnlyList<ScriptAnalysisDiagnostic> authored =
+				AnalyzePatternSource(definition.Source);
+			if (HasErrors(authored))
+				return new(null, authored);
+		}
 
 		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
 			ValidateIncrementalPatternStatements(definition.Source);
@@ -147,8 +157,10 @@ public static class ScriptCompiler
 			className,
 			BuildIncrementalPatternWrapper(
 				className,
-				InstrumentIncrementalPattern(definition.Source)),
-			typeof(PatternScriptProgram));
+				InstrumentIncrementalPattern(definition.Source,
+					instrumentActionCallsites)),
+			typeof(PatternScriptProgram),
+			allowInjectedPlayCallsites: instrumentActionCallsites);
 
 		if (!compiled.Success || compiled.Program is null)
 			return new(null, compiled.Diagnostics);
@@ -167,14 +179,29 @@ public static class ScriptCompiler
 	/// function and never buffer a generated list of orders.
 	/// </summary>
 	public static ScriptCompilationResult<ISequenceEntrySourceFactory>
-		CompileIncrementalSequence(ScriptSequenceDefinition definition)
+		CompileIncrementalSequence(ScriptSequenceDefinition definition,
+		bool instrumentPlayCallsites = false)
 	{
 		ArgumentNullException.ThrowIfNull(definition);
+		// Author-written code is always checked in its canonical form,
+		// before any trusted metadata constructors are generated.
+		if (instrumentPlayCallsites)
+		{
+			IReadOnlyList<ScriptAnalysisDiagnostic> authored =
+				AnalyzeSequenceSource(definition.Source);
+			if (HasErrors(authored))
+				return new(null, authored);
+		}
+
 		string className = "__HeresySequenceLookup_" + Guid.NewGuid().ToString("N");
+		string source = instrumentPlayCallsites
+			? InstrumentSequencePlayCallsites(definition.Source)
+			: definition.Source;
 		ScriptCompilationResult<Type> compiled = CompileType(
 			definition.Source, className,
-			BuildSequenceWrapper(className, InstrumentLoops(definition.Source)),
-			typeof(SequenceScriptProgram));
+			BuildSequenceWrapper(className, InstrumentLoops(source)),
+			typeof(SequenceScriptProgram),
+			allowInjectedPlayCallsites: instrumentPlayCallsites);
 
 		if (!compiled.Success || compiled.Program is null)
 			return new(null, compiled.Diagnostics);
@@ -444,12 +471,14 @@ public static class ScriptCompiler
 		string source,
 		string className,
 		string wrapperSource,
-		Type requiredBaseType)
+		Type requiredBaseType,
+		bool allowInjectedPlayCallsites = false)
 	{
 		PreparedScriptCompilation prepared =
 			PrepareCompilation(
 				source,
-				wrapperSource);
+				wrapperSource,
+				allowInjectedPlayCallsites);
 		List<ScriptAnalysisDiagnostic> diagnostics =
 			[.. prepared.Diagnostics];
 
@@ -504,7 +533,8 @@ public static class ScriptCompiler
 
 	private static PreparedScriptCompilation PrepareCompilation(
 		string source,
-		string wrapperSource)
+		string wrapperSource,
+		bool allowInjectedPlayCallsites = false)
 	{
 		ScriptReferenceAnalysis referenceAnalysis =
 			ScriptReferenceAnalyzer.Analyze(source);
@@ -555,7 +585,8 @@ public static class ScriptCompiler
 			ValidateRestrictedSemantics(
 				compilation,
 				syntaxTree,
-				source));
+				source,
+				allowInjectedPlayCallsites));
 		if (HasErrors(diagnostics))
 			return new(null, diagnostics);
 
@@ -660,7 +691,8 @@ public static class ScriptCompiler
 		ValidateRestrictedSemantics(
 			CSharpCompilation compilation,
 			SyntaxTree syntaxTree,
-			string source)
+			string source,
+			bool allowInjectedPlayCallsites)
 	{
 		SemanticModel semanticModel =
 			compilation.GetSemanticModel(
@@ -711,7 +743,8 @@ public static class ScriptCompiler
 					patternBase,
 					sequenceBase,
 					mathType,
-					pitchMathType))
+					pitchMathType,
+					allowInjectedPlayCallsites))
 			{
 				continue;
 			}
@@ -754,8 +787,28 @@ public static class ScriptCompiler
 		INamedTypeSymbol? patternBase,
 		INamedTypeSymbol? sequenceBase,
 		INamedTypeSymbol? mathType,
-		INamedTypeSymbol? pitchMathType)
+		INamedTypeSymbol? pitchMathType,
+		bool allowInjectedPlayCallsites)
 	{
+		// Authors cannot opt themselves into a generated-only entrypoint
+		// even though the protected overload exists on the runtime base.
+		// Editor compilation first checks original authored code under this
+		// rule, then checks the trusted rewritten wrapper with opt-in.
+		if (method.Parameters.Length > 0
+			&& method.Parameters[0].Type.Name == "SequenceCallsite"
+			&& (method.Name is "Play" or "Note" or "NoteVirtual"
+				or "NoteFilter" or "NoteFilterVirtual"
+				or "ChannelFilter" or "ChannelFilterVirtual"
+				or "Off" or "Cut" or "OffVirtual" or "CutVirtual"
+				or "OffVirtualInScope" or "CutVirtualInScope"
+				or "OffAllVirtual" or "CutAllVirtual"
+				or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
+				or "Filter" or "FilterCutoff" or "FilterResonance"
+				or "VolumeVirtual" or "SourceFrameVirtual"
+				or "DisplacementVirtual" or "PastVirtual")
+			&& !allowInjectedPlayCallsites)
+			return false;
+
 		INamedTypeSymbol containingType = method.ContainingType;
 		return SymbolEqualityComparer.Default.Equals(
 				containingType,
@@ -882,14 +935,85 @@ public static class ScriptCompiler
 		return diagnostics;
 	}
 
-	private static string InstrumentIncrementalPattern(string source)
+	/// <summary>Only the editor-F6 Sequence compiler uses this pass.
+	/// Tokens use offsets from the ORIGINAL author source, never the
+	/// loop-checkpoint-expanded source. The ordinary compiler never runs it.</summary>
+	private static string InstrumentSequencePlayCallsites(string source)
 	{
 		SyntaxNode root = CSharpSyntaxTree.ParseText(
 			source, ScriptParseOptions).GetRoot();
+		return new SequencePlayCallsiteRewriter().Visit(root)
+			?.ToFullString() ?? source;
+	}
+
+	private sealed class SequencePlayCallsiteRewriter : CSharpSyntaxRewriter
+	{
+		public override SyntaxNode? VisitInvocationExpression(
+			InvocationExpressionSyntax node)
+		{
+			InvocationExpressionSyntax rewritten =
+				(InvocationExpressionSyntax)(base.VisitInvocationExpression(node)
+					?? node);
+			if (node.Expression is not IdentifierNameSyntax name
+				|| name.Identifier.ValueText != "Play")
+				return rewritten;
+
+			// The user wrote Play(x[, row]); capture the *entire* original
+			// invocation, including '(' and ')' and any multiline arguments,
+			// before adding the trusted leading metadata parameter. Preserve
+			// the authored offset so _O() visual tokens map correctly.
+			int start = node.SpanStart;
+			int length = node.Span.Length;
+			ArgumentSyntax callsite = SyntaxFactory.Argument(
+				SyntaxFactory.ParseExpression(
+					$"new SequenceCallsite({start}, {length})"));
+			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
+				rewritten.ArgumentList.Arguments.Insert(0, callsite)))
+				.WithTriviaFrom(node);
+		}
+	}
+
+	private static string InstrumentIncrementalPattern(string source,
+		bool instrumentActionCallsites = false)
+	{
+		SyntaxNode root = CSharpSyntaxTree.ParseText(
+			source, ScriptParseOptions).GetRoot();
+		if (instrumentActionCallsites)
+			root = new PatternActionCallsiteRewriter().Visit(root) ?? root;
 		root = new LoopCheckpointRewriter(cooperative: true).Visit(root)
 			?? root;
 		return new IncrementalPatternYieldRewriter().Visit(root)
 			?.ToFullString() ?? source;
+	}
+
+
+	/// <summary>Captured before iterator and cooperative rewrites, so source
+	/// spans always refer to the author's unchanged Script Pattern text.</summary>
+	private sealed class PatternActionCallsiteRewriter : CSharpSyntaxRewriter
+	{
+		public override SyntaxNode? VisitInvocationExpression(
+			InvocationExpressionSyntax node)
+		{
+			InvocationExpressionSyntax rewritten =
+				(InvocationExpressionSyntax)(base.VisitInvocationExpression(node) ?? node);
+			if (node.Expression is not IdentifierNameSyntax name
+				|| name.Identifier.ValueText is not
+					("Note" or "NoteVirtual" or "NoteFilter" or "NoteFilterVirtual"
+						or "ChannelFilter" or "ChannelFilterVirtual"
+						or "Off" or "Cut" or "OffVirtual" or "CutVirtual"
+						or "OffVirtualInScope" or "CutVirtualInScope"
+						or "OffAllVirtual" or "CutAllVirtual"
+						or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
+						or "Filter" or "FilterCutoff" or "FilterResonance"
+						or "VolumeVirtual" or "SourceFrameVirtual"
+						or "DisplacementVirtual" or "PastVirtual"))
+				return rewritten;
+			ArgumentSyntax span = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(
+				$"new SequenceCallsite({node.SpanStart}, {node.Span.Length})"));
+			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
+				rewritten.ArgumentList.Arguments.Insert(0, span)))
+				.WithTriviaFrom(node);
+		}
 	}
 
 	private static string BuildIncrementalPatternWrapper(
@@ -897,6 +1021,7 @@ public static class ScriptCompiler
 		=> $$"""
 			using System;
 			using System.Collections.Generic;
+			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
 			using static Heresy.Scripting.Runtime.ScriptPitchMath;
@@ -931,6 +1056,7 @@ public static class ScriptCompiler
 		string source)
 		=> $$"""
 			using System;
+			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
 			using static Heresy.Scripting.Runtime.ScriptPitchMath;

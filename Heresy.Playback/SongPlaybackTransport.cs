@@ -43,6 +43,29 @@ public interface ISongPlaybackTransport
 	Task StopAsync();
 }
 
+/// <summary>Explicit opt-in for an editor-F6 Script Sequence trace.
+	/// Normal ISongPlaybackTransport requests keep their current behavior.</summary>
+public interface IEditorSequencePlaybackTransport
+{
+	Task PlayEditorSequenceAsync(SongDocument document,
+		ObjectId sequenceId, long editorCallsiteSession);
+}
+
+/// <summary>Independent opt-in F6 tracing for a Script Pattern audition.</summary>
+public interface IEditorPatternPlaybackTransport
+{
+	Task PlayEditorPatternAsync(SongDocument document,
+		ObjectId patternId, long editorCallsiteSession);
+}
+
+/// <summary>Optional one-way control for an editor-F6 audition whose
+/// originating editor has left the visible document view. The audio
+/// continues normally; only source-call provenance is deactivated.</summary>
+public interface IEditorCallsiteTraceLifecycleTransport
+{
+	bool DeactivateEditorCallsiteTrace(long session);
+}
+
 /// <summary>Optional committed Synth editor update. No playback session is
 /// created if no audition is already active.</summary>
 public interface ILiveSynthEditTransport
@@ -67,7 +90,10 @@ public sealed class SongPlaybackTransport
 		IPlaybackRuntimeDiagnosticsTransport,
 		IPlaybackAudioHealthTransport,
 		IPlaybackSnapshotTransport,
-		ILiveSynthEditTransport
+		ILiveSynthEditTransport,
+		IEditorSequencePlaybackTransport,
+		IEditorPatternPlaybackTransport,
+		IEditorCallsiteTraceLifecycleTransport
 {
 	private readonly BackgroundPlaybackController _controller;
 	private readonly IBackgroundPlaybackSourceFactory _sourceFactory;
@@ -144,6 +170,14 @@ public sealed class SongPlaybackTransport
 		}
 	}
 
+	/// <summary>One-way, session-matched trace deactivation when
+	/// the owning Script editor is replaced. Never stops musical playback.</summary>
+	public bool DeactivateEditorCallsiteTrace(long session)
+	{
+		lock (_positionGate)
+			return _positionTimeline?.DisableEditorCallsiteTracing(session) == true;
+	}
+
 	public Task PlaySongAsync(
 		SongDocument document)
 	{
@@ -169,6 +203,36 @@ public sealed class SongPlaybackTransport
 				sequenceId,
 				startPosition),
 			document);
+
+	public Task PlayEditorSequenceAsync(
+		SongDocument document,
+		ObjectId sequenceId,
+		long editorCallsiteSession)
+	{
+		if (editorCallsiteSession <= 0)
+			throw new ArgumentException("Editor trace ID must be positive.",
+				nameof(editorCallsiteSession));
+		return PlayRequestAsync(
+			SequencePlaybackRequest.Create(document, sequenceId) with
+			{
+				EditorCallsiteSession = editorCallsiteSession,
+			},
+			document);
+	}
+
+	public Task PlayEditorPatternAsync(
+		SongDocument document, ObjectId patternId, long editorCallsiteSession)
+	{
+		if (editorCallsiteSession <= 0)
+			throw new ArgumentException("Editor trace ID must be positive.",
+				nameof(editorCallsiteSession));
+		return PlayRequestAsync(
+			PatternPlaybackRequest.Create(document, patternId,
+				startRow: 0, repeat: true) with
+			{
+				EditorCallsiteSession = editorCallsiteSession,
+			}, document);
+	}
 
 	public Task PlayPatternAsync(
 		SongDocument document,

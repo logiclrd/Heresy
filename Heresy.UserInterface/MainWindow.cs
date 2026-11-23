@@ -1292,6 +1292,14 @@ public sealed class MainWindow : Window
 		CommitPendingPatternVolume();
 		if (!TryCommitPendingEnvelopeFields() || !TryLeaveSynthEditor())
 			return false;
+		// Leaving the editor does not stop its audible F6 audition.
+		// It only revokes its transient source-call provenance; ordinary
+		// row tracking and the same music continue in another view.
+		if (!ReferenceEquals(_mainContent.Content, editor)
+			&& _mainContent.Content is ScriptEditorControl departing
+			&& departing.EditorCallsiteTraceSession is long departingSession)
+			(_playbackTransport as IEditorCallsiteTraceLifecycleTransport)
+				?.DeactivateEditorCallsiteTrace(departingSession);
 		_mainContent.Content = editor;
 		UpdateImportUndoActions();
 		return true;
@@ -3716,17 +3724,49 @@ public sealed class MainWindow : Window
 
 			if (script.ScriptPatternId is ObjectId scriptPatternId)
 			{
-				await _playbackTransport.PlayPatternAsync(
-					_workspace.Document, scriptPatternId,
-					startRow: 0, repeat: true);
+				if (_playbackTransport is IEditorPatternPlaybackTransport patternTracing)
+				{
+					long session = EditorCallsiteSessionIds.Next();
+					script.BeginEditorPatternTrace(session);
+					await patternTracing.PlayEditorPatternAsync(
+						_workspace.Document, scriptPatternId, session);
+					// A source preparation can complete after the user has
+					// navigated away. Never re-enable its orphaned trace.
+					if (!ReferenceEquals(_mainContent.Content, script))
+						(_playbackTransport as IEditorCallsiteTraceLifecycleTransport)
+							?.DeactivateEditorCallsiteTrace(session);
+					script.SetPlaybackPosition(
+						_playbackPositionTransport?.CurrentPlaybackPosition);
+				}
+				else
+				{
+					await _playbackTransport.PlayPatternAsync(
+						_workspace.Document, scriptPatternId,
+						startRow: 0, repeat: true);
+				}
 				SetStatus($"Playing script pattern {script.ScriptSourceDisplayName} repeatedly.");
 				return;
 			}
 
 			if (script.ScriptSequenceId is ObjectId scriptSequenceId)
 			{
-				await _playbackTransport.PlaySequenceAsync(
-					_workspace.Document, scriptSequenceId);
+				if (_playbackTransport is IEditorSequencePlaybackTransport tracing)
+				{
+					long session = EditorCallsiteSessionIds.Next();
+					script.BeginEditorSequenceTrace(session);
+					await tracing.PlayEditorSequenceAsync(
+						_workspace.Document, scriptSequenceId, session);
+					if (!ReferenceEquals(_mainContent.Content, script))
+						(_playbackTransport as IEditorCallsiteTraceLifecycleTransport)
+							?.DeactivateEditorCallsiteTrace(session);
+					script.SetPlaybackPosition(
+						_playbackPositionTransport?.CurrentPlaybackPosition);
+				}
+				else
+				{
+					await _playbackTransport.PlaySequenceAsync(
+						_workspace.Document, scriptSequenceId);
+				}
 				SetStatus($"Playing script sequence {script.ScriptSourceDisplayName} from the beginning.");
 				return;
 			}
@@ -3828,6 +3868,8 @@ public sealed class MainWindow : Window
 					editor.SetPlaybackPosition(position);
 				else if (_mainContent.Content is SequenceEditorControl sequence)
 					sequence.SetPlaybackPosition(position);
+				else if (_mainContent.Content is ScriptEditorControl script)
+					script.SetPlaybackPosition(position);
 			});
 	}
 

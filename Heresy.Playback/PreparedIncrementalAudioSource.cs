@@ -29,6 +29,11 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	private readonly Action? _repeatRoot;
 	private readonly Func<NoteEvent, long, long, NoteEvent>? _transform;
 	private readonly Action? _afterRender;
+	private Action<long>? _editorTraceBoundary;
+	private Func<bool>? _editorTraceOriginCollectionEnabled;
+	// F6-only backpressure. The source's pending UI row is a PCM segment
+	// boundary, not a prefetched musical event or an early publication.
+	private Func<long?>? _editorNextPositionBoundaryFrame;
 	// Only one event may be prefetched. Cancellation invalidates it by
 	// actual Pattern cursor ID rather than retaining a growing tombstone set.
 	// The timeline can retire a just-started child while it is still
@@ -75,6 +80,20 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	public PlaybackSession Session => _session;
 	public bool IsComplete => _complete || _inputStopped;
 	public TimeSpan LogicalDuration => _timeline.Elapsed;
+
+	/// <summary>Only F6 editor-pattern audition installs a trace observer.
+	/// The same PCM worker reports post-event and post-render boundaries
+	/// in source-frame order, allowing very short notes inside one client
+	/// buffer to have distinct lifetimes. No tracing during normal playback.</summary>
+	internal void SetEditorTraceBoundary(Action<long> observer,
+		Func<bool>? editorOriginCollectionEnabled = null,
+		Func<long?>? nextPositionBoundaryFrame = null)
+	{
+		_editorTraceBoundary = observer
+			?? throw new ArgumentNullException(nameof(observer));
+		_editorTraceOriginCollectionEnabled = editorOriginCollectionEnabled;
+		_editorNextPositionBoundaryFrame = nextPositionBoundaryFrame;
+	}
 
 	/// <summary>Produce at most the remaining logical arrangement frames.
 	/// On reaching the natural end, return a short frame count so the
@@ -223,6 +242,22 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 				throw new InvalidOperationException(
 					"Recursive timeline returned a null step.");
 
+			// Script-editor F6 row positions must not accumulate for every
+			// silent row inside a very large output buffer. Defer a generated
+			// step ONLY if its own timestamp is at/after the next editor
+			// presentation boundary. This applies to Flow/Cooperate as well as
+			// Emit: deferring an earlier structural step could prevent an
+			// audio event it enables from being discovered before rendering.
+			if (_editorNextPositionBoundaryFrame?.Invoke() is long positionFrame
+				&& positionFrame > _session.NextFrame
+				&& positionFrame < exclusiveFrame
+				&& FrameTime.Ceiling(step.Time, Format.SampleRate)
+					>= positionFrame)
+			{
+				_deferredStep = step;
+				return;
+			}
+
 			if (step is IncrementalPatternTimelineStep.Emit emit)
 			{
 				long frame = FrameTime.Ceiling(emit.Time, Format.SampleRate);
@@ -301,6 +336,9 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 				{
 					FlushRetiredScopes();
 				}
+				// This event can start or end a voice before the next PCM
+				// block boundary. Retain its real sample-frame deadline.
+				_editorTraceBoundary?.Invoke(now);
 				continue;
 			}
 
@@ -311,9 +349,26 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			long boundary = end;
 			if (_pendingEvent is { } future)
 				boundary = Math.Min(boundary, future.Frame);
+			// F6-only presentation backpressure: render to the upcoming
+			// due row/action boundary before looking ahead through more
+			// silent rows. Unlike the audio event queue, this is metadata.
+			if (_editorNextPositionBoundaryFrame?.Invoke() is long positionFrame
+				&& positionFrame > now)
+				boundary = Math.Min(boundary, positionFrame);
 			if (_endInputAtNaturalCompletion && _complete && !_session.InputEnded && !_inputStopped)
 				boundary = Math.Min(boundary,
 					FrameTime.Ceiling(_timeline.Elapsed, Format.SampleRate));
+			if (_editorTraceBoundary is not null
+				&& (_editorTraceOriginCollectionEnabled?.Invoke() ?? true)
+				&& _session.GetNextEditorOriginCompletionFrameExclusive(now)
+					is long naturalEnd)
+			{
+				// Only editor-F6 rendering splits at a known actual
+				// voice end. Ordinary PCM work stays on the original fast
+				// path. The existing post-segment callback records the
+				// transition at this precise sample-frame boundary.
+				boundary = Math.Min(boundary, naturalEnd);
+			}
 			if (boundary <= now)
 				throw new InvalidOperationException(
 					"Incremental rendering could not advance its musical clock.");
@@ -321,6 +376,9 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			_session.Render(now, count,
 				destination.Slice(written * channels, count * channels));
 			written += count;
+			// Detect natural voice retirement, completion of a flattened
+			// producer, and release/fade, not just explicit Note commands.
+			_editorTraceBoundary?.Invoke(_session.NextFrame);
 		}
 		_afterRender?.Invoke();
 		return written;

@@ -400,43 +400,24 @@ Do not reintroduce completed-task checklists here.
   and uses the same theme-blended color as Pattern playback.
   **Implementation in draft PR #48; pending desktop acceptance.**
 
-- [ ] **Discover source-call activity and active-note overlays in Script
-  Sequence/Pattern editors (design first, separate PR).** Investigate
-  live, source-span-aware highlighting for `Play`, `Note`/
-  `NoteVirtual`, `NoteFilter`/`NoteFilterVirtual`,
-  `ChannelFilter`/`ChannelFilterVirtual`, and the complete
-  direct-statement playback-control helper surface (`Off`, `Cut`,
-  `VolumeVirtual`, `SourceFrameVirtual`, `DisplacementVirtual`,
-  `PastVirtual`, `Tempo`, `Speed`, `Seek`, `Pan`,
-  `Surround`, `Filter`, etc.). Distinguish **script execution**
-  (a call runs on the preparation/producer worker), **scheduled effect
-  time** (its resulting event becomes audible), and **note-active
-  lifetime** (the actual sounding voice(s) remain active). These are
-  different clocks and must not be conflated.
+- [ ] **F6 Script editor source-call and active-note overlays (issue #49; draft
+  PR #50).** Core functionality is implemented and has passed CI: editor-only
+  source rewriting for Script Sequence `Play(...)`, full direct-statement Script
+  Pattern scheduling helpers, green scheduled-activation spans, blue actual
+  Note/voice/flattened-source lifetimes, sample-frame Cut/Off/natural-end
+  transitions, stale-source/session suppression, and opt-in follow scrolling.
+  Owner has physically accepted numerous component slices; recent internal
+  optimizations have automated coverage. **This TODO remains open until PR #50
+  is accepted and merged.**
 
-  Design an optional debug/provenance side channel from the Roslyn
-  syntax span of the actual callsite into the sequence entry or
-  scheduled action. Preserve source identity/revision and unique
-  invocation IDs so repeated loops, reused patterns, virtual voice
-  scopes, multiple same-line calls and multiple simultaneous notes
-  cannot be mistaken for one another. Use a bounded, allocation-aware
-  producer-to-UI event stream, never UI callbacks from the PCM thread;
-  respect queued playback snapshot identity when the editor has pending
-  or subsequently changed source. Render via a separate AvaloniaEdit
-  background layer over canonical raw source spans (not syntax color
-  changes or destructive editor selection).
-
-  Start with an instrumented **Script Sequence `Play` call tied to
-  the current Sequence order**, then short-lived pattern-control
-  activations tied to their *scheduled* event times, then investigate
-  **sustained note highlights** from explicit voice/Note Off/Cut,
-  retrigger, natural completion, release-tail and nested-source
-  lifecycle notifications. Define UI semantics for overlapping,
-  repeating and silent/invalid calls, visibility/scroll-follow, and
-  cleanup on Stop/document change; keep realtime overhead negligible.
-  Provide a bounded prototype and measurements before adopting a
-  full instrumentation mechanism. **Do not bundle into the Data
-  Sequence F6/highlight shortcut work (PR #48).**
+  **Authoritative, current checklist:** https://github.com/logiclrd/Heresy/issues/49
+  (implemented/verified, final manual acceptance, unresolved design-contract
+  decisions, deferred out-of-scope work, and merge gate). Do not infer that
+  additional performance tuning is required merely because this entry remains
+  unchecked. Historical design details remain in issue #49, and the full
+  implementation/validation chronology remains in PR #50.
+  The virtual-note/NoteGroup script API redesign and its new instance/group
+  callsite instrumentation belong to separate issue #54, not PR #50.
 
 - [ ] **Support F6 test/audition in the Script Pattern and Script
   Sequence editors.** Owner's natural F6 gesture works in the Data
@@ -451,6 +432,8 @@ Do not reintroduce completed-task checklists here.
   failure must prevent playback when the source cannot be saved.
   Preserve F5/F7/F8 and Data Pattern behavior. Regression-test both
   Script kinds and both clean and dirty source cases.
+  **Current status:** implemented on draft PR #50 with automated coverage;
+  awaiting overall PR acceptance/merge. Use issue #49 for the live checklist.
   **Implementation:** draft keyboard-shortcuts PR, awaiting acceptance.
 
 - [ ] **Route Ctrl+S to local Script Save only for script-source focus.**
@@ -500,6 +483,21 @@ Do not reintroduce completed-task checklists here.
   separate from a read-only API-reference UI, which must document
   **only the functions currently available**.
 
+- [ ] **Relax restricted-C# allocations for Script Patterns and Script
+  Sequences (issue #58).** User-authored Pattern/Sequence scripts should
+  be permitted to allocate managed objects; the current restricted syntax
+  and semantic API must be reviewed and safely broadened, not simply
+  disabled. Keep compiler safety, deterministic streaming, work/memory
+  limits, source remapping and note/event ordering intact. The engine's
+  hot paths should avoid new allocations in code that systematically
+  executes more than roughly 100 times per musical row; in cooler paths,
+  try to avoid allocations rather than banning modest per-action/row
+  metadata. Repeated user allocation in tight loops merits resource
+  safeguards, but is not automatically forbidden by the engine policy.
+  **Separate future TODO; do not implement in F6 trace PR #50.**
+  Full discovery/acceptance: https://github.com/logiclrd/Heresy/issues/58
+  General policy: [allocation policy](allocation-policy.md).
+
 - [ ] **Revisit Instrument model, common tone editor, and procedural
   Script Instrument authoring (exploratory design; no implementation yet).**
   Currently `InstrumentDefinition` (Data Instrument) and
@@ -511,6 +509,20 @@ Do not reintroduce completed-task checklists here.
   cumbersome; this was observed while accepting PR #47 (math helpers
   compiled in Instrument expressions but were not auditioned through
   a fully configured Script Instrument).
+
+  **Updated future design (2026-11-22):** Consider richer procedural
+  control over the generated Instrument/tone object, including an
+  **initialization/setup block** preparing data for reuse by a
+  **per-note handler**. Setup allocations are permitted **without warning**;
+  per-note allocations are permitted **with an advisory warning**, not
+  rejected merely for allocating. Define initialization lifetime,
+  output-object ownership, generation isolation and advisory detection
+  during discovery. Do not apply these semantics to the current three
+  Script Instrument expressions. The general engine allocation policy
+  remains strict for systematically hot paths (>~100 calls/row) and
+  advisory/avoid-when-practical elsewhere.
+  **Planning contract (not current API):**
+  [Script Instrument rework](script-instrument-rework-plan.md).
 
   Investigate whether a Script Instrument is effectively a **superset**
   of a Data Instrument, should reuse the **same fully featured editable
