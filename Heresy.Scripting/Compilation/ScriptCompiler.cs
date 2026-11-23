@@ -560,6 +560,18 @@ public static class ScriptCompiler
 		if (HasErrors(diagnostics))
 			return new(null, diagnostics);
 
+		// Validate only ORIGINAL user statements, before loop checkpoints,
+		// incremental yields, or F6 SequenceCallsite constructors are injected.
+		// The legacy restricted semantic validator below remains mandatory:
+		// this is not yet authorization for broader managed C# features.
+		if (wrapperKind != ScriptWrapperKind.None)
+		{
+			diagnostics.AddRange(ValidateCanonicalAuthoredOperations(
+				source, wrapperKind));
+			if (HasErrors(diagnostics))
+				return new(null, diagnostics);
+		}
+
 		SyntaxTree syntaxTree =
 			CSharpSyntaxTree.ParseText(
 				wrapperSource,
@@ -622,6 +634,137 @@ public static class ScriptCompiler
 		return new(compilation, diagnostics);
 	}
 
+
+	/// <summary>
+	/// Resolve and audit the actual authored Pattern/Sequence statements in a
+	/// clean wrapper. Instrumentation may insert trusted members *within* the
+	/// #line region, so inspecting the rewritten wrapper is not sufficient to
+	/// distinguish user capabilities from compiler-generated operations.
+	/// The ordinary restricted helper/member validation still runs afterward.
+	/// </summary>
+	private static IReadOnlyList<ScriptAnalysisDiagnostic>
+		ValidateCanonicalAuthoredOperations(
+			string source, ScriptWrapperKind wrapperKind)
+	{
+		ScriptWrapperKind canonicalKind =
+			wrapperKind == ScriptWrapperKind.Sequence
+				? ScriptWrapperKind.Sequence : ScriptWrapperKind.Pattern;
+		string entryName = canonicalKind == ScriptWrapperKind.Sequence
+			? "ExecuteEntry" : "ExecuteScript";
+		string wrapper = canonicalKind == ScriptWrapperKind.Sequence
+			? BuildSequenceWrapper("__HeresyCanonicalSequence", source)
+			: BuildPatternWrapper("__HeresyCanonicalPattern", source);
+
+		SyntaxTree tree = CSharpSyntaxTree.ParseText(
+			wrapper, WrapperParseOptions);
+		List<ScriptAnalysisDiagnostic> diagnostics = [];
+
+		foreach (ScriptWrapperBoundaryViolation violation
+			in ScriptAuthoredWrapperBoundary.Validate(tree, canonicalKind))
+		{
+			AddRestrictedDiagnostic(diagnostics,
+				violation.Location is null
+					? new ScriptSourceSpan(0, 0)
+					: MapSpan(violation.Location, source),
+				violation.Reason);
+		}
+		if (HasErrors(diagnostics))
+			return diagnostics;
+
+		CSharpCompilation canonical = CSharpCompilation.Create(
+			"Heresy.CanonicalScript." + Guid.NewGuid().ToString("N"),
+			[tree], MetadataReferences,
+			new CSharpCompilationOptions(
+				OutputKind.DynamicallyLinkedLibrary,
+				optimizationLevel: OptimizationLevel.Release,
+				allowUnsafe: false, checkOverflow: true));
+
+		foreach (Diagnostic diagnostic in canonical.GetDiagnostics())
+		{
+			if (diagnostic.Severity == DiagnosticSeverity.Error)
+				diagnostics.Add(ProjectDiagnostic(diagnostic, source));
+		}
+		if (HasErrors(diagnostics))
+			return diagnostics;
+
+		SemanticModel model = canonical.GetSemanticModel(tree);
+		MethodDeclarationSyntax? entry = tree.GetRoot().DescendantNodes()
+			.OfType<MethodDeclarationSyntax>()
+			.FirstOrDefault(method =>
+				method.Identifier.ValueText == entryName);
+		if (entry?.Body is null)
+		{
+			AddRestrictedDiagnostic(diagnostics,
+				new ScriptSourceSpan(0, 0),
+				"Canonical script entry method could not be resolved.");
+			return diagnostics;
+		}
+
+		INamedTypeSymbol? patternBase = canonical.GetTypeByMetadataName(
+			typeof(PatternScriptProgram).FullName!);
+		INamedTypeSymbol? sequenceBase = canonical.GetTypeByMetadataName(
+			typeof(SequenceScriptProgram).FullName!);
+		INamedTypeSymbol? mathType =
+			canonical.GetTypeByMetadataName("System.Math");
+		INamedTypeSymbol? pitchMath = canonical.GetTypeByMetadataName(
+			typeof(ScriptPitchMath).FullName!);
+		INamedTypeSymbol? displacement = canonical.GetTypeByMetadataName(
+			typeof(NoteDisplacementAction).FullName!);
+		INamedTypeSymbol? past = canonical.GetTypeByMetadataName(
+			typeof(TrackerPastNoteAction).FullName!);
+		INamedTypeSymbol? nna = canonical.GetTypeByMetadataName(
+			typeof(InstrumentNnaAction).FullName!);
+
+		// These Heresy-owned values are intentionally opaque: the existing
+		// syntax/semantic validator separately forbids arbitrary calls or
+		// member access on them. Do not use this exception after relaxing
+		// those rules without a complete host-object provenance audit.
+		IAssemblySymbol? coreAssembly = canonical.GetTypeByMetadataName(
+			typeof(SequencingContext).FullName!)?.ContainingAssembly;
+		IAssemblySymbol? scriptAssembly = patternBase?.ContainingAssembly;
+		bool IsOpaqueHeresyType(ITypeSymbol type)
+		{
+			if (type is INamedTypeSymbol named
+				&& named.OriginalDefinition.SpecialType
+					== SpecialType.System_Nullable_T
+				&& named.TypeArguments.Length == 1)
+				return IsOpaqueHeresyType(named.TypeArguments[0]);
+
+			return SymbolEqualityComparer.Default.Equals(
+					type.ContainingAssembly, coreAssembly)
+				|| SymbolEqualityComparer.Default.Equals(
+					type.ContainingAssembly, scriptAssembly);
+		}
+		bool IsApprovedHeresyMember(ISymbol symbol) => symbol switch
+		{
+			IMethodSymbol method => IsAllowedInvocation(
+				method, patternBase, sequenceBase, mathType, pitchMath,
+				allowInjectedPlayCallsites: false),
+			_ => IsAllowedActionEnumMember(
+				symbol, displacement, past, nna),
+		};
+
+		foreach (StatementSyntax statement in entry.Body.Statements)
+		{
+			if (!IsScriptLocation(statement.GetLocation()))
+				continue; // trusted Sequence fallthrough after #line default
+
+			foreach (ScriptRuntimeOperationFinding finding
+				in ScriptRuntimeOperationVerifier.AnalyzeCanonical(
+					model, statement,
+					IsApprovedHeresyMember, IsOpaqueHeresyType))
+			{
+				Location location = Location.Create(tree, finding.Span);
+				AddRestrictedDiagnostic(diagnostics,
+					IsScriptLocation(location)
+						? MapSpan(location, source)
+						: new ScriptSourceSpan(0, 0),
+					finding.Reason);
+			}
+		}
+
+		return diagnostics;
+	}
 
 	private static IReadOnlyList<ScriptAnalysisDiagnostic>
 		ValidateRestrictedSyntax(string source)
