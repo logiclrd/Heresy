@@ -178,6 +178,8 @@ public sealed class PatternEditorControl : UserControl
 	private PatternEffectCursor _cursor =
 		new(0, 0, PatternCellField.Note);
 	private Grid? _patternGrid;
+	// Keep the active Source selector owned by Avalonia's flyout lifecycle.
+	private Flyout? _sourceFlyout;
 	// Last completed row-shift profile, deliberately independent of the
 	// persistent song and its audio revision.
 	private PatternRowMutationTiming? _lastRowMutationTiming;
@@ -4051,28 +4053,39 @@ public sealed class PatternEditorControl : UserControl
 			}
 		}
 
-		Popup popup =
-			new()
+		// A standalone Popup has an explicit placement target but no
+		// logical/visual owner. On desktop platforms this can leave its
+		// content unstyled or clipped to a sliver below the cell. Flyout
+		// supplies the popup host, theme inheritance and light-dismiss
+		// lifecycle while retaining the same Source anchor and list.
+		Flyout flyout = new()
+		{
+			Placement = PlacementMode.Bottom,
+			ShowMode = FlyoutShowMode.Standard,
+			Content = new Border
 			{
-				PlacementTarget = placementTarget,
-				Placement = PlacementMode.Bottom,
-				IsLightDismissEnabled = true,
-				Child = new Border
-				{
-					Padding = new Thickness(4),
-					Child = list,
-				},
-			};
+				Padding = new Thickness(4),
+				Child = list,
+			},
+		};
 		list.SelectionChanged += (_, _) =>
 		{
 			if (list.SelectedItem is not PatternSourceOption selected)
 				return;
 
 			SetSource(row, channel, selected.Id);
-			popup.IsOpen = false;
+			flyout.Hide();
 		};
-		popup.Closed += (_, _) => FocusCursorCell();
-		popup.IsOpen = true;
+		flyout.Closed += (_, _) =>
+		{
+			if (!ReferenceEquals(_sourceFlyout, flyout))
+				return;
+			_sourceFlyout = null;
+			FocusCursorCell();
+		};
+		_sourceFlyout?.Hide();
+		_sourceFlyout = flyout;
+		flyout.ShowAt(placementTarget);
 		list.Focus();
 	}
 
