@@ -30,10 +30,15 @@ namespace Heresy.UserInterface.Views;
 
 public sealed class PatternEditorControl : UserControl
 {
-	private const double CellWidth = 280;
+	// 10% wider than the original 280-DIP cell. All 28 extra DIPs are
+	// allocated to Source, not the Note/Octave or Volume/Effect stops.
+	private const double CellWidth = 308;
 	private const double RowHeaderWidth = 54;
 	private const double RowHeight = 28;
-	private const double SourceWidth = 96;
+	// Source consumes whatever remains after Note, Octave and the
+	// content-sized indicator. Keep room for its coloured name badge
+	// even if a combined speed/status suffix is unusually long.
+	private const double MinimumSourceWidth = 64;
 	private const double VolumeWidth = 34;
 	private const double EffectWidth = 54;
 	private const double NoteNameWidth = 44;
@@ -1108,10 +1113,23 @@ public sealed class PatternEditorControl : UserControl
 			TextTrimming = TextTrimming.CharacterEllipsis,
 			IsHitTestVisible = false,
 		};
-		StackPanel noteParts = new() { Orientation = Orientation.Horizontal };
-		noteParts.Children.Add(noteField);
-		noteParts.Children.Add(octaveField);
-		noteParts.Children.Add(noteSuffix);
+		// The optional indicator takes only its natural text width, plus
+		// 3 DIPs to separate it from Source. Cap very long combinations
+		// so they ellipsize instead of consuming the whole Source field.
+		Border indicatorArea = new()
+		{
+			Padding = new Thickness(0, 0, 3, 0),
+			ClipToBounds = true,
+			IsHitTestVisible = false,
+			IsVisible = false,
+			Child = noteSuffix,
+		};
+		noteSuffix.MaxWidth = CellWidth - VolumeWidth - EffectWidth
+			- NoteNameWidth - NoteOctaveWidth
+			- MinimumSourceWidth - indicatorArea.Padding.Right;
+		// Note, Octave, indicator and Source become direct siblings
+		// in one Grid. A nested spanning Grid would measure its indicator
+		// wider than the parent Auto column and let Source overlap it.
 
 		TextBlock sourceText =
 			new()
@@ -1121,15 +1139,16 @@ public sealed class PatternEditorControl : UserControl
 				VerticalAlignment = VerticalAlignment.Center,
 				TextTrimming = TextTrimming.CharacterEllipsis,
 			};
+		// The Source badge fills the remaining width automatically.
+		// "[mix]" stays beside Note/Octave, never inside this badge.
 		Border sourceNameBadge = new()
 		{
 			Background = Brushes.Transparent,
 			CornerRadius = new CornerRadius(2),
 			Padding = new Thickness(3, 0),
 			Margin = new Thickness(2, 0),
-			MaxWidth = SourceWidth - 6,
 			VerticalAlignment = VerticalAlignment.Center,
-			HorizontalAlignment = HorizontalAlignment.Left,
+			HorizontalAlignment = HorizontalAlignment.Stretch,
 			IsHitTestVisible = false,
 			Child = sourceText,
 		};
@@ -1140,7 +1159,6 @@ public sealed class PatternEditorControl : UserControl
 		Border sourceField =
 			new()
 			{
-				Width = SourceWidth,
 				Height = RowHeight - 4,
 				HorizontalAlignment = HorizontalAlignment.Stretch,
 				VerticalAlignment = VerticalAlignment.Center,
@@ -1257,11 +1275,18 @@ public sealed class PatternEditorControl : UserControl
 		Grid content = new()
 		{
 			Background = GetSourceTintBrush(displayRow, channel),
+			ClipToBounds = true,
 		};
+		// Fixed Note/Octave stops followed by an Auto-sized optional
+		// indicator and a star-sized Source; Volume/Effect stay at right.
+		content.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(NoteNameWidth)));
+		content.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(NoteOctaveWidth)));
+		content.ColumnDefinitions.Add(
+			new ColumnDefinition(GridLength.Auto));
 		content.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
-		content.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(SourceWidth)));
 		content.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(VolumeWidth)));
 		content.ColumnDefinitions.Add(
@@ -1271,16 +1296,20 @@ public sealed class PatternEditorControl : UserControl
 		// but beneath editable fields, independently coloured effect stickers
 		// and all cursor/focus borders. No overlay receives pointer input.
 		Grid rangeLayer = new() { IsHitTestVisible = false };
-		Grid.SetColumnSpan(rangeLayer, 4);
+		Grid.SetColumnSpan(rangeLayer, 6);
 		PopulateRangeOverlays(rangeLayer, _flattenedRanges!,
 			(displayRow, channel));
-		Grid.SetColumn(noteParts, 0);
-		Grid.SetColumn(sourceField, 1);
-		Grid.SetColumn(volumeField, 2);
+		Grid.SetColumn(noteField, 0);
+		Grid.SetColumn(octaveField, 1);
+		Grid.SetColumn(indicatorArea, 2);
+		Grid.SetColumn(sourceField, 3);
+		Grid.SetColumn(volumeField, 4);
 		Grid.SetColumn(effects, 0);
-		Grid.SetColumnSpan(effects, 4);
+		Grid.SetColumnSpan(effects, 6);
 		content.Children.Add(rangeLayer);
-		content.Children.Add(noteParts);
+		content.Children.Add(noteField);
+		content.Children.Add(octaveField);
+		content.Children.Add(indicatorArea);
 		content.Children.Add(sourceField);
 		content.Children.Add(volumeField);
 		content.Children.Add(effects);
@@ -1347,11 +1376,17 @@ public sealed class PatternEditorControl : UserControl
 			effectCount != 1
 				|| PatternEffectCodec.IsTrackerStyle(
 					patternCell!.Effects[0]);
+		// Read the *arranged* Source boundary, not a guessed text width:
+		// the Auto column varies with the indicator, font and DPI.
+		double sourceLeft =
+			_sourceFields.TryGetValue((row, channel), out Border? arrangedSource)
+				? arrangedSource.Bounds.Left + cell.BorderThickness.Left
+				: NoteNameWidth + NoteOctaveWidth;
 		PatternCellField field =
 			PatternCellFieldGeometry.HitTest(
 				point.X,
 				CellWidth,
-				SourceWidth,
+				CellWidth - VolumeWidth - EffectWidth - sourceLeft,
 				VolumeWidth,
 				EffectWidth,
 				effectCount,
@@ -3975,7 +4010,8 @@ public sealed class PatternEditorControl : UserControl
 	/// independent source-tint grid, cursor borders and height unchanged.
 	/// Only a resolvable explicit Source receives an object-type inset.</summary>
 	private void UpdateSourceNameBadge(
-		Border badge, TextBlock label, ObjectId sourceId, string fallback)
+		Border badge, TextBlock label,
+		ObjectId sourceId, string fallback)
 	{
 		if (!sourceId.IsNone
 			&& _workspace.Document.TryGet(
@@ -4110,13 +4146,28 @@ public sealed class PatternEditorControl : UserControl
 		SetNoteParts(note, octave, suffix, noteText, prefix);
 	}
 
-	/// <summary>Preserve the tracker pitch's separate octave keyboard stop
-	/// without introducing another persisted Note property. Non-pitched and
-	/// custom-pitch descriptions stay in the normal Note-name area.</summary>
+	/// <summary>Keep Note/Octave keyboard stops fixed and place indicators,
+	/// Mixdown and musical suffixes directly after the pitch or CUT/OFF.
+	/// The Auto-sized indicator yields all unused space to Source. Long
+	/// combinations can ellipsize, with complete text in the tooltip.</summary>
 	private static void SetNoteParts(
 		TextBlock note, TextBlock octave, TextBlock suffix,
 		string noteText, string prefix)
 	{
+		// The status glyphs stay separate from the fixed-width Note name,
+		// so CUT and OFF cannot be clipped by their indication prefix.
+		// Put [mix] before optional speed details so it cannot be hidden
+		// by a long nondefault speed suffix.
+		const string mixdownSuffix = " [mix]";
+		bool isMixdown = noteText.EndsWith(
+			mixdownSuffix, StringComparison.Ordinal);
+		string fullText = noteText;
+		if (isMixdown)
+			noteText = noteText[..^mixdownSuffix.Length];
+		string indicators = prefix.Replace(" ", string.Empty);
+		ToolTip.SetTip(suffix, string.IsNullOrEmpty(indicators)
+			? fullText : indicators + " " + fullText);
+		string mixdown = isMixdown ? mixdownSuffix : string.Empty;
 		if (noteText.Length >= 3
 			&& noteText[0] is >= 'A' and <= 'G'
 			&& noteText[1] is '-' or '#'
@@ -4125,15 +4176,29 @@ public sealed class PatternEditorControl : UserControl
 			int end = 2;
 			while (end < noteText.Length && char.IsDigit(noteText[end]))
 				end++;
-			note.Text = prefix + noteText[..2];
+			note.Text = noteText[..2];
 			octave.Text = noteText[2..end];
-			suffix.Text = noteText[end..];
+			suffix.Text = indicators + mixdown + noteText[end..];
 		}
 		else
 		{
-			note.Text = prefix + noteText;
+			note.Text = noteText;
 			octave.Text = string.Empty;
-			suffix.Text = string.Empty;
+			suffix.Text = indicators + mixdown;
+		}
+		// Collapsing the wrapper is essential: its 3-DIP padding must
+		// disappear when there is no text to show.
+		bool hasSuffix = !string.IsNullOrEmpty(suffix.Text);
+		suffix.IsVisible = hasSuffix;
+		if (suffix.Parent is Border indicatorArea
+			&& indicatorArea.IsVisible != hasSuffix)
+		{
+			indicatorArea.IsVisible = hasSuffix;
+			// A headless/unattached editor can retain its previous Grid
+			// measure when a child collapses. Explicitly invalidate the
+			// owning Auto column to make Source reclaim the width immediately.
+			if (indicatorArea.Parent is Grid grid)
+				grid.InvalidateMeasure();
 		}
 	}
 

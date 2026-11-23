@@ -177,11 +177,20 @@ public sealed class PatternSourceTypeNameInsetsTests
             Assert.That(badge.CornerRadius, Is.EqualTo(new CornerRadius(2)));
             Assert.That(badge.Padding.Top, Is.Zero);
             Assert.That(badge.Padding.Bottom, Is.Zero);
-            Assert.That(badge.MaxWidth, Is.LessThan(96));
+            // The Source star column fills the leftover space when
+            // there is no indicator; neither field nor badge reserves
+            // a fixed-width slot.
+            Border cell = cells[(row, 0)];
+            cell.Measure(new Size(308, 28));
+            cell.Arrange(new Rect(0, 0, 308, 28));
+            Assert.That(double.IsNaN(field.Width), Is.True);
+            Assert.That(field.Bounds.Width, Is.GreaterThan(145));
+            Assert.That(badge.Bounds.Width,
+                Is.LessThanOrEqualTo(field.Bounds.Width));
             Assert.That(Background(badge), Is.EqualTo(SongObjectTypePalette.Sample));
             Assert.That(sourceTexts[(row, 0)].Text, Is.EqualTo("Bass"));
             Assert.That(ToolTip.GetTip(field), Does.Contain("Bass"));
-            field.Measure(new Size(96, 100));
+            field.Measure(new Size(152, 100));
             Assert.That(field.DesiredSize.Height, Is.EqualTo(24));
         }
         // The existing full-cell Note-start source tint is retained.
