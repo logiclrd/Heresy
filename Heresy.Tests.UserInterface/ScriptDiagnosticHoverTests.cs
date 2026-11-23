@@ -1,3 +1,5 @@
+using System;
+
 using AwesomeAssertions;
 
 using Heresy.Scripting.Analysis;
@@ -36,7 +38,7 @@ public sealed class ScriptDiagnosticHoverTests
 		hover.Should().NotBeNull();
 		hover!.Diagnostics.Should().Equal(error, warning);
 		hover.Text.Should().Be(
-			"Error ERR: Error message.\n"
+			$"Error ERR: Error message.{Environment.NewLine}"
 				+ "Warning WARN: Warning message.");
 	}
 

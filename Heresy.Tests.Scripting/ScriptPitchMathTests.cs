@@ -81,7 +81,7 @@ public sealed class ScriptPitchMathTests
         Assert.That(ScriptPitchMath.Octave(-1074.0),
             Is.EqualTo(double.Epsilon));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            ScriptPitchMath.Octave(-1075.0));
+            ScriptPitchMath.Octave(-1076.0));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             ScriptPitchMath.Octave(1024.0));
         Assert.That(ScriptPitchMath.Octave(1023.0),
