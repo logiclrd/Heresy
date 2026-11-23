@@ -1169,7 +1169,7 @@ public sealed class PatternEditorControl : UserControl
 			IsHitTestVisible = false,
 			Child = sourceBadgeContents,
 		};
-		UpdateSourceNameBadge(sourceNameBadge, sourceText,
+		UpdateSourceNameBadge(sourceNameBadge, sourceText, mixdownBadge,
 			row.Pattern.Grid[row.PatternRow, channel]?.SourceId
 				?? ObjectId.None,
 			view.SourceText);
@@ -4012,7 +4012,8 @@ public sealed class PatternEditorControl : UserControl
 	/// independent source-tint grid, cursor borders and height unchanged.
 	/// Only a resolvable explicit Source receives an object-type inset.</summary>
 	private void UpdateSourceNameBadge(
-		Border badge, TextBlock label, ObjectId sourceId, string fallback)
+		Border badge, TextBlock label, TextBlock mixdown,
+		ObjectId sourceId, string fallback)
 	{
 		if (!sourceId.IsNone
 			&& _workspace.Document.TryGet(
@@ -4022,11 +4023,13 @@ public sealed class PatternEditorControl : UserControl
 		{
 			label.Text = songObject.Name;
 			label.Foreground = Brushes.Black;
+			mixdown.Foreground = label.Foreground;
 			badge.Background = new SolidColorBrush(typeColour);
 			return;
 		}
 		label.Text = fallback;
 		label.Foreground = null;
+		mixdown.Foreground = label.Foreground;
 		badge.Background = Brushes.Transparent;
 	}
 
@@ -4110,8 +4113,10 @@ public sealed class PatternEditorControl : UserControl
 				view.NoteText, string.Empty);
 		}
 		if (_sourceNameBadges.TryGetValue(
-			(row, channel), out Border? badge))
-			UpdateSourceNameBadge(badge, source,
+			(row, channel), out Border? badge)
+			&& _mixdownBadges.TryGetValue(
+				(row, channel), out TextBlock? mixdownBadge))
+			UpdateSourceNameBadge(badge, source, mixdownBadge,
 				editorRow.Pattern.Grid[editorRow.PatternRow, channel]?.SourceId
 					?? ObjectId.None,
 				view.SourceText);
