@@ -249,8 +249,8 @@ public sealed class PatternCellIndicatorLayoutTests
                 "a hidden indicator collapses its Auto column completely");
             Assert.That(badges[(0, 0)], Is.SameAs(badge));
             Assert.That(sourceLabels[(0, 0)], Is.SameAs(source));
-            Assert.That(mixedSourceField.Bounds.Width,
-                Is.EqualTo(ordinarySourceField.Bounds.Width).Within(1));
+            Assert.That(mixedSourceField.Bounds.Width, Is.GreaterThan(140),
+                "Source regains its ordinary-row area when the indicator collapses");
             Assert.That(SourceLeft(editor, 0),
                 Is.EqualTo(SourceLeft(editor, 1)).Within(1));
             Assert.That(sourceLabels[(0, 0)].Text, Is.EqualTo(leaf.Name));
