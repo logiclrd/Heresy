@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 
 using Avalonia;
@@ -29,8 +28,14 @@ public sealed class PatternCellIndicatorLayoutTests
             typeof(PatternEditorControl).GetField(
                 fieldName, PrivateInstance)!.GetValue(editor)!;
 
+    private static void Refresh(PatternEditorControl editor,
+        DataPatternDefinition pattern, int row, int channel)
+        => typeof(PatternEditorControl).GetMethod(
+            "RefreshUnderlyingCell", PrivateInstance)!
+            .Invoke(editor, [pattern, row, channel]);
+
     [AvaloniaTest]
-    public void FlattenedCutShowsFullCutLabelAndSeparateBoundedLifecycleIndicator()
+    public void FlattenedCutKeepsLabelAndTemporarilyBorrowsSourceSpaceForLifecycleHint()
     {
         DocumentWorkspace workspace = new();
         DataPatternDefinition leaf =
@@ -56,43 +61,53 @@ public sealed class PatternCellIndicatorLayoutTests
 
         TextBlock cut = notes[(24, 0)];
         TextBlock hint = suffixes[(24, 0)];
+        Border cutSource = sourceFields[(24, 0)];
+        Border ordinarySource = sourceFields[(0, 0)];
         Assert.Multiple(() =>
         {
             Assert.That(cut.Text, Is.EqualTo("CUT"),
-                "the status glyph must not consume the fixed 44-DIP Note name");
+                "status glyphs must not clip the fixed Note label");
             Assert.That(octaves[(24, 0)].Text, Is.Empty);
-            Assert.That(hint.Text, Does.Contain("↳"),
-                "the flattened-source lifecycle marker remains visible");
+            Assert.That(hint.Text, Does.Contain("↳"));
+            Assert.That(hint.IsVisible, Is.True);
             Assert.That(hint.TextTrimming, Is.EqualTo(TextTrimming.CharacterEllipsis));
             Assert.That(((Grid)noteFields[(24, 0)].Parent!).ClipToBounds, Is.True);
             Assert.That(Grid.GetColumn(hint), Is.EqualTo(2));
-            Assert.That(sourceFields[(24, 0)].Width, Is.EqualTo(96));
+            Assert.That(cutSource.Width, Is.EqualTo(124));
+            Assert.That(Grid.GetColumn(cutSource), Is.EqualTo(2));
+            Assert.That(Grid.GetColumnSpan(cutSource), Is.EqualTo(1));
+
+            Assert.That(suffixes[(0, 0)].IsVisible, Is.False);
+            Assert.That(ordinarySource.Width, Is.EqualTo(152));
+            Assert.That(Grid.GetColumn(ordinarySource), Is.EqualTo(1));
+            Assert.That(Grid.GetColumnSpan(ordinarySource), Is.EqualTo(2));
         });
 
-        // The status region has a real finite width and cannot leak under
-        // Source, even when additional hints are appended.
+        // The status region is bounded and leaves the neighbouring Source
+        // field untouched, including when another condition adds a hint.
         Grid noteParts = (Grid)noteFields[(24, 0)].Parent!;
         noteParts.Measure(new Size(94, 24));
         noteParts.Arrange(new Rect(0, 0, 94, 24));
         Assert.That(hint.Bounds.Right, Is.LessThanOrEqualTo(
             noteParts.Bounds.Width + 0.01));
 
-        // Multiple same-cell indicators still leave CUT fully readable;
-        // the tooltip exposes any longer clipped status/speed information.
         typeof(PatternEditorControl).GetMethod(
             "SetNoteParts", BindingFlags.NonPublic | BindingFlags.Static)!
             .Invoke(null, [
-                cut, octaves[(24, 0)], hint,
-                Fields<TextBlock>(editor, "_mixdownBadges")[(24, 0)],
+                cut, octaves[(24, 0)], hint, cutSource,
                 "CUT", "⚠ ⏱ "
             ]);
-        Assert.That(cut.Text, Is.EqualTo("CUT"));
-        Assert.That(hint.Text, Is.EqualTo("⚠⏱"));
-        Assert.That(ToolTip.GetTip(hint)?.ToString(), Does.Contain("CUT"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Text, Is.EqualTo("CUT"));
+            Assert.That(hint.Text, Is.EqualTo("⚠⏱"));
+            Assert.That(ToolTip.GetTip(hint)?.ToString(), Does.Contain("CUT"));
+            Assert.That(cutSource.Width, Is.EqualTo(124));
+        });
     }
 
     [AvaloniaTest]
-    public void MixdownHasVisibleMarkerWithinColouredSourceBadgeAndRefreshes()
+    public void MixdownBesidePitchCedesSharedAreaAndOtherRowsExpandSourceName()
     {
         DocumentWorkspace workspace = new();
         DataPatternDefinition leaf =
@@ -105,12 +120,12 @@ public sealed class PatternCellIndicatorLayoutTests
         PatternDocumentEditor.SetSource(workspace, middle, 0, 0, leaf.Id);
         PatternDocumentEditor.SetNote(workspace, middle, 0, 0,
             new StartPatternNote(leaf.Id, mixdown: true));
+        PatternDocumentEditor.SetSource(workspace, middle, 1, 0, leaf.Id);
 
         PatternEditorControl editor = new(
             new Window(), workspace, middle, () => { }, _ => { });
         var badges = Fields<Border>(editor, "_sourceNameBadges");
         var sourceLabels = Fields<TextBlock>(editor, "_sourceTexts");
-        var mixMarkers = Fields<TextBlock>(editor, "_mixdownBadges");
         var suffixes = Fields<TextBlock>(editor, "_noteSuffixTexts");
         var notes = Fields<TextBlock>(editor, "_noteTexts");
         var octaves = Fields<TextBlock>(editor, "_octaveTexts");
@@ -118,58 +133,78 @@ public sealed class PatternCellIndicatorLayoutTests
         var cells = Fields<Border>(editor, "_cellBorders");
 
         Border badge = badges[(0, 0)];
-        TextBlock marker = mixMarkers[(0, 0)];
         TextBlock source = sourceLabels[(0, 0)];
-        Grid badgeContents = (Grid)badge.Child!;
+        TextBlock mix = suffixes[(0, 0)];
+        Border mixedSourceField = sourceFields[(0, 0)];
+        Border ordinarySourceField = sourceFields[(1, 0)];
         Assert.Multiple(() =>
         {
-            Assert.That(marker.IsVisible, Is.True);
-            Assert.That(marker.Text, Is.EqualTo("[mix]"));
-            Assert.That(source.Text, Is.EqualTo(leaf.Name));
-            Assert.That(source.TextTrimming, Is.EqualTo(TextTrimming.CharacterEllipsis));
-            Assert.That(badgeContents.Children, Is.EqualTo(new Control[] { marker, source }));
-            Assert.That(badgeContents.ClipToBounds, Is.True);
-            Assert.That(Grid.GetColumn(marker), Is.Zero);
-            Assert.That(Grid.GetColumn(source), Is.EqualTo(1));
-            Assert.That(source.Foreground, Is.SameAs(Brushes.Black));
-            Assert.That(marker.Foreground, Is.SameAs(Brushes.Black),
-                "the mix marker must retain contrast on coloured Source badges");
-            Assert.That(badge.Background, Is.TypeOf<SolidColorBrush>());
-            Assert.That(suffixes[(0, 0)].Text, Does.Not.Contain("mix"));
             Assert.That(notes[(0, 0)].Text, Is.EqualTo("C-"));
             Assert.That(octaves[(0, 0)].Text, Is.EqualTo("4"));
-            Assert.That(sourceFields[(0, 0)].Width, Is.EqualTo(96));
-            Assert.That(cells[(0, 0)].Width, Is.EqualTo(280));
-            Assert.That(ToolTip.GetTip(sourceFields[(0, 0)])?.ToString(),
+            Assert.That(mix.Text, Is.EqualTo(" [mix]"),
+                "the Mixdown marker belongs immediately after the pitch");
+            Assert.That(mix.IsVisible, Is.True);
+            Assert.That(mix.FontSize, Is.EqualTo(10));
+            Assert.That(source.Text, Is.EqualTo(leaf.Name));
+            Assert.That(source.TextTrimming, Is.EqualTo(TextTrimming.CharacterEllipsis));
+            Assert.That(badge.Child, Is.SameAs(source),
+                "Mixdown must not be embedded in the coloured Source badge");
+            Assert.That(badge.MaxWidth, Is.EqualTo(146));
+            Assert.That(badge.Background, Is.TypeOf<SolidColorBrush>());
+            Assert.That(source.Foreground, Is.SameAs(Brushes.Black));
+            Assert.That(mixedSourceField.Width, Is.EqualTo(124));
+            Assert.That(Grid.GetColumn(mixedSourceField), Is.EqualTo(2));
+            Assert.That(Grid.GetColumnSpan(mixedSourceField), Is.EqualTo(1));
+            Assert.That(suffixes[(1, 0)].IsVisible, Is.False);
+            Assert.That(ordinarySourceField.Width, Is.EqualTo(152));
+            Assert.That(Grid.GetColumn(ordinarySourceField), Is.EqualTo(1));
+            Assert.That(Grid.GetColumnSpan(ordinarySourceField), Is.EqualTo(2));
+            Assert.That(cells[(0, 0)].Width, Is.EqualTo(308));
+            Assert.That(cells[(1, 0)].Width, Is.EqualTo(308));
+            Assert.That(ToolTip.GetTip(mixedSourceField)?.ToString(),
                 Does.StartWith(leaf.Name + " <"),
-                "the Source tooltip preserves the full name and object ID");
+                "the Source tooltip retains the complete name and ID");
         });
 
-        // The Source's measured name gets only the remaining space,
-        // rather than overpainting the independently visible [mix] marker.
-        badge.Measure(new Size(90, 24));
-        badge.Arrange(new Rect(0, 0, 90, 24));
-        Assert.Multiple(() =>
-        {
-            Assert.That(marker.Bounds.Width, Is.GreaterThan(0));
-            Assert.That(source.Bounds.Left,
-                Is.GreaterThanOrEqualTo(marker.Bounds.Right - 0.01));
-            Assert.That(source.Bounds.Right,
-                Is.LessThanOrEqualTo(badgeContents.Bounds.Width + 0.01));
-        });
+        // Source text must be constrained to the available badge area.
+        badge.Measure(new Size(124, 24));
+        badge.Arrange(new Rect(0, 0, 124, 24));
+        Assert.That(source.Bounds.Right,
+            Is.LessThanOrEqualTo(badge.Bounds.Width + 0.01));
 
-        // Source and note edits refresh the existing controls; no new
-        // cell, persistent badge, or audio command is created for layout.
+        // A note edit without Mixdown returns the space to Source without
+        // rebuilding the cell, changing its width, or replacing its badge.
         middle.Grid[0, 0]!.Note = new StartPatternNote(leaf.Id);
-        typeof(PatternEditorControl).GetMethod(
-            "RefreshUnderlyingCell", PrivateInstance)!
-            .Invoke(editor, [middle, 0, 0]);
+        Refresh(editor, middle, 0, 0);
         Assert.Multiple(() =>
         {
-            Assert.That(mixMarkers[(0, 0)], Is.SameAs(marker));
-            Assert.That(marker.IsVisible, Is.False);
+            Assert.That(suffixes[(0, 0)], Is.SameAs(mix));
+            Assert.That(mix.Text, Is.Empty);
+            Assert.That(mix.IsVisible, Is.False);
             Assert.That(badges[(0, 0)], Is.SameAs(badge));
+            Assert.That(sourceLabels[(0, 0)], Is.SameAs(source));
+            Assert.That(mixedSourceField.Width, Is.EqualTo(152));
+            Assert.That(Grid.GetColumn(mixedSourceField), Is.EqualTo(1));
+            Assert.That(Grid.GetColumnSpan(mixedSourceField), Is.EqualTo(2));
             Assert.That(sourceLabels[(0, 0)].Text, Is.EqualTo(leaf.Name));
+        });
+
+        // The shared area has different Note-versus-Source click owners
+        // depending on whether an indicator is actually displayed.
+        Assert.Multiple(() =>
+        {
+            Assert.That(PatternCellFieldGeometry.HitTest(80,
+                308, 124, 34, 54, 0, true,
+                octaveLeft: 44, octaveWidth: 22),
+                Is.EqualTo(PatternCellField.Note));
+            Assert.That(PatternCellFieldGeometry.HitTest(80,
+                308, 152, 34, 54, 0, true,
+                octaveLeft: 44, octaveWidth: 22),
+                Is.EqualTo(PatternCellField.Source));
+            Assert.That(PatternCellFieldGeometry.HitTest(50,
+                308, 152, 34, 54, 0, true,
+                octaveLeft: 44, octaveWidth: 22),
+                Is.EqualTo(PatternCellField.Octave));
         });
     }
 }
