@@ -158,6 +158,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Dictionary<(int Row, int Channel), Border> _octaveFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _octaveTexts = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteSuffixTexts = [];
+	private readonly Dictionary<(int Row, int Channel), TextBlock> _mixdownBadges = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _sourceTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceNameBadges = [];
@@ -885,6 +886,7 @@ public sealed class PatternEditorControl : UserControl
 		_octaveFields.Clear();
 		_octaveTexts.Clear();
 		_noteSuffixTexts.Clear();
+		_mixdownBadges.Clear();
 		_sourceFields.Clear();
 		_sourceTexts.Clear();
 		_sourceNameBadges.Clear();
@@ -1108,7 +1110,19 @@ public sealed class PatternEditorControl : UserControl
 			TextTrimming = TextTrimming.CharacterEllipsis,
 			IsHitTestVisible = false,
 		};
-		StackPanel noteParts = new() { Orientation = Orientation.Horizontal };
+		// The note and octave fields retain their original fixed keyboard
+		// hit-test stops. Constrain the status/speed suffix to the remaining
+		// Note column, never permitting it to paint beneath Source.
+		Grid noteParts = new() { ClipToBounds = true };
+		noteParts.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(NoteNameWidth)));
+		noteParts.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(NoteOctaveWidth)));
+		noteParts.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+		Grid.SetColumn(noteField, 0);
+		Grid.SetColumn(octaveField, 1);
+		Grid.SetColumn(noteSuffix, 2);
 		noteParts.Children.Add(noteField);
 		noteParts.Children.Add(octaveField);
 		noteParts.Children.Add(noteSuffix);
@@ -1121,6 +1135,28 @@ public sealed class PatternEditorControl : UserControl
 				VerticalAlignment = VerticalAlignment.Center,
 				TextTrimming = TextTrimming.CharacterEllipsis,
 			};
+		// A dedicated Mixdown marker sits within the bounded Source badge.
+		// Unlike the old trailing Note suffix, "[mix]" cannot be covered
+		// by the Source name. The name may ellipsize; its tooltip remains.
+		TextBlock mixdownBadge = new()
+		{
+			Text = "[mix]",
+			FontWeight = FontWeight.SemiBold,
+			FontSize = 10,
+			Margin = new Thickness(0, 0, 2, 0),
+			VerticalAlignment = VerticalAlignment.Center,
+			IsHitTestVisible = false,
+			IsVisible = false,
+		};
+		Grid sourceBadgeContents = new() { ClipToBounds = true };
+		sourceBadgeContents.ColumnDefinitions.Add(
+			new ColumnDefinition(GridLength.Auto));
+		sourceBadgeContents.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+		Grid.SetColumn(mixdownBadge, 0);
+		Grid.SetColumn(sourceText, 1);
+		sourceBadgeContents.Children.Add(mixdownBadge);
+		sourceBadgeContents.Children.Add(sourceText);
 		Border sourceNameBadge = new()
 		{
 			Background = Brushes.Transparent,
@@ -1129,9 +1165,9 @@ public sealed class PatternEditorControl : UserControl
 			Margin = new Thickness(2, 0),
 			MaxWidth = SourceWidth - 6,
 			VerticalAlignment = VerticalAlignment.Center,
-			HorizontalAlignment = HorizontalAlignment.Left,
+			HorizontalAlignment = HorizontalAlignment.Stretch,
 			IsHitTestVisible = false,
-			Child = sourceText,
+			Child = sourceBadgeContents,
 		};
 		UpdateSourceNameBadge(sourceNameBadge, sourceText,
 			row.Pattern.Grid[row.PatternRow, channel]?.SourceId
@@ -1246,7 +1282,7 @@ public sealed class PatternEditorControl : UserControl
 			(displayRow, channel), out FlattenedSourceEditorIndication? indication);
 		_seekIndications.TryGetValue(
 			(displayRow, channel), out ReplayRequiredSeekIndication? seek);
-		ApplyEditorIndications(note, octaveText, noteSuffix,
+		ApplyEditorIndications(note, octaveText, noteSuffix, mixdownBadge,
 			noteField, octaveField, volumeField,
 			effects, view.NoteText, indication, seek);
 
@@ -1316,6 +1352,7 @@ public sealed class PatternEditorControl : UserControl
 		_octaveFields[(displayRow, channel)] = octaveField;
 		_octaveTexts[(displayRow, channel)] = octaveText;
 		_noteSuffixTexts[(displayRow, channel)] = noteSuffix;
+		_mixdownBadges[(displayRow, channel)] = mixdownBadge;
 		_sourceFields[(displayRow, channel)] = sourceField;
 		_sourceTexts[(displayRow, channel)] = sourceText;
 		_sourceNameBadges[(displayRow, channel)] = sourceNameBadge;
@@ -4066,9 +4103,11 @@ public sealed class PatternEditorControl : UserControl
 				editorRow.PatternRow,
 				channel);
 		if (_octaveTexts.TryGetValue((row, channel), out TextBlock? octave)
-			&& _noteSuffixTexts.TryGetValue((row, channel), out TextBlock? suffix))
+			&& _noteSuffixTexts.TryGetValue((row, channel), out TextBlock? suffix)
+			&& _mixdownBadges.TryGetValue((row, channel), out TextBlock? mixdown))
 		{
-			SetNoteParts(note, octave, suffix, view.NoteText, string.Empty);
+			SetNoteParts(note, octave, suffix, mixdown,
+				view.NoteText, string.Empty);
 		}
 		if (_sourceNameBadges.TryGetValue(
 			(row, channel), out Border? badge))
@@ -4084,7 +4123,7 @@ public sealed class PatternEditorControl : UserControl
 	}
 
 	private void ApplyEditorIndications(
-		TextBlock note, TextBlock octave, TextBlock suffix,
+		TextBlock note, TextBlock octave, TextBlock suffix, TextBlock mixdown,
 		Border noteField, Border octaveField, Border volumeField,
 		PatternEffectStripControl effects, string noteText,
 		FlattenedSourceEditorIndication? indication,
@@ -4107,16 +4146,29 @@ public sealed class PatternEditorControl : UserControl
 			: indication.HasVoiceSpecificEffects ? "⚠ " : "↳ ";
 		if (seek is not null)
 			prefix += seek.IsConditional ? "? " : "⏱ ";
-		SetNoteParts(note, octave, suffix, noteText, prefix);
+		SetNoteParts(note, octave, suffix, mixdown, noteText, prefix);
 	}
 
-	/// <summary>Preserve the tracker pitch's separate octave keyboard stop
-	/// without introducing another persisted Note property. Non-pitched and
-	/// custom-pitch descriptions stay in the normal Note-name area.</summary>
+	/// <summary>Preserve the tracker's fixed Note/Octave keyboard stops,
+	/// while keeping status symbols separate from CUT/OFF and placing the
+	/// Mixdown marker before the Source name within its own bounded field.
+	/// Musical suffixes (e.g. nondefault speeds) may ellipsize, with their
+	/// complete text available via tooltip.</summary>
 	private static void SetNoteParts(
 		TextBlock note, TextBlock octave, TextBlock suffix,
-		string noteText, string prefix)
+		TextBlock mixdown, string noteText, string prefix)
 	{
+		const string mixdownSuffix = " [mix]";
+		bool isMixdown = noteText.EndsWith(
+			mixdownSuffix, StringComparison.Ordinal);
+		if (isMixdown)
+			noteText = noteText[..^mixdownSuffix.Length];
+		mixdown.IsVisible = isMixdown;
+		// The status glyphs remain visible in the constrained third Note
+		// field instead of consuming CUT/OFF's fixed-width name field.
+		string indicators = prefix.Replace(" ", string.Empty);
+		ToolTip.SetTip(suffix, string.IsNullOrEmpty(indicators)
+			? noteText : indicators + " " + noteText);
 		if (noteText.Length >= 3
 			&& noteText[0] is >= 'A' and <= 'G'
 			&& noteText[1] is '-' or '#'
@@ -4125,15 +4177,15 @@ public sealed class PatternEditorControl : UserControl
 			int end = 2;
 			while (end < noteText.Length && char.IsDigit(noteText[end]))
 				end++;
-			note.Text = prefix + noteText[..2];
+			note.Text = noteText[..2];
 			octave.Text = noteText[2..end];
-			suffix.Text = noteText[end..];
+			suffix.Text = indicators + noteText[end..];
 		}
 		else
 		{
-			note.Text = prefix + noteText;
+			note.Text = noteText;
 			octave.Text = string.Empty;
-			suffix.Text = string.Empty;
+			suffix.Text = indicators;
 		}
 	}
 
@@ -4163,9 +4215,10 @@ public sealed class PatternEditorControl : UserControl
 				(row, channel), out ReplayRequiredSeekIndication? seek);
 			if (!_octaveTexts.TryGetValue((row, channel), out TextBlock? octave)
 				|| !_noteSuffixTexts.TryGetValue((row, channel), out TextBlock? suffix)
+				|| !_mixdownBadges.TryGetValue((row, channel), out TextBlock? mixdown)
 				|| !_octaveFields.TryGetValue((row, channel), out Border? octaveField))
 				continue;
-			ApplyEditorIndications(note, octave, suffix,
+			ApplyEditorIndications(note, octave, suffix, mixdown,
 				noteField, octaveField, volumeField,
 				effects, noteText, indication, seek);
 		}
