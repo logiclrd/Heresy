@@ -1127,21 +1127,9 @@ public sealed class PatternEditorControl : UserControl
 		noteSuffix.MaxWidth = CellWidth - VolumeWidth - EffectWidth
 			- NoteNameWidth - NoteOctaveWidth
 			- MinimumSourceWidth - indicatorArea.Padding.Right;
-		// Note/Octave retain their fixed keyboard stops. The third,
-		// Auto-sized grid column collapses entirely when there is no hint.
-		Grid noteParts = new() { ClipToBounds = true };
-		noteParts.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(NoteNameWidth)));
-		noteParts.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(NoteOctaveWidth)));
-		noteParts.ColumnDefinitions.Add(
-			new ColumnDefinition(GridLength.Auto));
-		Grid.SetColumn(noteField, 0);
-		Grid.SetColumn(octaveField, 1);
-		Grid.SetColumn(indicatorArea, 2);
-		noteParts.Children.Add(noteField);
-		noteParts.Children.Add(octaveField);
-		noteParts.Children.Add(indicatorArea);
+		// Note, Octave, indicator and Source become direct siblings
+		// in one Grid. A nested spanning Grid would measure its indicator
+		// wider than the parent Auto column and let Source overlap it.
 
 		TextBlock sourceText =
 			new()
@@ -1287,12 +1275,14 @@ public sealed class PatternEditorControl : UserControl
 		Grid content = new()
 		{
 			Background = GetSourceTintBrush(displayRow, channel),
+			ClipToBounds = true,
 		};
-		// Note and Octave own 66 DIPs; the Auto-sized indicator occupies
-		// only its measured width. Source takes the remaining star column.
+		// Fixed Note/Octave stops followed by an Auto-sized optional
+		// indicator and a star-sized Source; Volume/Effect stay at right.
 		content.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(
-				NoteNameWidth + NoteOctaveWidth)));
+			new ColumnDefinition(new GridLength(NoteNameWidth)));
+		content.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(NoteOctaveWidth)));
 		content.ColumnDefinitions.Add(
 			new ColumnDefinition(GridLength.Auto));
 		content.ColumnDefinitions.Add(
@@ -1306,17 +1296,20 @@ public sealed class PatternEditorControl : UserControl
 		// but beneath editable fields, independently coloured effect stickers
 		// and all cursor/focus borders. No overlay receives pointer input.
 		Grid rangeLayer = new() { IsHitTestVisible = false };
-		Grid.SetColumnSpan(rangeLayer, 5);
+		Grid.SetColumnSpan(rangeLayer, 6);
 		PopulateRangeOverlays(rangeLayer, _flattenedRanges!,
 			(displayRow, channel));
-		Grid.SetColumn(noteParts, 0);
-		Grid.SetColumnSpan(noteParts, 2);
-		Grid.SetColumn(sourceField, 2);
-		Grid.SetColumn(volumeField, 3);
+		Grid.SetColumn(noteField, 0);
+		Grid.SetColumn(octaveField, 1);
+		Grid.SetColumn(indicatorArea, 2);
+		Grid.SetColumn(sourceField, 3);
+		Grid.SetColumn(volumeField, 4);
 		Grid.SetColumn(effects, 0);
-		Grid.SetColumnSpan(effects, 5);
+		Grid.SetColumnSpan(effects, 6);
 		content.Children.Add(rangeLayer);
-		content.Children.Add(noteParts);
+		content.Children.Add(noteField);
+		content.Children.Add(octaveField);
+		content.Children.Add(indicatorArea);
 		content.Children.Add(sourceField);
 		content.Children.Add(volumeField);
 		content.Children.Add(effects);
