@@ -77,7 +77,10 @@ internal static class ScriptAuthoredWrapperBoundary
             && methods.Length == expectedMethodNames.Length
             && expectedMethodNames.All(name =>
                 methods.Count(m => m.Identifier.ValueText == name) == 1);
-        MethodDeclarationSyntax? entry = methods.SingleOrDefault(
+        // A hostile or malformed source fragment can declare the same
+        // method twice. Never let malformed wrapper shape throw here:
+        // report a restricted-script diagnostic instead.
+        MethodDeclarationSyntax? entry = methods.FirstOrDefault(
             m => m.Identifier.ValueText == entryName);
 
         if (!correctShape || entry?.Body is null)
