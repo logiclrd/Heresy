@@ -164,9 +164,6 @@ internal sealed class ScriptRuntimeOperationVerifier
                 case IndexerDeclarationSyntax indexer:
                     visitor.AuditExecutable(indexer.ExpressionBody?.Expression);
                     break;
-                case EventDeclarationSyntax @event:
-                    visitor.AuditExecutable(@event.ExpressionBody?.Expression);
-                    break;
                 case FieldDeclarationSyntax field:
                     foreach (VariableDeclaratorSyntax v in field.Declaration.Variables)
                         visitor.AuditExecutable(v.Initializer?.Value);
@@ -225,8 +222,8 @@ internal sealed class ScriptRuntimeOperationVerifier
 
     private void RejectExtern(SyntaxTokenList modifiers, SyntaxNode node)
     {
-        if (modifiers.Any(SyntaxKind.ExternKeyword)
-            || modifiers.Any(SyntaxKind.UnsafeKeyword))
+        if (modifiers.Any(token => token.IsKind(SyntaxKind.ExternKeyword)
+            || token.IsKind(SyntaxKind.UnsafeKeyword)))
             Add(node, "Extern or unsafe declarations are not approved.");
     }
 
@@ -292,12 +289,32 @@ internal sealed class ScriptRuntimeOperationVerifier
             case IForEachLoopOperation loop:
                 CheckForEach(loop);
                 break;
+            case IUsingOperation usingStatement:
+                CheckUsing(usingStatement);
+                break;
+            case IUsingDeclarationOperation usingDeclaration:
+                CheckUsing(usingDeclaration);
+                break;
+            case IWithOperation withOperation:
+                CheckMember(withOperation.CloneMethod,
+                    ScriptMemberUse.CallOrMethodGroup, withOperation.Syntax);
+                break;
+            case IEventAssignmentOperation eventAssignment:
+                CheckMember(eventAssignment.Adds
+                    ? eventAssignment.EventReference.Event.AddMethod
+                    : eventAssignment.EventReference.Event.RemoveMethod,
+                    ScriptMemberUse.CallOrMethodGroup, eventAssignment.Syntax);
+                break;
             case ITypeOfOperation:
                 Add(operation.Syntax, "Runtime type objects are unavailable.");
                 break;
             case IAwaitOperation or ILockOperation
-                or IDynamicInvocationOperation or IAddressOfOperation
-                or IAnonymousObjectCreationOperation:
+                or IDynamicInvocationOperation or IDynamicMemberReferenceOperation
+                or IDynamicIndexerAccessOperation or IDynamicObjectCreationOperation
+                or IFunctionPointerInvocationOperation or IAddressOfOperation
+                or IAnonymousObjectCreationOperation or ICollectionExpressionOperation
+                or IInterpolatedStringHandlerCreationOperation
+                or IRecursivePatternOperation or IListPatternOperation:
                 Add(operation.Syntax,
                     "Execution or object form is not approved for script isolation.");
                 break;
@@ -305,6 +322,106 @@ internal sealed class ScriptRuntimeOperationVerifier
 
         foreach (IOperation child in operation.ChildOperations)
             Visit(child);
+    }
+
+    private void CheckUsing(IUsingOperation operation)
+    {
+        if (operation.IsAsynchronous)
+        {
+            Add(operation.Syntax, "Asynchronous disposal is not approved.");
+            return;
+        }
+
+        if (operation.Syntax is not UsingStatementSyntax syntax)
+        {
+            Add(operation.Syntax, "Unrecognized using statement binding.");
+            return;
+        }
+
+        if (syntax.Declaration is { } declaration)
+            CheckUsingDeclarations(declaration.Variables, syntax);
+        else if (syntax.Expression is { } expression)
+            CheckDispose(_model.GetTypeInfo(expression).Type, syntax);
+        else
+            Add(syntax, "Using resources did not bind.");
+    }
+
+    private void CheckUsing(IUsingDeclarationOperation operation)
+    {
+        if (operation.IsAsynchronous)
+        {
+            Add(operation.Syntax, "Asynchronous disposal is not approved.");
+            return;
+        }
+
+        if (operation.Syntax is LocalDeclarationStatementSyntax syntax)
+            CheckUsingDeclarations(syntax.Declaration.Variables, syntax);
+        else
+            Add(operation.Syntax, "Unrecognized using declaration binding.");
+    }
+
+    private void CheckUsingDeclarations(
+        SeparatedSyntaxList<VariableDeclaratorSyntax> variables,
+        SyntaxNode syntax)
+    {
+        if (variables.Count == 0)
+            Add(syntax, "Using declaration contains no bound resources.");
+
+        foreach (VariableDeclaratorSyntax variable in variables)
+        {
+            if (_model.GetDeclaredSymbol(variable) is ILocalSymbol local)
+                CheckDispose(local.Type, variable);
+            else
+                Add(variable, "Using resource type could not be resolved.");
+        }
+    }
+
+    private void CheckDispose(ITypeSymbol? resourceType, SyntaxNode syntax)
+    {
+        if (resourceType is not INamedTypeSymbol named)
+        {
+            Add(syntax, "Implicit disposal requires a resolved named resource type.");
+            return;
+        }
+
+        CheckType(named, syntax);
+
+        // A synchronous using can dispatch through IDisposable or (for
+        // ref structs) through an accessible instance Dispose pattern.
+        // The called implementation must pass the same member checks as
+        // any explicitly written invocation. No unknown lowering is trusted.
+        INamedTypeSymbol? disposable =
+            _compilation.GetTypeByMetadataName("System.IDisposable");
+        IMethodSymbol? interfaceMethod = disposable?.GetMembers("Dispose")
+            .OfType<IMethodSymbol>().SingleOrDefault();
+
+        if (interfaceMethod is not null
+            && named.AllInterfaces.Any(i =>
+                SymbolEqualityComparer.Default.Equals(i, disposable)))
+        {
+            if (named.FindImplementationForInterfaceMember(interfaceMethod)
+                is IMethodSymbol implementation)
+            {
+                CheckMember(implementation, ScriptMemberUse.CallOrMethodGroup,
+                    syntax);
+                return;
+            }
+
+            Add(syntax, "IDisposable implementation could not be resolved.");
+            return;
+        }
+
+        IMethodSymbol[] methods = named.GetMembers("Dispose")
+            .OfType<IMethodSymbol>()
+            .Where(method => !method.IsStatic
+                && method.Parameters.Length == 0
+                && method.ReturnsVoid
+                && method.DeclaredAccessibility == Accessibility.Public)
+            .ToArray();
+        if (methods.Length == 1)
+            CheckMember(methods[0], ScriptMemberUse.CallOrMethodGroup, syntax);
+        else
+            Add(syntax, "Implicit Dispose target could not be verified.");
     }
 
     private void CheckForEach(IForEachLoopOperation loop)
@@ -364,6 +481,8 @@ internal sealed class ScriptRuntimeOperationVerifier
 
         if (member is IMethodSymbol method)
         {
+            foreach (IParameterSymbol parameter in method.Parameters)
+                CheckType(parameter.Type, syntax);
             foreach (ITypeSymbol type in method.TypeArguments)
                 CheckType(type, syntax);
             CheckType(method.ReturnType, syntax);
@@ -414,6 +533,8 @@ internal sealed class ScriptRuntimeOperationVerifier
         {
             IAssignmentOperation assignment
                 when ReferenceEquals(assignment.Target, current) => true,
+            ICompoundAssignmentOperation compound
+                when ReferenceEquals(compound.Target, current) => true,
             IIncrementOrDecrementOperation increment
                 when ReferenceEquals(increment.Target, current) => true,
             IArgumentOperation argument when argument.Parameter?.RefKind
