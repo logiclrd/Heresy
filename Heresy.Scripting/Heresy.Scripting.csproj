@@ -16,4 +16,9 @@
 		<ProjectReference Include="..\Heresy.Core\Heresy.Core.csproj" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<EmbeddedResource Include="../docs/script-runtime-allow-list.txt"
+			LogicalName="Heresy.Scripting.script-runtime-allow-list.txt" />
+	</ItemGroup>
+
 </Project>
