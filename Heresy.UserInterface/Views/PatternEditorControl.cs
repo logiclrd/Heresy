@@ -4190,8 +4190,16 @@ public sealed class PatternEditorControl : UserControl
 		// disappear when there is no text to show.
 		bool hasSuffix = !string.IsNullOrEmpty(suffix.Text);
 		suffix.IsVisible = hasSuffix;
-		if (suffix.Parent is Border indicatorArea)
+		if (suffix.Parent is Border indicatorArea
+			&& indicatorArea.IsVisible != hasSuffix)
+		{
 			indicatorArea.IsVisible = hasSuffix;
+			// A headless/unattached editor can retain its previous Grid
+			// measure when a child collapses. Explicitly invalidate the
+			// owning Auto column to make Source reclaim the width immediately.
+			if (indicatorArea.Parent is Grid grid)
+				grid.InvalidateMeasure();
+		}
 	}
 
 	/// <summary>Reapply the session preference without rebuilding cells.</summary>
