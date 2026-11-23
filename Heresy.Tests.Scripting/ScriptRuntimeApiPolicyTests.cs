@@ -90,8 +90,8 @@ public sealed class ScriptRuntimeApiPolicyTests
             .Should().BeTrue("all CoreLib enums are approved");
         Policy.IsAllowedRuntimeType(Type(c, "System.InvalidOperationException"), c)
             .Should().BeTrue("CoreLib Exception subclasses are approved");
-        Policy.IsAllowedRuntimeType(Type(c, "System.IServiceProvider"), c)
-            .Should().BeTrue("a type may be approved without exposing host instances");
+        Policy.IsAllowedRuntimeType(Type(c, "System.IComparable"), c)
+            .Should().BeTrue("CoreLib interfaces are approved by their defining assembly");
         Policy.IsAllowedRuntimeType(Type(c, "System.Globalization.GregorianCalendar"), c)
             .Should().BeTrue("CoreLib Calendar subclasses are approved");
     }
