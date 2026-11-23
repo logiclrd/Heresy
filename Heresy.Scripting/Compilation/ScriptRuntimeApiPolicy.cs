@@ -198,11 +198,20 @@ internal sealed class ScriptRuntimeApiPolicy
                 named.ContainingAssembly, core))
             return false;
 
+        // An open generic definition contains its own type parameters, while
+        // a constructed type must validate every *actual* type argument.
+        bool isDefinition = SymbolEqualityComparer.Default.Equals(
+            named, named.OriginalDefinition);
         foreach (ITypeSymbol argument in named.TypeArguments)
         {
+            if (isDefinition && argument is ITypeParameterSymbol)
+                continue;
             if (!IsAllowedRuntimeType(argument, compilation))
                 return false;
         }
+        if (named.ContainingType is { } containing
+            && !IsAllowedRuntimeType(containing, compilation))
+            return false;
 
         INamedTypeSymbol definition = named.OriginalDefinition;
         string name = MetadataName(definition);
