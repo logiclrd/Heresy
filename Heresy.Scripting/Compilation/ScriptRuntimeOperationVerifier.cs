@@ -28,14 +28,20 @@ internal sealed class ScriptRuntimeOperationVerifier
     private readonly SemanticModel _model;
     private readonly Microsoft.CodeAnalysis.Compilation _compilation;
     private readonly ScriptRuntimeApiPolicy _policy;
+    private readonly Func<ISymbol, bool>? _approvedHostMember;
+    private readonly Func<ITypeSymbol, bool>? _approvedOpaqueHostType;
     private readonly List<ScriptRuntimeOperationFinding> _findings = [];
 
     private ScriptRuntimeOperationVerifier(SemanticModel model,
-        ScriptRuntimeApiPolicy policy)
+        ScriptRuntimeApiPolicy policy,
+        Func<ISymbol, bool>? approvedHostMember = null,
+        Func<ITypeSymbol, bool>? approvedOpaqueHostType = null)
     {
         _model = model;
         _compilation = model.Compilation;
         _policy = policy;
+        _approvedHostMember = approvedHostMember;
+        _approvedOpaqueHostType = approvedOpaqueHostType;
     }
 
     /// <summary>
@@ -56,6 +62,35 @@ internal sealed class ScriptRuntimeOperationVerifier
             new(model, policy ?? ScriptRuntimeApiPolicy.Default);
         visitor.Visit(root);
         visitor.CheckTypeSyntax(executableScope);
+        return visitor._findings.Distinct().ToArray();
+    }
+
+    /// <summary>
+    /// Audit one statement from the *unmodified* Pattern/Sequence source
+    /// embedded in its canonical wrapper. Trusted Heresy helpers may carry
+    /// opaque Core/Scripting value types across the existing, separately
+    /// validated helper API. This exception is valid only while the legacy
+    /// strict helper/member validator is also mandatory; it is NOT a general
+    /// exemption for accessing Heresy objects or future expanded syntax.
+    /// </summary>
+    internal static IReadOnlyList<ScriptRuntimeOperationFinding> AnalyzeCanonical(
+        SemanticModel model, SyntaxNode authoredStatement,
+        Func<ISymbol, bool> approvedHostMember,
+        Func<ITypeSymbol, bool> approvedOpaqueHostType)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(authoredStatement);
+        ArgumentNullException.ThrowIfNull(approvedHostMember);
+        ArgumentNullException.ThrowIfNull(approvedOpaqueHostType);
+        IOperation operation = model.GetOperation(authoredStatement)
+            ?? throw new InvalidOperationException(
+                "Canonical authored statement was not bound.");
+
+        ScriptRuntimeOperationVerifier visitor = new(
+            model, ScriptRuntimeApiPolicy.Default,
+            approvedHostMember, approvedOpaqueHostType);
+        visitor.Visit(operation);
+        visitor.CheckTypeSyntax(authoredStatement);
         return visitor._findings.Distinct().ToArray();
     }
 
@@ -487,6 +522,12 @@ internal sealed class ScriptRuntimeOperationVerifier
             return;
         }
 
+        // This applies only to the canonical authored-source pass, where
+        // the existing legacy validator separately checks the *exact* helper
+        // symbols and disallows every other Heresy member access.
+        if (_approvedHostMember?.Invoke(member) == true)
+            return;
+
         if (member is IMethodSymbol method)
         {
             foreach (IParameterSymbol parameter in method.Parameters)
@@ -508,6 +549,9 @@ internal sealed class ScriptRuntimeOperationVerifier
 
     private void CheckType(ITypeSymbol type, SyntaxNode syntax)
     {
+        if (_approvedOpaqueHostType?.Invoke(type) == true)
+            return;
+
         if (type is ITypeParameterSymbol)
             return; // Source type-parameter constraints need a separate audit.
 
