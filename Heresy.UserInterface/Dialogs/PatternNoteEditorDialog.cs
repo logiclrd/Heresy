@@ -3,6 +3,8 @@ using System.Globalization;
 
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 
 using Heresy.Core.Objects;
@@ -74,6 +76,13 @@ public sealed class PatternNoteEditorDialog : Window
 			};
 		_message = new TextBlock();
 
+		// Avalonia's CheckBox handles Enter as a toggle before the default
+		// Apply button sees it. Reserve Space for toggling and route plain
+		// Enter through the dialog's normal validation/Apply behavior.
+		_mixdown.AddHandler(
+			InputElement.KeyDownEvent, OnMixdownKeyDown,
+			RoutingStrategies.Tunnel);
+
 		_kind.SelectionChanged += (_, _) => UpdateStartFields();
 		UpdateStartFields();
 
@@ -121,6 +130,17 @@ public sealed class PatternNoteEditorDialog : Window
 			content,
 			buttons,
 			new Thickness(18));
+	}
+
+	private void OnMixdownKeyDown(object? sender, KeyEventArgs e)
+	{
+		if (e.Handled
+			|| e.Key != Key.Enter
+			|| e.KeyModifiers != KeyModifiers.None)
+			return;
+
+		e.Handled = true;
+		Apply();
 	}
 
 	private void Apply()
