@@ -642,7 +642,7 @@ public static class ScriptCompiler
 	/// distinguish user capabilities from compiler-generated operations.
 	/// The ordinary restricted helper/member validation still runs afterward.
 	/// </summary>
-	private static IReadOnlyList<ScriptAnalysisDiagnostic>
+	internal static IReadOnlyList<ScriptAnalysisDiagnostic>
 		ValidateCanonicalAuthoredOperations(
 			string source, ScriptWrapperKind wrapperKind)
 	{
