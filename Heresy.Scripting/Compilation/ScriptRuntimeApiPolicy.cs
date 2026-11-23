@@ -177,7 +177,7 @@ internal sealed class ScriptRuntimeApiPolicy
     /// author-controlled namespace or an untrusted assembly with the same name.
     /// This method deliberately does NOT grant permission to user-declared types.
     /// </summary>
-    internal bool IsAllowedRuntimeType(ITypeSymbol type, Compilation compilation)
+    internal bool IsAllowedRuntimeType(ITypeSymbol type, Microsoft.CodeAnalysis.Compilation compilation)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(compilation);
@@ -235,7 +235,7 @@ internal sealed class ScriptRuntimeApiPolicy
     /// A false result does not imply its containing type is allowed.
     /// </summary>
     internal bool IsBlockedMember(ISymbol symbol, ScriptMemberUse use,
-        Compilation compilation)
+        Microsoft.CodeAnalysis.Compilation compilation)
     {
         ArgumentNullException.ThrowIfNull(symbol);
         ArgumentNullException.ThrowIfNull(compilation);
@@ -280,7 +280,7 @@ internal sealed class ScriptRuntimeApiPolicy
         return _blockedMembers.Contains(key);
     }
 
-    private static bool IsCoreLibrarySymbol(ISymbol symbol, Compilation compilation)
+    private static bool IsCoreLibrarySymbol(ISymbol symbol, Microsoft.CodeAnalysis.Compilation compilation)
         => SymbolEqualityComparer.Default.Equals(
             symbol.ContainingAssembly,
             compilation.GetSpecialType(SpecialType.System_Object).ContainingAssembly);
