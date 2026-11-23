@@ -253,4 +253,30 @@ public sealed class ScriptRuntimeApiPolicyTests
         Policy.IsBlockedMember(model.GetDeclaredSymbol(work)!,
             ScriptMemberUse.CallOrMethodGroup, c).Should().BeFalse();
     }
+
+    [Test]
+    public void UserDefinedOverrideOfForbiddenRuntimeMethodRemainsForbidden()
+    {
+        const string source = """
+            using System;
+            using System.Threading;
+            class ScriptTimeProvider : TimeProvider
+            {
+                public override ITimer CreateTimer(
+                    TimerCallback callback, object? state,
+                    TimeSpan dueTime, TimeSpan period) => null!;
+            }
+            """;
+        CSharpCompilation c = Compile(source);
+        SyntaxTree tree = c.SyntaxTrees.Single();
+        MethodDeclarationSyntax declaration = tree.GetRoot()
+            .DescendantNodes().OfType<MethodDeclarationSyntax>().Single();
+        IMethodSymbol method = c.GetSemanticModel(tree)
+            .GetDeclaredSymbol(declaration)!;
+        method.OverriddenMethod.Should().NotBeNull(
+            "this test must actually bind the overridden CoreLib method");
+
+        Policy.IsBlockedMember(method, ScriptMemberUse.CallOrMethodGroup, c)
+            .Should().BeTrue("overriding a forbidden method cannot escape its policy");
+    }
 }
