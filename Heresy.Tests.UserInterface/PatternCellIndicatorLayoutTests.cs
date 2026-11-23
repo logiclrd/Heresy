@@ -96,7 +96,6 @@ public sealed class PatternCellIndicatorLayoutTests
         Border indicator = IndicatorArea(editor, 24);
         Border cutSource = sourceFields[(24, 0)];
         Border ordinarySource = sourceFields[(0, 0)];
-        Grid noteParts = (Grid)noteFields[(24, 0)].Parent!;
         Grid content = (Grid)Fields<Border>(
             editor, "_cellBorders")[(24, 0)].Child!;
 
@@ -110,12 +109,12 @@ public sealed class PatternCellIndicatorLayoutTests
             Assert.That(hint.TextTrimming, Is.EqualTo(TextTrimming.CharacterEllipsis));
             Assert.That(indicator.Padding.Right, Is.EqualTo(3));
             Assert.That(indicator.IsVisible, Is.True);
-            Assert.That(noteParts.ColumnDefinitions[2].Width.IsAuto, Is.True);
-            Assert.That(content.ColumnDefinitions[1].Width.IsAuto, Is.True);
-            Assert.That(content.ColumnDefinitions[2].Width.IsStar, Is.True);
-            Assert.That(noteParts.ClipToBounds, Is.True);
+            Assert.That(content.ColumnDefinitions[2].Width.IsAuto, Is.True);
+            Assert.That(content.ColumnDefinitions[3].Width.IsStar, Is.True);
+            Assert.That(content.ClipToBounds, Is.True);
+            Assert.That(noteFields[(24, 0)].Parent, Is.SameAs(content));
             Assert.That(Grid.GetColumn(indicator), Is.EqualTo(2));
-            Assert.That(Grid.GetColumn(cutSource), Is.EqualTo(2));
+            Assert.That(Grid.GetColumn(cutSource), Is.EqualTo(3));
             Assert.That(indicator.Bounds.Width,
                 Is.GreaterThan(3).And.LessThan(28),
                 "a single lifecycle glyph should not reserve the old 28 DIPs");
