@@ -94,7 +94,6 @@ public sealed class ScriptRuntimeOperationVerifierTests
             cts.Cancel();
             bool stopped = cts.Token.IsCancellationRequested;
             var timed = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-            timed.CancelAsync();
             timed.Dispose();
             """;
         Check(source).Should().BeEmpty();
@@ -107,6 +106,7 @@ public sealed class ScriptRuntimeOperationVerifierTests
     [TestCase("new StreamWriter(\"song.txt\")", "StreamWriter")]
     [TestCase("ArrayPool<int>.Shared", "Shared")]
     [TestCase("new CancellationTokenSource().CancelAfter(5)", "CancelAfter")]
+    [TestCase("new CancellationTokenSource().CancelAsync()", "System.Threading.Tasks.Task")]
     [TestCase("new CancellationToken().Register(() => {})", "Register")]
     [TestCase("CultureInfo.ClearCachedData()", "ClearCachedData")]
     [TestCase("TimeZoneInfo.ClearCachedData()", "ClearCachedData")]
