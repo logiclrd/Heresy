@@ -74,7 +74,8 @@ public static class ScriptCompiler
 			source,
 			BuildPatternWrapper(
 				className,
-				InstrumentLoops(source)))
+				InstrumentLoops(source)),
+			wrapperKind: ScriptWrapperKind.Pattern)
 			.Diagnostics;
 	}
 
@@ -88,7 +89,8 @@ public static class ScriptCompiler
 			source,
 			BuildSequenceWrapper(
 				className,
-				InstrumentLoops(source)))
+				InstrumentLoops(source)),
+			wrapperKind: ScriptWrapperKind.Sequence)
 			.Diagnostics;
 	}
 
@@ -160,7 +162,8 @@ public static class ScriptCompiler
 				InstrumentIncrementalPattern(definition.Source,
 					instrumentActionCallsites)),
 			typeof(PatternScriptProgram),
-			allowInjectedPlayCallsites: instrumentActionCallsites);
+			allowInjectedPlayCallsites: instrumentActionCallsites,
+			incrementalPattern: true);
 
 		if (!compiled.Success || compiled.Program is null)
 			return new(null, compiled.Diagnostics);
@@ -472,13 +475,21 @@ public static class ScriptCompiler
 		string className,
 		string wrapperSource,
 		Type requiredBaseType,
-		bool allowInjectedPlayCallsites = false)
+		bool allowInjectedPlayCallsites = false,
+		bool incrementalPattern = false)
 	{
+		ScriptWrapperKind wrapperKind = requiredBaseType == typeof(PatternScriptProgram)
+			? incrementalPattern ? ScriptWrapperKind.IncrementalPattern
+				: ScriptWrapperKind.Pattern
+			: requiredBaseType == typeof(SequenceScriptProgram)
+				? ScriptWrapperKind.Sequence
+				: ScriptWrapperKind.None;
 		PreparedScriptCompilation prepared =
 			PrepareCompilation(
 				source,
 				wrapperSource,
-				allowInjectedPlayCallsites);
+				allowInjectedPlayCallsites,
+				wrapperKind);
 		List<ScriptAnalysisDiagnostic> diagnostics =
 			[.. prepared.Diagnostics];
 
@@ -534,7 +545,8 @@ public static class ScriptCompiler
 	private static PreparedScriptCompilation PrepareCompilation(
 		string source,
 		string wrapperSource,
-		bool allowInjectedPlayCallsites = false)
+		bool allowInjectedPlayCallsites = false,
+		ScriptWrapperKind wrapperKind = ScriptWrapperKind.None)
 	{
 		ScriptReferenceAnalysis referenceAnalysis =
 			ScriptReferenceAnalyzer.Analyze(source);
@@ -575,6 +587,23 @@ public static class ScriptCompiler
 					ProjectDiagnostic(
 						diagnostic,
 						source));
+			}
+		}
+
+		if (!HasErrors(diagnostics) && wrapperKind != ScriptWrapperKind.None)
+		{
+			// This is a structural trust-boundary check, NOT yet the new
+			// runtime API policy. In particular, loop checkpoints and F6
+			// callsite metadata are trusted generated code even when #line
+			// maps them into the authored source region.
+			foreach (ScriptWrapperBoundaryViolation violation
+				in ScriptAuthoredWrapperBoundary.Validate(syntaxTree, wrapperKind))
+			{
+				AddRestrictedDiagnostic(diagnostics,
+					violation.Location is null
+						? new ScriptSourceSpan(0, 0)
+						: MapSpan(violation.Location, source),
+					violation.Reason);
 			}
 		}
 
