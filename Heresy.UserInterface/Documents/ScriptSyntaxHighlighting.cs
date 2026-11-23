@@ -72,12 +72,22 @@ public static class ScriptSyntaxHighlightCatalog
 			if (kind is null)
 				continue;
 
+			// Roslyn correctly tokenizes the unary minus separately from
+			// its operand. Visually colour an adjacent -1 as one number;
+			// never extend across spaces or a binary subtraction operator.
+			int start = literal.Span.Start;
+			if (kind == ScriptSyntaxHighlightKind.Number
+				&& literal.Parent is PrefixUnaryExpressionSyntax prefix
+				&& prefix.IsKind(SyntaxKind.UnaryMinusExpression)
+				&& prefix.OperatorToken.Span.End == start)
+				start = prefix.OperatorToken.Span.Start;
+
 			AddIfUnprotected(
 				spans,
 				protectedSpans,
 				new ScriptSourceSpan(
-					literal.Span.Start,
-					literal.Span.Length),
+					start,
+					literal.Span.End - start),
 				kind.Value);
 		}
 
