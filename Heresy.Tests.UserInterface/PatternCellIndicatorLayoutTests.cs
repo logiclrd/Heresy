@@ -38,6 +38,9 @@ public sealed class PatternCellIndicatorLayoutTests
     private static void ArrangeCell(PatternEditorControl editor, int row)
     {
         Border cell = Fields<Border>(editor, "_cellBorders")[(row, 0)];
+        // The headless cell is not attached to a LayoutManager. Explicitly
+        // request a pass, as the live window would after a layout invalidation.
+        cell.InvalidateMeasure();
         cell.Measure(new Size(CellWidth, 28));
         cell.Arrange(new Rect(0, 0, CellWidth, 28));
     }
