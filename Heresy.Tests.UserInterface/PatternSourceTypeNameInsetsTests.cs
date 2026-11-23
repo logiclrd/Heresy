@@ -173,7 +173,12 @@ public sealed class PatternSourceTypeNameInsetsTests
             Assert.That(cells[(row, 0)].Height, Is.EqualTo(28));
             Assert.That(field.Height, Is.EqualTo(24));
             Assert.That(field.Child, Is.SameAs(badge));
-            Assert.That(badge.Child, Is.SameAs(sourceTexts[(row, 0)]));
+            Assert.That(badge.Child, Is.TypeOf<Grid>());
+            Grid contents = (Grid)badge.Child!;
+            Assert.That(contents.Children.Last(),
+                Is.SameAs(sourceTexts[(row, 0)]));
+            Assert.That(contents.ColumnDefinitions, Has.Count.EqualTo(2));
+            Assert.That(contents.ClipToBounds, Is.True);
             Assert.That(badge.CornerRadius, Is.EqualTo(new CornerRadius(2)));
             Assert.That(badge.Padding.Top, Is.Zero);
             Assert.That(badge.Padding.Bottom, Is.Zero);
