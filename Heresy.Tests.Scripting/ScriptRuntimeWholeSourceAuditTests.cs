@@ -295,6 +295,25 @@ public sealed class ScriptRuntimeWholeSourceAuditTests
     }
 
     [Test]
+    public void PrimaryConstructorBaseArgumentsCannotEscapeTheAudit()
+    {
+        const string source = """
+            using System.IO;
+            class Base
+            {
+                public Base(string path) { }
+            }
+            class Script(string label) : Base(Path.GetTempFileName())
+            {
+                public string Name => label;
+            }
+            """;
+        Audit(source).Should().Contain(f =>
+            f.Reason.Contains("Primary constructor"),
+            "a base initializer may execute before the first authored method");
+    }
+
+    [Test]
     public void CompilerErrorsAndMultipleAuthoredTreesNeverSilentlyPass()
     {
         const string source = "class Script { void Run() { NoSuchCapability(); } }";
