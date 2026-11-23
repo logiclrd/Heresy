@@ -244,6 +244,26 @@ internal sealed class ScriptRuntimeApiPolicy
             IPropertySymbol property)
             symbol = property;
 
+        // Inspect overridden declarations too: an author-defined override of
+        // TimeProvider.CreateTimer must not bypass the base member prohibition.
+        for (ISymbol? candidate = symbol; candidate is not null;
+            candidate = candidate switch
+            {
+                IMethodSymbol method => method.OverriddenMethod,
+                IPropertySymbol overriddenProperty => overriddenProperty.OverriddenProperty,
+                IEventSymbol overriddenEvent => overriddenEvent.OverriddenEvent,
+                _ => null,
+            })
+        {
+            if (IsBlockedDeclaration(candidate, use, compilation))
+                return true;
+        }
+        return false;
+    }
+
+    private bool IsBlockedDeclaration(ISymbol symbol, ScriptMemberUse use,
+        Microsoft.CodeAnalysis.Compilation compilation)
+    {
         // Finalizers declared in authored types may run on the GC thread.
         if (_blockUserFinalizers && symbol is IMethodSymbol finalizer
             && finalizer.MethodKind == MethodKind.Destructor
