@@ -120,8 +120,12 @@ public sealed class PatternCellIndicatorLayoutTests
                 "a single lifecycle glyph should not reserve the old 28 DIPs");
             Assert.That(ordinarySource.Bounds.Width,
                 Is.GreaterThan(cutSource.Bounds.Width));
-            Assert.That(ordinarySource.Bounds.Width - cutSource.Bounds.Width,
-                Is.EqualTo(indicator.Bounds.Width).Within(1));
+            Assert.That(SourceLeft(editor, 24) - SourceLeft(editor, 0),
+                Is.EqualTo(content.ColumnDefinitions[2].ActualWidth).Within(0.01),
+                "the Source click boundary follows the arranged Auto column");
+            Assert.That(indicator.Bounds.Right,
+                Is.LessThanOrEqualTo(cutSource.Bounds.Left + 0.01),
+                "the drawn indicator must not encroach on the Source badge");
             Assert.That(sourceFields[(0, 0)].Width, Is.NaN,
                 "Source uses the remaining star width rather than a fixed width");
         });
@@ -205,8 +209,10 @@ public sealed class PatternCellIndicatorLayoutTests
             Assert.That(source.Foreground, Is.SameAs(Brushes.Black));
             Assert.That(mixedSourceField.Bounds.Width,
                 Is.LessThan(ordinarySourceField.Bounds.Width));
-            Assert.That(ordinarySourceField.Bounds.Width - mixedSourceField.Bounds.Width,
-                Is.EqualTo(mixWidth).Within(1));
+            Assert.That(SourceLeft(editor, 0) - SourceLeft(editor, 1),
+                Is.EqualTo(((Grid)cells[(0, 0)].Child!)
+                    .ColumnDefinitions[2].ActualWidth).Within(0.01),
+                "Source must begin after the true measured Auto-column width");
             Assert.That(indicator.Bounds.Right,
                 Is.LessThanOrEqualTo(mixedSourceField.Bounds.Left + 0.01));
             Assert.That(cells[(0, 0)].Width, Is.EqualTo(CellWidth));
