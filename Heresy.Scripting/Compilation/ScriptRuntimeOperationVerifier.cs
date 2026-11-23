@@ -305,10 +305,10 @@ internal sealed class ScriptRuntimeOperationVerifier
                     ScriptMemberUse.CallOrMethodGroup, withOperation.Syntax);
                 break;
             case IEventAssignmentOperation eventAssignment:
-                if (eventAssignment.EventReference is IEventReferenceOperation reference)
+                if (eventAssignment.EventReference is IEventReferenceOperation eventReference)
                     CheckMember(eventAssignment.Adds
-                        ? reference.Event.AddMethod
-                        : reference.Event.RemoveMethod,
+                        ? eventReference.Event.AddMethod
+                        : eventReference.Event.RemoveMethod,
                         ScriptMemberUse.CallOrMethodGroup, eventAssignment.Syntax);
                 else
                     Add(eventAssignment.Syntax, "Event accessor could not be resolved.");
