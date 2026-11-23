@@ -260,7 +260,7 @@ internal sealed class ScriptRuntimeApiPolicy
             if (_blockedConstructors.Contains(owner))
                 return true;
             if (_blockPathReaderWriterConstructors
-                && owner is "System.IO.StreamReader" or "System.IO.StreamWriter"
+                && (owner is "System.IO.StreamReader" or "System.IO.StreamWriter")
                 && constructor.Parameters.Length > 0
                 && constructor.Parameters[0].Type.SpecialType == SpecialType.System_String)
                 return true;
