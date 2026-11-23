@@ -241,7 +241,9 @@ public sealed class PatternCellIndicatorLayoutTests
             Assert.That(mix.Text, Is.Empty);
             Assert.That(mix.IsVisible, Is.False);
             Assert.That(indicator.IsVisible, Is.False);
-            Assert.That(indicator.Bounds.Width, Is.Zero);
+            Assert.That(((Grid)cells[(0, 0)].Child!)
+                .ColumnDefinitions[2].ActualWidth, Is.Zero,
+                "a hidden indicator collapses its Auto column completely");
             Assert.That(badges[(0, 0)], Is.SameAs(badge));
             Assert.That(sourceLabels[(0, 0)], Is.SameAs(source));
             Assert.That(mixedSourceField.Bounds.Width,
