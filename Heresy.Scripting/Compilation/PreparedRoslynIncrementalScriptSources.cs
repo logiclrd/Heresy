@@ -38,7 +38,9 @@ public sealed class PreparedRoslynIncrementalScriptSources :
 	private readonly Dictionary<ObjectId, ExceptionDispatchInfo>
 		_failedSequences = [];
 
-	public PreparedRoslynIncrementalScriptSources(SongDocumentSnapshot snapshot)
+	public PreparedRoslynIncrementalScriptSources(
+		SongDocumentSnapshot snapshot, ObjectId? editorSequenceCallsites = null,
+		ObjectId? editorPatternCallsites = null)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -54,7 +56,9 @@ public sealed class PreparedRoslynIncrementalScriptSources :
 				case ScriptPatternDefinition pattern:
 					try
 					{
-						_patterns.Add(pattern.Id, compiler.CompilePattern(pattern));
+						_patterns.Add(pattern.Id, compiler.CompilePattern(pattern,
+							instrumentActionCallsites:
+								 editorPatternCallsites == pattern.Id));
 					}
 					catch (NotSupportedException error)
 					{
@@ -64,7 +68,9 @@ public sealed class PreparedRoslynIncrementalScriptSources :
 				case ScriptSequenceDefinition sequence:
 					try
 					{
-						_sequences.Add(sequence.Id, compiler.CompileSequence(sequence));
+						_sequences.Add(sequence.Id, compiler.CompileSequence(
+							sequence, instrumentPlayCallsites:
+								editorSequenceCallsites == sequence.Id));
 					}
 					catch (NotSupportedException error)
 					{

@@ -78,6 +78,7 @@ public abstract class PatternScriptProgram
 	private readonly ScriptExecutionBudget _budget = new();
 	private int _cooperationIterations;
 	private double _lastRawRow;
+	private SequenceCallsite? _editorActionCallsite;
 
 	protected PatternScriptProgram(
 		SequencingContext context,
@@ -195,6 +196,163 @@ public abstract class PatternScriptProgram
 			sourceId, pitchMultiplier, playbackSpeedMultiplier,
 			mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId);
 	}
+
+
+	/// <summary>Only rewritten editor-F6 calls use these overloads. Normal
+	/// Pattern scripts continue to call the unchanged musical API.</summary>
+	private void EmitWithEditorCallsite(SequenceCallsite callsite, Action emit)
+	{
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = callsite;
+		try { emit(); }
+		finally { _editorActionCallsite = previous; }
+	}
+
+	protected void Note(SequenceCallsite callsite, double row, int channel, ObjectId sourceId,
+		double pitchMultiplier = 1.0,
+		double playbackSpeedMultiplier = 1.0,
+		bool mixdown = false, double? volume = null,
+		double timeOffsetSeconds = 0.0,
+		ObjectId? eventFilterDefinitionId = null)
+		=> EmitWithEditorCallsite(callsite,
+			() => Note(row, channel, sourceId, pitchMultiplier, playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId));
+
+	protected void NoteVirtual(SequenceCallsite callsite, double row, uint virtualId, ObjectId sourceId,
+		double pitchMultiplier = 1.0,
+		double playbackSpeedMultiplier = 1.0,
+		bool mixdown = false, double? volume = null,
+		double timeOffsetSeconds = 0.0,
+		ObjectId? eventFilterDefinitionId = null)
+		=> EmitWithEditorCallsite(callsite,
+			() => NoteVirtual(row, virtualId, sourceId, pitchMultiplier, playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId));
+
+	protected void NoteFilter(SequenceCallsite callsite, double row, int channel, ObjectId? definitionId = null,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => NoteFilter(row, channel, definitionId, timeOffsetSeconds));
+
+	protected void NoteFilterVirtual(SequenceCallsite callsite, double row, uint virtualId, ObjectId? definitionId = null,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => NoteFilterVirtual(row, virtualId, definitionId, timeOffsetSeconds));
+
+	protected void ChannelFilter(SequenceCallsite callsite, double row, int channel, ObjectId? definitionId = null,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => ChannelFilter(row, channel, definitionId, timeOffsetSeconds));
+
+	protected void ChannelFilterVirtual(SequenceCallsite callsite, double row, uint virtualId, ObjectId? definitionId = null,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => ChannelFilterVirtual(row, virtualId, definitionId, timeOffsetSeconds));
+
+	// Editor-F6-only provenance for voice-ending operations. Delegate to
+	// the authored overloads so validation, channel scoping and note
+	// commands remain identical to ordinary playback.
+	protected void Off(SequenceCallsite callsite, double row, int channel,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Off(row, channel, timeOffsetSeconds));
+
+	protected void Cut(SequenceCallsite callsite, double row, int channel,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Cut(row, channel, timeOffsetSeconds));
+
+	protected void OffVirtual(SequenceCallsite callsite, double row, uint virtualId,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => OffVirtual(row, virtualId, timeOffsetSeconds));
+
+	protected void CutVirtual(SequenceCallsite callsite, double row, uint virtualId,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => CutVirtual(row, virtualId, timeOffsetSeconds));
+
+	protected void OffVirtualInScope(SequenceCallsite callsite, double row,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => OffVirtualInScope(row, timeOffsetSeconds));
+
+	protected void CutVirtualInScope(SequenceCallsite callsite, double row,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => CutVirtualInScope(row, timeOffsetSeconds));
+
+	protected void OffAllVirtual(SequenceCallsite callsite, double row,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => OffAllVirtual(row, timeOffsetSeconds));
+
+	protected void CutAllVirtual(SequenceCallsite callsite, double row,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => CutAllVirtual(row, timeOffsetSeconds));
+
+	// Editor-F6-only provenance for global timing and physical-channel
+	// playback controls. All actual parameter validation and emission
+	// remain in the existing authored overloads.
+	protected void Tempo(SequenceCallsite callsite, double row, double ticksPerDiachron)
+		=> EmitWithEditorCallsite(callsite,
+			() => Tempo(row, ticksPerDiachron));
+
+	protected void Speed(SequenceCallsite callsite, double row, int ticksPerRow)
+		=> EmitWithEditorCallsite(callsite,
+			() => Speed(row, ticksPerRow));
+
+	protected void Seek(SequenceCallsite callsite, double row, int channel,
+		double playbackSeconds, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Seek(row, channel, playbackSeconds, timeOffsetSeconds));
+
+	protected void Pan(SequenceCallsite callsite, double row, int channel,
+		double x, double y = 0, double z = 0, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Pan(row, channel, x, y, z, timeOffsetSeconds));
+
+	protected void Surround(SequenceCallsite callsite, double row, int channel,
+		bool enabled, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Surround(row, channel, enabled, timeOffsetSeconds));
+
+	protected void Filter(SequenceCallsite callsite, double row, int channel,
+		double cutoff, double resonance, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Filter(row, channel, cutoff, resonance, timeOffsetSeconds));
+
+	protected void FilterCutoff(SequenceCallsite callsite, double row, int channel,
+		double cutoff, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => FilterCutoff(row, channel, cutoff, timeOffsetSeconds));
+
+	protected void FilterResonance(SequenceCallsite callsite, double row,
+		int channel, double resonance, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => FilterResonance(row, channel, resonance, timeOffsetSeconds));
+
+	// Editor-F6-only provenance for virtual-channel control commands.
+	// The authored overloads still own validation and command emission.
+	protected void VolumeVirtual(SequenceCallsite callsite, double row,
+		uint virtualId, double volume, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => VolumeVirtual(row, virtualId, volume, timeOffsetSeconds));
+
+	protected void SourceFrameVirtual(SequenceCallsite callsite, double row,
+		uint virtualId, long sourceFrameOffset, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => SourceFrameVirtual(row, virtualId, sourceFrameOffset, timeOffsetSeconds));
+
+	protected void DisplacementVirtual(SequenceCallsite callsite, double row,
+		uint virtualId, NoteDisplacementAction action,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => DisplacementVirtual(row, virtualId, action, timeOffsetSeconds));
+
+	protected void PastVirtual(SequenceCallsite callsite, double row,
+		uint virtualId, TrackerPastNoteAction action,
+		double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => PastVirtual(row, virtualId, action, timeOffsetSeconds));
 
 	private void AppendNoteStart(
 		double row,
@@ -534,11 +692,19 @@ public abstract class PatternScriptProgram
 			|| Math.Abs(timeOffsetSeconds) > TimeSpan.MaxValue.TotalSeconds)
 			throw new ArgumentOutOfRangeException(nameof(timeOffsetSeconds));
 		Checkpoint();
+		if (command is StartNoteCommand start
+			&& _editorActionCallsite is { } origin)
+			command = start with { EditorOriginCallsite = origin };
 		_output.Append(
 			new NoteEvent(
 				new MusicalTime(TimeSpan.FromSeconds(timeOffsetSeconds), row),
 				target,
-				[command]));
+				[command])
+			{
+				EditorCallsite = _editorActionCallsite,
+				EditorPatternRow = _editorActionCallsite.HasValue
+					? (int)Math.Floor(row) : null,
+			});
 		_lastRawRow = row;
 	}
 
@@ -641,4 +807,21 @@ public abstract class SequenceScriptProgram : ISequenceEntryProvider
 		Checkpoint();
 		return new SequenceEntry(patternId, startRow);
 	}
+
+	/// <summary>Called only by a specially compiled editor-audition script.
+	/// The leading metadata parameter cannot displace existing optional
+	/// arguments. Normal Play calls never enter this method or its hook.</summary>
+	protected SequenceEntry Play(SequenceCallsite callsite,
+		ObjectId patternId, int startRow = 0)
+	{
+		SequenceEntry entry = Play(patternId, startRow)
+			with { EditorCallsite = callsite };
+		OnInstrumentedPlay(callsite, entry);
+		return entry;
+	}
+
+	/// <summary>Optional probe for immediate call execution. The UI's basic
+	/// highlight uses the returned entry's scheduled activation instead.</summary>
+	protected virtual void OnInstrumentedPlay(
+		SequenceCallsite callsite, SequenceEntry entry) { }
 }

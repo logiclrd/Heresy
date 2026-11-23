@@ -18,7 +18,10 @@ public sealed class LazySongPlaybackTransport
 		IPlaybackRuntimeDiagnosticsTransport,
 		IPlaybackAudioHealthTransport,
 		IPlaybackSnapshotTransport,
-		ILiveSynthEditTransport
+		ILiveSynthEditTransport,
+		IEditorSequencePlaybackTransport,
+		IEditorPatternPlaybackTransport,
+		IEditorCallsiteTraceLifecycleTransport
 {
 	private readonly object _gate = new();
 	private readonly Func<ISongPlaybackTransport> _factory;
@@ -180,6 +183,46 @@ public sealed class LazySongPlaybackTransport
 			document,
 			sequenceId,
 			startPosition);
+
+	/// <summary>
+	/// Preserve editor-only provenance through the production lazy facade.
+	/// Silently falling back to ordinary PlaySequenceAsync loses the trace.
+	/// </summary>
+	public Task PlayEditorSequenceAsync(
+		SongDocument document, ObjectId sequenceId, long editorCallsiteSession)
+	{
+		if (editorCallsiteSession <= 0)
+			throw new ArgumentException("Editor trace ID must be positive.",
+				nameof(editorCallsiteSession));
+		return (GetInner() as IEditorSequencePlaybackTransport
+			?? throw new NotSupportedException(
+					"The playback transport does not support editor Sequence tracing."))
+			.PlayEditorSequenceAsync(document, sequenceId, editorCallsiteSession);
+	}
+
+	/// <summary>Never create an audio backend solely to stop visual
+	/// tracing. Forward only if the lazy transport is already active.</summary>
+	public bool DeactivateEditorCallsiteTrace(long session)
+	{
+		lock (_gate)
+		{
+			ThrowIfDisposed();
+			return (_inner as IEditorCallsiteTraceLifecycleTransport)
+				?.DeactivateEditorCallsiteTrace(session) == true;
+		}
+	}
+
+	public Task PlayEditorPatternAsync(
+		SongDocument document, ObjectId patternId, long editorCallsiteSession)
+	{
+		if (editorCallsiteSession <= 0)
+			throw new ArgumentException("Editor trace ID must be positive.",
+				nameof(editorCallsiteSession));
+		return (GetInner() as IEditorPatternPlaybackTransport
+			?? throw new NotSupportedException(
+				"The playback transport does not support editor Pattern tracing."))
+			.PlayEditorPatternAsync(document, patternId, editorCallsiteSession);
+	}
 
 	public Task PlayPatternAsync(
 		SongDocument document,

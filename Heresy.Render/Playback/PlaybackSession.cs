@@ -5,6 +5,7 @@ using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
+using Heresy.Core.Sequences;
 using Heresy.Core.Timing;
 using Heresy.Core.Filters;
 using Heresy.Render.Configuration;
@@ -469,6 +470,95 @@ public sealed class PlaybackSession
 	}
 
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
+
+	/// <summary>Next provable natural/release/fade voice-completion
+	/// frame relevant to an editor-F6 Note callsite. Used only by the
+	/// instrumented PCM producer to expose a short note's exact blue
+	/// lifetime even when no other musical event splits its output block.
+	/// Unknown or unbounded lifetimes are intentionally not predicted.
+	/// Never call from the UI thread or from normal playback.</summary>
+	public long? GetNextEditorOriginCompletionFrameExclusive(long fromFrame)
+	{
+		long? earliest = null;
+		void Consider(PlaybackVoice? voice)
+		{
+			if (voice is null)
+				return;
+			bool traced = voice.EditorOriginCallsite.HasValue;
+			if (!traced)
+				foreach (FlattenedSourceVolume scope in voice.EnclosingSourceVolumes)
+					if (scope.EditorOriginCallsite.HasValue)
+					{
+						traced = true;
+						break;
+					}
+			if (!traced)
+				return;
+			long? end = GetEffectiveVoiceEndFrameExclusive(voice, fromFrame);
+			if (end is long frame && frame > fromFrame
+				&& (!earliest.HasValue || frame < earliest.Value))
+				earliest = frame;
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackVoice displaced in _virtualVoices)
+			Consider(displaced);
+		return earliest;
+	}
+
+	/// <summary>Editor-only origins whose logical source invocations are
+	/// still producing, plus origins of surviving rendered voices (including
+	/// displaced NNA and release). A flattened source stays active during
+	/// silent gaps in its child Pattern. Called only by the PCM producer.
+	/// Reusing the destination avoids per-boundary HashSet/array allocation;
+	/// callers must snapshot it before publishing to another thread.</summary>
+	public void CollectActiveEditorNoteCallsites(
+		HashSet<SequenceCallsite> destination)
+	{
+		ArgumentNullException.ThrowIfNull(destination);
+		destination.Clear();
+
+		void Add(PlaybackVoice? voice)
+		{
+			if (voice is null)
+				return;
+			if (voice.EditorOriginCallsite is { } origin)
+				destination.Add(origin);
+			// Flattened Pattern/Sequence starts have no parent audio voice.
+			// Descendants (including displaced voices) retain their
+			// ancestor controllers and therefore their authored origin.
+			foreach (FlattenedSourceVolume ancestor in voice.EnclosingSourceVolumes)
+				if (ancestor.EditorOriginCallsite is { } source)
+					destination.Add(source);
+		}
+		// Live producer scopes count even during a silent gap between
+		// nested notes. Retired scopes can remain referenced by voices.
+		foreach (FlattenedSourceVolume source in _sourceVolumes.Values)
+			if (source.EditorOriginCallsite is { } activeOrigin)
+				destination.Add(activeOrigin);
+		foreach (PlaybackChannelState channel in _channels.Values)
+			Add(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			Add(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			Add(channel.CurrentVoice);
+		foreach (PlaybackVoice displaced in _virtualVoices)
+			Add(displaced);
+	}
+
+	/// <summary>Independent immutable sorted snapshot for callers that
+	/// need a standalone copy rather than a reusable PCM-worker scratch set.</summary>
+	public SequenceCallsite[] CollectActiveEditorNoteCallsites()
+	{
+		HashSet<SequenceCallsite> spans = [];
+		CollectActiveEditorNoteCallsites(spans);
+		return spans.Count == 0 ? [] : spans.OrderBy(x => x.Start).ToArray();
+	}
+
 
 	/// <summary>Live source-controller registrations still owned by
 	/// active producer scopes. Descendants retain their controller objects
@@ -1836,6 +1926,7 @@ public sealed class PlaybackSession
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
 			OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId,
+			EditorOriginCallsite = start.EditorOriginCallsite,
 		};
 
 		channel.AttachVoice(
@@ -2856,7 +2947,8 @@ public sealed class PlaybackSession
 			begin.InitialVolume, _tickClock,
 			_context.Configuration.SampleRate,
 			begin.EventFilterConfiguration,
-			begin.InitialPitchMultiplier);
+			begin.InitialPitchMultiplier,
+			begin.EditorOriginCallsite);
 		_sourceVolumes.Add(begin.ChildScopeId, source);
 		channel.CurrentFlattenedSource = source;
 		channel.CaptureCurrentNoteVolume(begin.InitialVolume);
@@ -3027,6 +3119,7 @@ public sealed class PlaybackSession
 			enclosingEventFilters: BuildEnclosingEventFilters(enclosingSources));
 
 		voice.OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId;
+		voice.EditorOriginCallsite = start.EditorOriginCallsite;
 		voice.OriginPatternCursorId = _activePatternCursorId;
 		channel.AttachVoice(voice, eventFrame);
 	}

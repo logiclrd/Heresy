@@ -13,6 +13,7 @@ using AvaloniaEdit;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
+using Heresy.Playback;
 using Heresy.Core.Sequences;
 using Heresy.Scripting.Analysis;
 using Heresy.UserInterface.Documents;
@@ -50,6 +51,17 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		new();
 	private readonly ScriptDiagnosticRenderer _diagnosticRenderer =
 		new();
+	private readonly ScriptSequencePlayCallsiteRenderer _playbackRenderer =
+		new();
+	private long? _editorTraceSession;
+	private string? _editorTraceSource;
+	private SequenceCallsite? _lastFollowedCallsite;
+	private readonly CheckBox _followPlayback = new()
+	{
+		Content = "Follow F6 playback",
+		IsChecked = false,
+		VerticalAlignment = VerticalAlignment.Center,
+	};
 	private readonly ComboBox _reference;
 	private readonly TextBlock _message = new()
 	{
@@ -162,6 +174,8 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		_source.TextArea.TextView.LineTransformers.Add(
 			_syntaxColorizer);
 		_source.TextArea.TextView.BackgroundRenderers.Add(
+			_playbackRenderer);
+		_source.TextArea.TextView.BackgroundRenderers.Add(
 			_diagnosticRenderer);
 		// Intercept token-edge deletion before AvaloniaEdit treats a whole
 		// one-column visual reference as an indivisible character.
@@ -181,6 +195,10 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			handledEventsToo: true);
 		_source.TextChanged += (_, _) =>
 		{
+			if (_editorTraceSource is not null
+				&& !string.Equals(_editorTraceSource, _source.Text,
+					StringComparison.Ordinal))
+				SetPlaybackPosition(null);
 			RefreshAnalysis();
 			_saveSource.IsEnabled = HasUnsavedScriptSource;
 		};
@@ -221,6 +239,99 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 
 	public ObjectId? ScriptPatternId => _pattern?.Id;
 	public ObjectId? ScriptSequenceId => _sequence?.Id;
+	public long? EditorCallsiteTraceSession => _editorTraceSession;
+
+	/// <summary>Only an editor-F6 request can enable this visual trace.
+	/// The source snapshot is captured separately from the mutable editor
+	/// buffer, so an edit during playback cannot highlight stale offsets.</summary>
+	public void BeginEditorSequenceTrace(long session)
+	{
+		if (_sequence is null || session <= 0)
+			throw new InvalidOperationException(
+				"Only a Script Sequence editor can trace F6 Play calls.");
+		_editorTraceSession = session;
+		_editorTraceSource = _source.Text ?? string.Empty;
+		SetPlaybackPosition(null);
+	}
+
+	/// <summary>F6 traces one source snapshot and one fresh playback session.</summary>
+	public void BeginEditorPatternTrace(long session)
+	{
+		if (_pattern is null || session <= 0)
+			throw new InvalidOperationException(
+				"Only a Script Pattern editor can trace F6 actions.");
+		_editorTraceSession = session;
+		_editorTraceSource = _source.Text ?? string.Empty;
+		SetPlaybackPosition(null);
+	}
+
+	public void SetPlaybackPosition(PlaybackPatternPosition? position)
+	{
+		IReadOnlyList<Heresy.Core.Sequences.SequenceCallsite> spans = [];
+		IReadOnlyList<Heresy.Core.Sequences.SequenceCallsite> activeNotes = [];
+		if (_sequence is not null
+			&& _editorTraceSession is long session
+			&& position?.EditorCallsiteSession == session
+			&& position.SequenceId == _sequence.Id
+			&& string.Equals(_editorTraceSource, _source.Text,
+					StringComparison.Ordinal))
+		{
+			if (position.EditorPlayCallsite is { } play)
+				spans = [play];
+		}
+		else if (_pattern is not null
+			&& _editorTraceSession is long patternSession
+			&& position?.EditorCallsiteSession == patternSession
+			&& position.PatternId == _pattern.Id
+			&& string.Equals(_editorTraceSource, _source.Text,
+					StringComparison.Ordinal))
+		{
+			spans = position.EditorPatternCallsites
+				?? (position.EditorPatternCallsite is { } action
+					? [action] : []);
+			activeNotes = position.EditorActiveNoteCallsites ?? [];
+		}
+		bool greenChanged = _playbackRenderer.SetSpans(
+			spans, _source.Document.TextLength);
+		bool blueChanged = _playbackRenderer.SetActiveNoteSpans(
+			activeNotes, _source.Document.TextLength);
+		// The playback transport polls positions more often than the visible
+		// highlight membership changes. Avoid repainting unchanged overlays,
+		// but continue to process follow requests on every notification.
+		if (greenChanged || blueChanged)
+			_source.TextArea.TextView.Redraw();
+		FollowActivatedCallsite(spans);
+	}
+
+	/// <summary>Follow newly activated green calls only, never continuous
+	/// blue voice-lifetime updates. Do not change the caret, selection, or
+	/// authored source, and do not fight manual scrolling until the next
+	/// distinct activation. Disabled by default.</summary>
+	private void FollowActivatedCallsite(
+		IReadOnlyList<SequenceCallsite> spans)
+	{
+		if (_followPlayback.IsChecked != true || spans.Count == 0)
+		{
+			_lastFollowedCallsite = null;
+			return;
+		}
+
+		SequenceCallsite callsite = spans[^1];
+		if (_lastFollowedCallsite == callsite)
+			return;
+		if (callsite.Start < 0
+			|| callsite.Start >= _source.Document.TextLength)
+			return;
+
+		// TextView may not yet have valid visual lines (for example,
+		// immediately after opening the editor). AvaloniaEdit's ScrollTo
+		// handles that state and brings the requested location into view
+		// without changing the caret or selection. The callsite guard above
+		// prevents repeated PCM snapshots from fighting manual scrolling.
+		_lastFollowedCallsite = callsite;
+		var location = _source.Document.GetLocation(callsite.Start);
+		_source.ScrollTo(location.Line, location.Column);
+	}
 
 	public ScriptSourceSaveShortcutRoute TryHandleSourceSaveShortcut(Visual? keySource)
 	{
@@ -231,8 +342,7 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 		if (!HasUnsavedScriptSource)
 			return ScriptSourceSaveShortcutRoute.SaveDocument;
 
-		// Capture the pre-save dirty state. A successful first press
-		// must not immediately forward to disk in the same key event.
+		// The first press commits a dirty script locally, never to disk.
 		TrySaveScriptSource();
 		return ScriptSourceSaveShortcutRoute.SaveLocally;
 	}
@@ -292,12 +402,22 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 
 		body.Children.Add(BuildReferenceToolbar());
 
-		body.Children.Add(
-			new TextBlock
-			{
-				Text = "Restricted C# source",
-				FontWeight = FontWeight.SemiBold,
-			});
+		DockPanel sourceHeader = new()
+		{
+			LastChildFill = true,
+		};
+		DockPanel.SetDock(_followPlayback, Dock.Right);
+		ToolTip.SetTip(_followPlayback,
+			"Scroll to newly activated F6 script calls when they are offscreen. "
+			+ "Leaves the caret and selection unchanged.");
+		sourceHeader.Children.Add(_followPlayback);
+		sourceHeader.Children.Add(new TextBlock
+		{
+			Text = "Restricted C# source",
+			FontWeight = FontWeight.SemiBold,
+			VerticalAlignment = VerticalAlignment.Center,
+		});
+		body.Children.Add(sourceHeader);
 		body.Children.Add(_source);
 
 		Border analysisBorder =
@@ -512,9 +632,6 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 
 		if (e.Key == Key.S && e.KeyModifiers == KeyModifiers.Control)
 		{
-			// AvaloniaEdit's TextArea can swallow the bubbling KeyDown.
-			// The normal window tunnel runs first when available; this
-			// fallback also supports an already-clean second Ctrl+S.
 			if (HasUnsavedScriptSource)
 			{
 				e.Handled = true;
