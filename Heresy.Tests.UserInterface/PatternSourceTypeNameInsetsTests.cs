@@ -173,20 +173,17 @@ public sealed class PatternSourceTypeNameInsetsTests
             Assert.That(cells[(row, 0)].Height, Is.EqualTo(28));
             Assert.That(field.Height, Is.EqualTo(24));
             Assert.That(field.Child, Is.SameAs(badge));
-            Assert.That(badge.Child, Is.TypeOf<Grid>());
-            Grid contents = (Grid)badge.Child!;
-            Assert.That(contents.Children.Last(),
-                Is.SameAs(sourceTexts[(row, 0)]));
-            Assert.That(contents.ColumnDefinitions, Has.Count.EqualTo(2));
-            Assert.That(contents.ClipToBounds, Is.True);
+            Assert.That(badge.Child, Is.SameAs(sourceTexts[(row, 0)]));
             Assert.That(badge.CornerRadius, Is.EqualTo(new CornerRadius(2)));
             Assert.That(badge.Padding.Top, Is.Zero);
             Assert.That(badge.Padding.Bottom, Is.Zero);
-            Assert.That(badge.MaxWidth, Is.LessThan(96));
+            Assert.That(field.Width, Is.EqualTo(152),
+                "ordinary rows lend their 28-DIP indicator slot to Source");
+            Assert.That(badge.MaxWidth, Is.LessThan(152));
             Assert.That(Background(badge), Is.EqualTo(SongObjectTypePalette.Sample));
             Assert.That(sourceTexts[(row, 0)].Text, Is.EqualTo("Bass"));
             Assert.That(ToolTip.GetTip(field), Does.Contain("Bass"));
-            field.Measure(new Size(96, 100));
+            field.Measure(new Size(152, 100));
             Assert.That(field.DesiredSize.Height, Is.EqualTo(24));
         }
         // The existing full-cell Note-start source tint is retained.
