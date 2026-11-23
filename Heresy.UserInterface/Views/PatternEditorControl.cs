@@ -36,7 +36,7 @@ public sealed class PatternEditorControl : UserControl
 	private const double RowHeaderWidth = 54;
 	private const double RowHeight = 28;
 	private const double SourceWidth = 124;
-	private const double SharedIndicatorWidth = 30;
+	private const double SharedIndicatorWidth = 28;
 	private const double VolumeWidth = 34;
 	private const double EffectWidth = 54;
 	private const double NoteNameWidth = 44;
@@ -1112,7 +1112,7 @@ public sealed class PatternEditorControl : UserControl
 			TextTrimming = TextTrimming.CharacterEllipsis,
 			IsHitTestVisible = false,
 		};
-		// The Note and Octave stops are fixed. A third 30-DIP area is
+		// The Note and Octave stops are fixed. A third 28-DIP area is
 		// shared with the Source badge and belongs to Note only on rows
 		// with an indicator, Mixdown marker or nondefault musical suffix.
 		Grid noteParts = new() { ClipToBounds = true };
@@ -4172,7 +4172,7 @@ public sealed class PatternEditorControl : UserControl
 			octave.Text = string.Empty;
 			suffix.Text = indicators;
 		}
-		// A Source badge can consume the shared 30-DIP area only when
+		// A Source badge can consume the shared 28-DIP area only when
 		// there is no lifecycle/seek hint, Mixdown, or musical suffix here.
 		bool hasSuffix = !string.IsNullOrEmpty(suffix.Text);
 		suffix.IsVisible = hasSuffix;
