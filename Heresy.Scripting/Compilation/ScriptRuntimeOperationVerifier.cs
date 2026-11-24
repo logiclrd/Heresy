@@ -284,11 +284,11 @@ internal sealed class ScriptRuntimeOperationVerifier
                 // statement/yield contract of streamed Pattern scripts.
                 // Lambda predicates/selectors may compute data only.
                 if (_approvedHostMember is not null
-                    && invoke.TargetMethod.ContainingType is { } owner
-                    && _approvedOpaqueHostType?.Invoke(owner) == true
+                    && ScriptPatternEmissionPolicy.IsEmitterMethod(
+                        invoke.TargetMethod, _compilation)
                     && IsInsideLambda(invoke))
                     Add(invoke.Syntax,
-                        "Musical script helpers cannot run inside lambdas.");
+                        "Pattern event generators require direct statements in strict streaming; they cannot run inside lambdas.");
                 break;
             case IAnonymousFunctionOperation lambda:
                 if (lambda.Symbol.IsAsync)
@@ -305,14 +305,15 @@ internal sealed class ScriptRuntimeOperationVerifier
                     Add(creation.Syntax, "Object constructor could not be resolved.");
                 break;
             case IMethodReferenceOperation reference:
-                // Even a permitted API can be stored as a delegate and later
-                // dispatched by another permitted API on an unmanaged
-                // lifetime/thread (for example Progress<T>). Keep deferred
-                // execution unavailable in the first data-allocation slice.
-                // Direct invocations are unaffected.
-                if (_approvedHostMember is not null)
+                // Method-group targets must pass the identical symbol
+                // allow-list as direct calls. The one contextual exception is
+                // a Pattern event generator: in strict streaming it requires
+                // an immediate outer-iterator yield and cannot be delegated.
+                if (_approvedHostMember is not null
+                    && ScriptPatternEmissionPolicy.IsEmitterMethod(
+                        reference.Method, _compilation))
                     Add(reference.Syntax,
-                        "Method-group delegates require a separate lifecycle audit.");
+                        "Pattern event generator method groups require relaxed ordering; strict streaming needs direct statements.");
                 CheckMember(reference.Method, ScriptMemberUse.CallOrMethodGroup,
                     reference.Syntax);
                 break;
