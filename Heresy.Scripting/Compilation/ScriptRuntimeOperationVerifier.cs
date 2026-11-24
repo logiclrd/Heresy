@@ -559,6 +559,22 @@ internal sealed class ScriptRuntimeOperationVerifier
             return;
         }
 
+        // A script's generated class inherits protected System.Object
+        // members that ordinary user-owned data cannot call. In particular,
+        // MemberwiseClone() would duplicate the Pattern/Sequence host receiver
+        // with its references to execution budget and event sinks. Those
+        // inherited protected members are NOT part of the author-facing API.
+        if (_approvedHostMember is not null
+            && member.ContainingType?.SpecialType == SpecialType.System_Object
+            && member.DeclaredAccessibility is Accessibility.Protected
+                or Accessibility.ProtectedOrInternal
+                or Accessibility.ProtectedAndInternal)
+        {
+            Add(syntax, "Unapproved protected host receiver member: "
+                + member.ToDisplayString());
+            return;
+        }
+
         // This applies only to the canonical authored-source pass, where
         // the existing legacy validator separately checks the *exact* helper
         // symbols and disallows every other Heresy member access.
