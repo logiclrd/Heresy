@@ -100,6 +100,53 @@ public sealed class ScriptLinqLambdaIntegrationTests
     }
 
     [Test]
+    public void GroupByToLookupAndAggregateRemainApprovedLinqToObjectsOperations()
+    {
+        const string source = """
+            var grouped = Enumerable.Range(1, 8)
+                .GroupBy(n => n % 3)
+                .OrderBy(group => group.Key)
+                .ToList();
+            var lookup = Enumerable.Range(1, 8).ToLookup(n => n % 3);
+            int total = lookup[1].Aggregate(0, (sum, n) => sum + n);
+            foreach (var group in grouped)
+                foreach (int n in group.OrderBy(n => n))
+                    if (n < total)
+                        Note(n, 0, _O(17));
+            """;
+        ScriptCompiler.AnalyzePatternSource(source)
+            .Should().NotContain(d => d.Severity == ScriptDiagnosticSeverity.Error);
+        ScriptPatternDefinition pattern = new((ObjectId)1U, "LINQ grouping")
+        {
+            RowCount = 12,
+            ChannelCount = 1,
+            Source = source,
+        };
+        ScriptCompiler.CompilePattern(pattern).Success.Should().BeTrue();
+        ScriptCompiler.CompileIncrementalPattern(pattern).Success.Should().BeTrue();
+        ScriptCompiler.CompileIncrementalPattern(
+            pattern, instrumentActionCallsites: true).Success.Should().BeTrue();
+    }
+
+    [Test]
+    public void DelegatesCannotRevealMethodInfoViaProtectedOrBlockedReflectionApi()
+    {
+        const string protectedAccess = """
+            var function = new System.Func<int, int>(n => n + 1);
+            var info = function.GetMethodImpl();
+            """;
+        ScriptCompiler.AnalyzePatternSource(protectedAccess)
+            .Should().Contain(d => d.Severity == ScriptDiagnosticSeverity.Error);
+
+        const string blockedProperty = """
+            var function = new System.Func<int, int>(n => n + 1);
+            var info = function.Method;
+            """;
+        ScriptCompiler.AnalyzePatternSource(blockedProperty)
+            .Should().Contain(d => d.Severity == ScriptDiagnosticSeverity.Error);
+    }
+
+    [Test]
     public void SequenceLinqLambdasCompileInNormalAndF6Modes()
     {
         ScriptSequenceDefinition sequence = new((ObjectId)2U, "LINQ order")
