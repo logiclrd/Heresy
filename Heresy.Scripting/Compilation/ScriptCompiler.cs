@@ -556,7 +556,8 @@ public static class ScriptCompiler
 		if (!referenceAnalysis.IsReliable)
 			return new(null, diagnostics);
 
-		diagnostics.AddRange(ValidateRestrictedSyntax(source));
+		diagnostics.AddRange(ValidateRestrictedSyntax(
+			source, permitManagedData: wrapperKind != ScriptWrapperKind.None));
 		if (HasErrors(diagnostics))
 			return new(null, diagnostics);
 
@@ -622,12 +623,20 @@ public static class ScriptCompiler
 		if (HasErrors(diagnostics))
 			return new(null, diagnostics);
 
-		diagnostics.AddRange(
-			ValidateRestrictedSemantics(
-				compilation,
-				syntaxTree,
-				source,
-				allowInjectedPlayCallsites));
+		// The canonical bound-operation pass has checked the exact original
+		// Pattern/Sequence statements. Its strict host-member rule replaces
+		// the old name-only validator for those two contexts. Rechecking
+		// rewritten syntax would confuse Heresy-injected calls with authored
+		// code. Legacy expression-script semantics remain unchanged.
+		if (wrapperKind == ScriptWrapperKind.None)
+		{
+			diagnostics.AddRange(
+				ValidateRestrictedSemantics(
+					compilation,
+					syntaxTree,
+					source,
+					allowInjectedPlayCallsites));
+		}
 		if (HasErrors(diagnostics))
 			return new(null, diagnostics);
 
@@ -767,7 +776,7 @@ public static class ScriptCompiler
 	}
 
 	private static IReadOnlyList<ScriptAnalysisDiagnostic>
-		ValidateRestrictedSyntax(string source)
+		ValidateRestrictedSyntax(string source, bool permitManagedData = false)
 	{
 		SyntaxTree tree =
 			CSharpSyntaxTree.ParseText(
@@ -799,12 +808,16 @@ public static class ScriptCompiler
 						"Lambdas and anonymous functions are not available in Heresy scripts.",
 					ObjectCreationExpressionSyntax
 						or ImplicitObjectCreationExpressionSyntax
-						or AnonymousObjectCreationExpressionSyntax =>
+						when !permitManagedData =>
 						"Object creation is not available in Heresy scripts.",
+					AnonymousObjectCreationExpressionSyntax =>
+						"Anonymous object creation is not available in Heresy scripts.",
 					ArrayCreationExpressionSyntax
 						or ImplicitArrayCreationExpressionSyntax
-						or StackAllocArrayCreationExpressionSyntax =>
+						when !permitManagedData =>
 						"Array allocation is not available in Heresy scripts.",
+					StackAllocArrayCreationExpressionSyntax =>
+						"Stack allocation is not available in Heresy scripts.",
 					AwaitExpressionSyntax =>
 						"Async execution is not available in Heresy scripts.",
 					ThrowExpressionSyntax
@@ -821,9 +834,10 @@ public static class ScriptCompiler
 					GotoStatementSyntax
 						or LabeledStatementSyntax =>
 						"Goto control flow is not available in Heresy scripts.",
-					ForEachStatementSyntax
-						or ForEachVariableStatementSyntax =>
+					ForEachStatementSyntax when !permitManagedData =>
 						"foreach is not available in the initial restricted scripting surface.",
+					ForEachVariableStatementSyntax =>
+						"Deconstructing foreach is not yet available in Heresy scripts.",
 					QueryExpressionSyntax =>
 						"LINQ query syntax is not available in Heresy scripts.",
 					TypeOfExpressionSyntax =>
@@ -833,16 +847,17 @@ public static class ScriptCompiler
 					ThisExpressionSyntax
 						or BaseExpressionSyntax =>
 						"Direct access to the generated script object is not available.",
-					InterpolatedStringExpressionSyntax =>
+					InterpolatedStringExpressionSyntax when !permitManagedData =>
 						"String construction is not available in Heresy scripts.",
 					LiteralExpressionSyntax literal
-						when literal.IsKind(
+						when !permitManagedData && literal.IsKind(
 							SyntaxKind.StringLiteralExpression) =>
 						"String values are not available in Heresy scripts.",
-					UsingStatementSyntax =>
+					UsingStatementSyntax when !permitManagedData =>
 						"using statements are not available in Heresy scripts.",
 					LocalDeclarationStatementSyntax declaration
-						when declaration.UsingKeyword.RawKind != 0 =>
+						when !permitManagedData
+							&& declaration.UsingKeyword.RawKind != 0 =>
 						"using declarations are not available in Heresy scripts.",
 					_ => null,
 				};
