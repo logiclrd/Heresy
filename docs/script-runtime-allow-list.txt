@@ -188,6 +188,9 @@ System.ValueTuple`8
 Interfaces:
 Any interface defined in System.Private.CoreLib
 
+Additional assemblies:
+All public types defined in System.Linq.dll
+
 Selectively block:
 Object::GetType()
 System.Delegate::CreateDelegate
