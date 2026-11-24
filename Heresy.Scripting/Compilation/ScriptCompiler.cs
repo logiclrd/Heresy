@@ -138,17 +138,18 @@ public static class ScriptCompiler
 	{
 		ArgumentNullException.ThrowIfNull(definition);
 
-		// Validate canonical authored source before injecting trusted overloads.
-		if (instrumentActionCallsites)
-		{
-			IReadOnlyList<ScriptAnalysisDiagnostic> authored =
-				AnalyzePatternSource(definition.Source);
-			if (HasErrors(authored))
-				return new(null, authored);
-		}
+		// Establish exact helper symbols on the unrewritten source before
+		// inserting either trusted F6 callsites or streaming yields. A local
+		// delegate called Note/Tempo is not a musical event generator.
+		IReadOnlyList<ScriptAnalysisDiagnostic> authored =
+			AnalyzePatternSource(definition.Source);
+		if (HasErrors(authored))
+			return new(null, authored);
+		HashSet<int> emitterStarts = ResolveAuthoredCallStarts(
+			definition.Source, ScriptWrapperKind.Pattern);
 
 		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
-			ValidateIncrementalPatternStatements(definition.Source);
+			ValidateIncrementalPatternStatements(definition.Source, emitterStarts);
 		if (restrictions.Count != 0)
 			return new(null, restrictions);
 
@@ -160,7 +161,7 @@ public static class ScriptCompiler
 			BuildIncrementalPatternWrapper(
 				className,
 				InstrumentIncrementalPattern(definition.Source,
-					instrumentActionCallsites)),
+					emitterStarts, instrumentActionCallsites)),
 			typeof(PatternScriptProgram),
 			allowInjectedPlayCallsites: instrumentActionCallsites,
 			incrementalPattern: true);
@@ -198,7 +199,9 @@ public static class ScriptCompiler
 
 		string className = "__HeresySequenceLookup_" + Guid.NewGuid().ToString("N");
 		string source = instrumentPlayCallsites
-			? InstrumentSequencePlayCallsites(definition.Source)
+			? InstrumentSequencePlayCallsites(definition.Source,
+				ResolveAuthoredCallStarts(
+					definition.Source, ScriptWrapperKind.Sequence))
 			: definition.Source;
 		ScriptCompilationResult<Type> compiled = CompileType(
 			definition.Source, className,
@@ -1091,8 +1094,60 @@ public static class ScriptCompiler
 			?? source;
 	}
 
+	/// <summary>
+	/// Bind original authored calls in an unmodified wrapper and retain their
+	/// source positions. Name matching is insufficient: local variables and
+	/// approved delegates may shadow Heresy helper methods, especially when
+	/// a nested expression is later rewritten for incremental/F6 playback.
+	/// This runs after the canonical API check, which has already rejected
+	/// unresolved source and unauthorized helper access.
+	/// </summary>
+	private static HashSet<int> ResolveAuthoredCallStarts(
+		string source, ScriptWrapperKind kind)
+	{
+		bool sequence = kind == ScriptWrapperKind.Sequence;
+		string wrapper = sequence
+			? BuildSequenceWrapper("__HeresySequenceCallResolution", source)
+			: BuildPatternWrapper("__HeresyPatternCallResolution", source);
+		SyntaxTree tree = CSharpSyntaxTree.ParseText(wrapper, WrapperParseOptions);
+		CSharpCompilation compilation = CSharpCompilation.Create(
+			"Heresy.ScriptCallResolution." + Guid.NewGuid().ToString("N"),
+			[tree], MetadataReferences,
+			new CSharpCompilationOptions(
+				OutputKind.DynamicallyLinkedLibrary,
+				optimizationLevel: OptimizationLevel.Release,
+				allowUnsafe: false, checkOverflow: true));
+		SemanticModel semantic = compilation.GetSemanticModel(tree);
+		INamedTypeSymbol? sequenceBase = compilation.GetTypeByMetadataName(
+			typeof(SequenceScriptProgram).FullName!);
+		HashSet<int> positions = [];
+		foreach (InvocationExpressionSyntax invocation
+			in tree.GetRoot().DescendantNodes()
+				.OfType<InvocationExpressionSyntax>())
+		{
+			if (!IsScriptLocation(invocation.GetLocation())
+				|| semantic.GetSymbolInfo(invocation).Symbol is not
+					IMethodSymbol method)
+				continue;
+			bool trusted = sequence
+				? SymbolEqualityComparer.Default.Equals(
+					method.ContainingType, sequenceBase)
+					&& method.Name == "Play"
+					&& method.Parameters.Length > 0
+					&& method.Parameters[0].Type.Name != "SequenceCallsite"
+				: ScriptPatternEmissionPolicy.IsEmitterMethod(
+					method, compilation)
+					&& (method.Parameters.Length == 0
+						|| method.Parameters[0].Type.Name != "SequenceCallsite");
+			if (trusted)
+				positions.Add(MapSpan(invocation.GetLocation(), source).Start);
+		}
+		return positions;
+	}
+
 	private static IReadOnlyList<ScriptAnalysisDiagnostic>
-		ValidateIncrementalPatternStatements(string source)
+		ValidateIncrementalPatternStatements(
+			string source, IReadOnlySet<int> emitterStarts)
 	{
 		SyntaxNode root = CSharpSyntaxTree.ParseText(
 			source, ScriptParseOptions).GetRoot();
@@ -1100,8 +1155,7 @@ public static class ScriptCompiler
 		foreach (InvocationExpressionSyntax invocation
 			in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
 		{
-			if (invocation.Expression is not IdentifierNameSyntax name
-				|| !ScriptPatternEmissionPolicy.IsEmitterName(name.Identifier.ValueText))
+			if (!emitterStarts.Contains(invocation.SpanStart))
 				continue;
 			if (invocation.Parent is ExpressionStatementSyntax statement
 				&& ReferenceEquals(statement.Expression, invocation))
@@ -1117,15 +1171,17 @@ public static class ScriptCompiler
 	/// <summary>Only the editor-F6 Sequence compiler uses this pass.
 	/// Tokens use offsets from the ORIGINAL author source, never the
 	/// loop-checkpoint-expanded source. The ordinary compiler never runs it.</summary>
-	private static string InstrumentSequencePlayCallsites(string source)
+	private static string InstrumentSequencePlayCallsites(
+		string source, IReadOnlySet<int> playCallStarts)
 	{
 		SyntaxNode root = CSharpSyntaxTree.ParseText(
 			source, ScriptParseOptions).GetRoot();
-		return new SequencePlayCallsiteRewriter().Visit(root)
+		return new SequencePlayCallsiteRewriter(playCallStarts).Visit(root)
 			?.ToFullString() ?? source;
 	}
 
-	private sealed class SequencePlayCallsiteRewriter : CSharpSyntaxRewriter
+	private sealed class SequencePlayCallsiteRewriter(
+		IReadOnlySet<int> playCallStarts) : CSharpSyntaxRewriter
 	{
 		public override SyntaxNode? VisitInvocationExpression(
 			InvocationExpressionSyntax node)
@@ -1133,8 +1189,7 @@ public static class ScriptCompiler
 			InvocationExpressionSyntax rewritten =
 				(InvocationExpressionSyntax)(base.VisitInvocationExpression(node)
 					?? node);
-			if (node.Expression is not IdentifierNameSyntax name
-				|| name.Identifier.ValueText != "Play")
+			if (!playCallStarts.Contains(node.SpanStart))
 				return rewritten;
 
 			// The user wrote Play(x[, row]); capture the *entire* original
@@ -1153,35 +1208,53 @@ public static class ScriptCompiler
 	}
 
 	private static string InstrumentIncrementalPattern(string source,
-		bool instrumentActionCallsites = false)
+		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites = false)
 	{
 		SyntaxNode root = CSharpSyntaxTree.ParseText(
 			source, ScriptParseOptions).GetRoot();
-		if (instrumentActionCallsites)
-			root = new PatternActionCallsiteRewriter().Visit(root) ?? root;
+		// Rewrite direct approved emitters as a single operation, BEFORE loop
+		// checkpoints alter source positions. This also ensures F6 spans use
+		// the author's original invocation, not generated yields/guards.
+		root = new StrictPatternEmitterRewriter(
+			emitterStarts, instrumentActionCallsites).Visit(root) ?? root;
 		root = new LoopCheckpointRewriter(cooperative: true).Visit(root)
 			?? root;
-		return new IncrementalPatternYieldRewriter().Visit(root)
-			?.ToFullString() ?? source;
+		return root.ToFullString();
 	}
 
-
-	/// <summary>Captured before iterator and cooperative rewrites, so source
-	/// spans always refer to the author's unchanged Script Pattern text.</summary>
-	private sealed class PatternActionCallsiteRewriter : CSharpSyntaxRewriter
+	private sealed class StrictPatternEmitterRewriter(
+		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites)
+		: CSharpSyntaxRewriter
 	{
-		public override SyntaxNode? VisitInvocationExpression(
-			InvocationExpressionSyntax node)
+		public override SyntaxNode? VisitExpressionStatement(
+			ExpressionStatementSyntax node)
 		{
-			InvocationExpressionSyntax rewritten =
-				(InvocationExpressionSyntax)(base.VisitInvocationExpression(node) ?? node);
-			if (node.Expression is not IdentifierNameSyntax name
-				|| !ScriptPatternEmissionPolicy.IsEmitterName(name.Identifier.ValueText))
-				return rewritten;
-			ArgumentSyntax span = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(
-				$"new SequenceCallsite({node.SpanStart}, {node.Span.Length})"));
-			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
-				rewritten.ArgumentList.Arguments.Insert(0, span)))
+			ExpressionStatementSyntax visited =
+				(ExpressionStatementSyntax)(base.VisitExpressionStatement(node) ?? node);
+			if (node.Expression is not InvocationExpressionSyntax invocation
+				|| !emitterStarts.Contains(invocation.SpanStart))
+				return visited;
+
+			if (instrumentActionCallsites)
+			{
+				if (visited.Expression is not InvocationExpressionSyntax rewritten)
+					throw new InvalidOperationException(
+						"Bound Pattern emission lost its invocation during rewriting.");
+				ArgumentSyntax callsite = SyntaxFactory.Argument(
+					SyntaxFactory.ParseExpression(
+						$"new SequenceCallsite({invocation.SpanStart}, {invocation.Span.Length})"));
+				visited = visited.WithExpression(
+					rewritten.WithArgumentList(
+						rewritten.ArgumentList.WithArguments(
+							rewritten.ArgumentList.Arguments.Insert(0, callsite))));
+			}
+
+			// Every approved event generator executes exactly once, followed
+			// by an outer-iterator yield. Local methods/delegates with the
+			// same spelling cannot acquire a bogus yield or F6 argument.
+			return SyntaxFactory.Block(
+				visited.WithoutLeadingTrivia(),
+				SyntaxFactory.ParseStatement("yield return EmitPendingStep();"))
 				.WithTriviaFrom(node);
 		}
 	}
@@ -1601,27 +1674,6 @@ public static class ScriptCompiler
 					checkpoint,
 					body.WithoutLeadingTrivia())
 				.WithTriviaFrom(body);
-		}
-	}
-
-	private sealed class IncrementalPatternYieldRewriter : CSharpSyntaxRewriter
-	{
-		public override SyntaxNode? VisitExpressionStatement(
-			ExpressionStatementSyntax node)
-		{
-			ExpressionStatementSyntax visited =
-				(ExpressionStatementSyntax)(base.VisitExpressionStatement(node) ?? node);
-			if (node.Expression is not InvocationExpressionSyntax invocation
-				|| invocation.Expression is not IdentifierNameSyntax name
-				|| !ScriptPatternEmissionPolicy.IsEmitterName(name.Identifier.ValueText))
-				return visited;
-
-			// Execute the original helper (and its validation) exactly once.
-			// The next source statement cannot run before MoveNext resumes.
-			return SyntaxFactory.Block(
-				visited.WithoutLeadingTrivia(),
-				SyntaxFactory.ParseStatement("yield return EmitPendingStep();"))
-				.WithTriviaFrom(node);
 		}
 	}
 
