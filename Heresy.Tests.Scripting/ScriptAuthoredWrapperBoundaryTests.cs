@@ -186,9 +186,10 @@ public sealed class ScriptAuthoredWrapperBoundaryTests
     }
 
     [Test]
-    public void ProductionCompilerHasNotEnabledManagedCollectionSyntaxYet()
+    public void ProductionCompilerNowAcceptsApprovedManagedCollections()
     {
         ScriptCompiler.AnalyzePatternSource("var xs = new System.Collections.Generic.List<string>();")
-            .Should().Contain(d => d.Message.Contains("Object creation"));
+            .Should().NotContain(d => d.Severity ==
+                Heresy.Scripting.Analysis.ScriptDiagnosticSeverity.Error);
     }
 }
