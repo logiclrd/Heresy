@@ -528,6 +528,29 @@ internal sealed class ScriptRuntimeOperationVerifier
         if (_approvedHostMember?.Invoke(member) == true)
             return;
 
+        // The core/script assemblies provide opaque musical values to helper
+        // methods, NOT an ambient permission to access their members. This
+        // guard is mandatory before replacing the old name-based validator.
+        if (_approvedHostMember is not null
+            && member.ContainingType is { } hostType
+            && _approvedOpaqueHostType?.Invoke(hostType) == true)
+        {
+            Add(syntax, "Unapproved Heresy host member: "
+                + member.ToDisplayString());
+            return;
+        }
+
+        // Authored source cannot invoke arbitrary members of the generated
+        // wrapper, even though that type belongs to the same compilation.
+        if (_approvedHostMember is not null
+            && SymbolEqualityComparer.Default.Equals(
+                member.ContainingAssembly, _compilation.Assembly))
+        {
+            Add(syntax, "Unapproved generated-script member: "
+                + member.ToDisplayString());
+            return;
+        }
+
         if (member is IMethodSymbol method)
         {
             foreach (IParameterSymbol parameter in method.Parameters)
