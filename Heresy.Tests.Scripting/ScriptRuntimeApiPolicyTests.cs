@@ -260,10 +260,10 @@ public sealed class ScriptRuntimeApiPolicyTests
         foreach (string name in new[]
         {
             "System.Linq.Enumerable",
-            "System.Linq.IGrouping\`2",
-            "System.Linq.ILookup\`2",
-            "System.Linq.IOrderedEnumerable\`1",
-            "System.Linq.Lookup\`2",
+            "System.Linq.IGrouping`2",
+            "System.Linq.ILookup`2",
+            "System.Linq.IOrderedEnumerable`1",
+            "System.Linq.Lookup`2",
         })
             Policy.IsAllowedRuntimeType(Type(c, name), c)
                 .Should().BeTrue("all public System.Linq.dll runtime types are approved");
