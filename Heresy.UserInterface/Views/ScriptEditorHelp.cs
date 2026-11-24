@@ -71,9 +71,12 @@ including filesystem access through path-based constructors.
 LINQ-to-Objects methods and inline lambdas are available from System.Linq.dll:
   var order = Enumerable.Range(0, 8).Where(n => n % 2 == 0).ToArray();
 Only the exact System.Linq.dll assembly is permitted, not PLINQ, Queryable or
-expression trees. Musical helpers remain direct statements (not lambda bodies).
-Method-group delegates, user-defined helpers, unsafe, async, reflection, and
-exception-control constructs remain unavailable at this stage.
+expression trees. Approved methods may also be captured as delegates with
+method-group conversions, e.g. Func<string, bool> p = string.IsNullOrEmpty;
+The same resolved-symbol rules apply as for direct method calls. Pattern event
+generators are direct-statement-only under strict streaming (see Pattern help).
+User-defined helpers, unsafe, async, reflection and exception-control
+constructs remain unavailable at this stage.
 Heresy-specific calls remain limited to approved script helpers.
 """;
 
@@ -220,8 +223,14 @@ LINQ-to-Objects and inline lambdas support filtering and data transforms:
   foreach (int row in even) Note(row, 0, _O(35));
 Only System.Linq.dll is approved, not PLINQ, Queryable or expression trees.
 Lambdas may compute data but cannot call musical note/control helpers.
-No arbitrary Heresy host-object access, filesystem capabilities, method-group
-delegates, unsafe, async, reflection or exception control yet.
+Approved non-emitting methods may be method-group delegate targets:
+  Func<string, bool> empty = string.IsNullOrEmpty;
+  var results = rows.Select(row => row.ToString()).ToList();
+Strict streaming requires Note/Off/Cut/Tempo/etc. as direct statements:
+event generator method groups and calls inside lambdas are not allowed.
+Relaxed pre-collection is a future design (#52), not implemented.
+No arbitrary Heresy host-object access, filesystem capabilities, unsafe,
+async, reflection or exception control yet.
 Emission is streaming; out-of-order events may be dropped. For each note
 pitchMultiplier/playbackSpeedMultiplier must be positive finite numbers.
 """;
