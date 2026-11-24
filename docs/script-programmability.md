@@ -72,6 +72,32 @@ foreach (int row in rows)
     Note(row, 0, _O(35));
 ```
 
+Scripts can also use **LINQ-to-Objects**, including `Enumerable.Where`,
+`Select`, `OrderBy`, `GroupBy`, `ToLookup`, and `Aggregate`, with
+inline lambda expressions:
+
+```csharp
+var primes = new List<int> { 2, 3, 5, 7, 11 };
+var selected = primes.Where(p => p > 4).OrderBy(p => p).ToArray();
+foreach (int p in selected)
+    Note(p, 0, _O(35));
+```
+
+The policy grants **the public types defined in the exact
+`System.Linq.dll` assembly**. This is not a permission for arbitrary
+assemblies sharing the `System.Linq` namespace:
+`System.Linq.Parallel.dll` (PLINQ), `System.Linq.Queryable.dll`, and
+`System.Linq.Expressions.dll` remain unapproved. LINQ-to-Objects
+predicates and selectors may run on deferred *synchronous* enumeration;
+they do not schedule background callbacks themselves. The runtime
+verifier audits lambda bodies and signatures, rejecting forbidden APIs
+even when the LINQ iterator is never enumerated. Musical note/control
+helpers inside lambdas are not supported, preserving direct-statement
+streaming/yield behavior; method-group delegates, async lambdas and
+expression trees also remain restricted pending separate lifecycle
+review. Lambda-local loops receive synchronous work checkpoints, even
+in streaming Pattern execution.
+
 C# operations are checked against the exact
 [runtime type/member allow-list](script-runtime-allow-list.txt), bound with
 Roslyn **before** loop, streaming and F6 trace rewrites. In particular,
