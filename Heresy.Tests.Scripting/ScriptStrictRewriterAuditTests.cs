@@ -136,6 +136,27 @@ public sealed class ScriptStrictRewriterAuditTests
     }
 
     [Test]
+    public void ScriptCannotCloneGeneratedHostReceiverThroughProtectedObjectMethod()
+    {
+        const string source = "var clone = MemberwiseClone();";
+        foreach (var diagnostics in new[]
+        {
+            ScriptCompiler.AnalyzePatternSource(source),
+            ScriptCompiler.AnalyzeSequenceSource(source),
+        })
+        {
+            diagnostics.Should().Contain(d =>
+                d.Severity == ScriptDiagnosticSeverity.Error
+                && d.Message.Contains(
+                    "Unapproved protected host receiver member",
+                    StringComparison.Ordinal));
+        }
+
+        ScriptCompiler.AnalyzePatternSource("object own = new object();")
+            .Should().NotContain(d => d.Severity == ScriptDiagnosticSeverity.Error);
+    }
+
+    [Test]
     public void NormalHeresyHelpersRemainAvailableToPatternsAndSequences()
     {
         ScriptCompiler.AnalyzePatternSource("""
