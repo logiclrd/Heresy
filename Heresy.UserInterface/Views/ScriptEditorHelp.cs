@@ -68,8 +68,12 @@ Approved framework types include List<T>, Dictionary<TKey,TValue>, StringBuilder
 and ordinary string and collection members; see docs/script-runtime-allow-list.txt.
 The allow-list excludes particular mutating or capability-bearing members,
 including filesystem access through path-based constructors.
-Lambdas, method-group delegates, user-defined helpers, unsafe, async, reflection,
-and exception-control constructs remain unavailable at this stage.
+LINQ-to-Objects methods and inline lambdas are available from System.Linq.dll:
+  var order = Enumerable.Range(0, 8).Where(n => n % 2 == 0).ToArray();
+Only the exact System.Linq.dll assembly is permitted, not PLINQ, Queryable or
+expression trees. Musical helpers remain direct statements (not lambda bodies).
+Method-group delegates, user-defined helpers, unsafe, async, reflection, and
+exception-control constructs remain unavailable at this stage.
 Heresy-specific calls remain limited to approved script helpers.
 """;
 
@@ -211,8 +215,13 @@ foreach are also available through the reviewed .NET runtime allow-list
 (docs/script-runtime-allow-list.txt). For example:
   var rows = new List<int> { 0, 2, 4 };
   foreach (int row in rows) Note(row, 0, _O(35));
-No arbitrary Heresy host-object access, filesystem capabilities, lambdas,
-method-group delegates, unsafe, async, reflection or exception control yet.
+LINQ-to-Objects and inline lambdas support filtering and data transforms:
+  var even = rows.Where(row => row % 2 == 0).ToArray();
+  foreach (int row in even) Note(row, 0, _O(35));
+Only System.Linq.dll is approved, not PLINQ, Queryable or expression trees.
+Lambdas may compute data but cannot call musical note/control helpers.
+No arbitrary Heresy host-object access, filesystem capabilities, method-group
+delegates, unsafe, async, reflection or exception control yet.
 Emission is streaming; out-of-order events may be dropped. For each note
 pitchMultiplier/playbackSpeedMultiplier must be positive finite numbers.
 """;
