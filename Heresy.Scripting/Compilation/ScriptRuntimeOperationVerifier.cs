@@ -626,9 +626,36 @@ internal sealed class ScriptRuntimeOperationVerifier
             return;
         }
 
-        if (!_policy.IsAllowedRuntimeType(type, _compilation))
+        if (!IsApprovedCanonicalRuntimeType(type))
             Add(syntax, "Type outside approved runtime API: "
                 + type.ToDisplayString());
+    }
+
+    private bool IsApprovedCanonicalRuntimeType(ITypeSymbol type)
+    {
+        if (_policy.IsAllowedRuntimeType(type, _compilation))
+            return true;
+
+        // The Pattern/Sequence helper surface can return opaque musical
+        // values such as ObjectId. Holding one in an approved managed
+        // container/delegate does not authorize any new Heresy members.
+        // Preserve that narrow exception recursively for generic arguments,
+        // while requiring every enclosing generic definition to be approved.
+        // Other script contexts still use the unmodified runtime policy.
+        if (_approvedOpaqueHostType is null)
+            return false;
+        if (_approvedOpaqueHostType(type))
+            return true;
+        if (type is IArrayTypeSymbol array)
+            return IsApprovedCanonicalRuntimeType(array.ElementType);
+        if (type is INamedTypeSymbol named && named.IsGenericType
+            && _policy.IsAllowedRuntimeType(named.OriginalDefinition, _compilation)
+            && named.TypeArguments.All(IsApprovedCanonicalRuntimeType)
+            && (named.ContainingType is null
+                || IsApprovedCanonicalRuntimeType(named.ContainingType)))
+            return true;
+
+        return false;
     }
 
     private static bool IsWrite(IOperation reference)
