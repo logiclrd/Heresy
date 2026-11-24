@@ -68,10 +68,11 @@ internal sealed class ScriptRuntimeOperationVerifier
     /// <summary>
     /// Audit one statement from the *unmodified* Pattern/Sequence source
     /// embedded in its canonical wrapper. Trusted Heresy helpers may carry
-    /// opaque Core/Scripting value types across the existing, separately
-    /// validated helper API. This exception is valid only while the legacy
-    /// strict helper/member validator is also mandatory; it is NOT a general
-    /// exemption for accessing Heresy objects or future expanded syntax.
+    /// opaque Core/Scripting value types only through the explicitly approved
+    /// helper symbols. This canonical pass itself denies other host-owned
+    /// members, generated-wrapper methods and inherited protected Object
+    /// methods; the type exception is NOT permission to access arbitrary
+    /// musical object internals.
     /// </summary>
     internal static IReadOnlyList<ScriptRuntimeOperationFinding> AnalyzeCanonical(
         SemanticModel model, SyntaxNode authoredStatement,
@@ -575,15 +576,16 @@ internal sealed class ScriptRuntimeOperationVerifier
             return;
         }
 
-        // This applies only to the canonical authored-source pass, where
-        // the existing legacy validator separately checks the *exact* helper
-        // symbols and disallows every other Heresy member access.
+        // The canonical authored-source pass explicitly approves the exact
+        // documented helper symbols. Everything else from Heresy assemblies
+        // is rejected below; legacy expression-script rules are independent.
         if (_approvedHostMember?.Invoke(member) == true)
             return;
 
         // The core/script assemblies provide opaque musical values to helper
         // methods, NOT an ambient permission to access their members. This
-        // guard is mandatory before replacing the old name-based validator.
+        // guard is mandatory: Pattern/Sequence validation now relies on
+        // this bound-operation verifier rather than the old checker.
         if (_approvedHostMember is not null
             && member.ContainingType is { } hostType
             && _approvedOpaqueHostType?.Invoke(hostType) == true)
