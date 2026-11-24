@@ -1000,15 +1000,14 @@ public static class ScriptCompiler
 			return false;
 
 		INamedTypeSymbol containingType = method.ContainingType;
-		return SymbolEqualityComparer.Default.Equals(
-				containingType,
-				patternBase)
-			|| SymbolEqualityComparer.Default.Equals(
-				containingType,
-				sequenceBase)
-			|| SymbolEqualityComparer.Default.Equals(
-				containingType,
-				mathType)
+		if (SymbolEqualityComparer.Default.Equals(containingType, patternBase))
+			return method.MethodKind == MethodKind.Ordinary
+				&& (method.Name is "_O" or "Random" or "Checkpoint"
+					|| ScriptPatternEmissionPolicy.IsEmitterName(method.Name));
+		if (SymbolEqualityComparer.Default.Equals(containingType, sequenceBase))
+			return method.MethodKind == MethodKind.Ordinary
+				&& method.Name is "_O" or "Random" or "Checkpoint" or "Play";
+		return SymbolEqualityComparer.Default.Equals(containingType, mathType)
 			|| IsApprovedPitchMathMethod(method, pitchMathType);
 	}
 
