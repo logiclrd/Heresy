@@ -159,6 +159,7 @@ public sealed class ScriptMethodGroupEmissionTests
             Action<double, double> emit = Tempo;
             """;
         Errors(source).Should().Contain(d =>
-            d.Message.Contains("Preprocessor directives", StringComparison.Ordinal));
+            d.Message.Contains("directive", StringComparison.OrdinalIgnoreCase),
+            "the proposed #order relaxed directive is not yet supported");
     }
 }
