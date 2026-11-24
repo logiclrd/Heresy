@@ -114,11 +114,13 @@ public sealed class ScriptStrictRewriterAuditTests
             .Create(new SequencingContext()).GetSequenceEntry(0, 0, -1);
         SequenceEntry? b = traced.Program!
             .Create(new SequencingContext()).GetSequenceEntry(0, 0, -1);
-        a?.PatternId.Should().Be((ObjectId)17U);
-        b?.PatternId.Should().Be(a?.PatternId);
-        a?.EditorCallsite.Should().BeNull();
+        a.Should().NotBeNull();
+        b.Should().NotBeNull();
+        a!.PatternId.Should().Be((ObjectId)17U);
+        b!.PatternId.Should().Be(a.PatternId);
+        a.EditorCallsite.Should().BeNull();
         int start = source.LastIndexOf("Play(_O(17))", StringComparison.Ordinal);
-        b?.EditorCallsite.Should().Be(
+        b.EditorCallsite.Should().Be(
             new SequenceCallsite(start, "Play(_O(17))".Length));
     }
 
