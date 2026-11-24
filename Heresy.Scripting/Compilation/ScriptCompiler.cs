@@ -804,7 +804,7 @@ public static class ScriptCompiler
 				{
 					LocalFunctionStatementSyntax =>
 						"Local functions are not available in Heresy scripts.",
-					AnonymousFunctionExpressionSyntax =>
+					AnonymousFunctionExpressionSyntax when !permitManagedData =>
 						"Lambdas and anonymous functions are not available in Heresy scripts.",
 					ObjectCreationExpressionSyntax
 						or ImplicitObjectCreationExpressionSyntax
@@ -1211,6 +1211,7 @@ public static class ScriptCompiler
 		=> $$"""
 			using System;
 			using System.Collections.Generic;
+			using System.Linq;
 			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
@@ -1247,6 +1248,7 @@ public static class ScriptCompiler
 		=> $$"""
 			using System;
 			using System.Collections.Generic;
+			using System.Linq;
 			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
@@ -1375,6 +1377,7 @@ public static class ScriptCompiler
 		=> $$"""
 			using System;
 			using System.Collections.Generic;
+			using System.Linq;
 			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
@@ -1421,6 +1424,7 @@ public static class ScriptCompiler
 		}
 
 		paths.Add(typeof(object).Assembly.Location);
+		paths.Add(typeof(Enumerable).Assembly.Location);
 		paths.Add(typeof(PatternScriptProgram).Assembly.Location);
 		paths.Add(typeof(SequencingContext).Assembly.Location);
 
@@ -1531,6 +1535,31 @@ public static class ScriptCompiler
 	private sealed class LoopCheckpointRewriter(bool cooperative = false)
 		: CSharpSyntaxRewriter
 	{
+		// Yield-bearing cooperative checkpoints are valid only inside the
+		// generated Pattern iterator. Lambdas may contain their own loops,
+		// but cannot yield steps from that iterator. Checkpoint synchronously
+		// inside lambda bodies instead, keeping runaway-work protection.
+		public override SyntaxNode? VisitSimpleLambdaExpression(
+			SimpleLambdaExpressionSyntax node)
+			=> !cooperative
+				? base.VisitSimpleLambdaExpression(node)
+				: node.WithBody((CSharpSyntaxNode)(
+					new LoopCheckpointRewriter().Visit(node.Body) ?? node.Body));
+
+		public override SyntaxNode? VisitParenthesizedLambdaExpression(
+			ParenthesizedLambdaExpressionSyntax node)
+			=> !cooperative
+				? base.VisitParenthesizedLambdaExpression(node)
+				: node.WithBody((CSharpSyntaxNode)(
+					new LoopCheckpointRewriter().Visit(node.Body) ?? node.Body));
+
+		public override SyntaxNode? VisitAnonymousMethodExpression(
+			AnonymousMethodExpressionSyntax node)
+			=> !cooperative
+				? base.VisitAnonymousMethodExpression(node)
+				: node.WithBlock((BlockSyntax)(
+					new LoopCheckpointRewriter().Visit(node.Block) ?? node.Block));
+
 		public override SyntaxNode? VisitForStatement(
 			ForStatementSyntax node)
 		{
