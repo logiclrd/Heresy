@@ -1612,7 +1612,8 @@ public static class ScriptCompiler
 		{
 			ExpressionStatementSyntax visited =
 				(ExpressionStatementSyntax)(base.VisitExpressionStatement(node) ?? node);
-			if (invocation.Expression is not IdentifierNameSyntax name
+			if (node.Expression is not InvocationExpressionSyntax invocation
+				|| invocation.Expression is not IdentifierNameSyntax name
 				|| !ScriptPatternEmissionPolicy.IsEmitterName(name.Identifier.ValueText))
 				return visited;
 
