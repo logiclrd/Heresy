@@ -200,15 +200,17 @@ public sealed class ScriptLinqLambdaIntegrationTests
     }
 
     [Test]
-    public void MethodGroupConversionsRemainBlockedEvenForSafeFrameworkMethods()
+    public void ApprovedMethodGroupPredicateWorksInPatternAndSequence()
     {
         const string source = """
             var words = new List<string> { "one", "" };
-            var empty = words.Where(string.IsNullOrEmpty).ToList();
+            Func<string, bool> isEmpty = string.IsNullOrEmpty;
+            var empty = words.Where(isEmpty).ToList();
             """;
         ScriptCompiler.AnalyzePatternSource(source)
-            .Should().Contain(d => d.Severity == ScriptDiagnosticSeverity.Error
-                && d.Message.Contains("Method-group"));
+            .Should().NotContain(d => d.Severity == ScriptDiagnosticSeverity.Error);
+        ScriptCompiler.AnalyzeSequenceSource(source)
+            .Should().NotContain(d => d.Severity == ScriptDiagnosticSeverity.Error);
     }
 
     [Test]
