@@ -26,7 +26,7 @@ internal static class ScriptPatternEmissionPolicy
             or "DisplacementVirtual" or "PastVirtual";
 
     internal static bool IsEmitterMethod(IMethodSymbol method,
-        Compilation compilation)
+        Microsoft.CodeAnalysis.Compilation compilation)
     {
         INamedTypeSymbol? patternBase = compilation.GetTypeByMetadataName(
             typeof(PatternScriptProgram).FullName!);
