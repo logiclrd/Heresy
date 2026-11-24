@@ -1102,17 +1102,7 @@ public static class ScriptCompiler
 			in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
 		{
 			if (invocation.Expression is not IdentifierNameSyntax name
-				|| name.Identifier.ValueText is not
-					("Note" or "Off" or "Cut" or "Tempo" or "Speed"
-						or "Seek" or "Pan" or "Surround"
-						or "Filter" or "FilterCutoff" or "FilterResonance"
-						or "NoteFilter" or "NoteFilterVirtual"
-						or "ChannelFilter" or "ChannelFilterVirtual"
-						or "NoteVirtual" or "OffVirtual" or "CutVirtual"
-						or "OffVirtualInScope" or "CutVirtualInScope"
-						or "OffAllVirtual" or "CutAllVirtual"
-						or "VolumeVirtual" or "SourceFrameVirtual"
-						or "DisplacementVirtual" or "PastVirtual"))
+				|| !ScriptPatternEmissionPolicy.IsEmitterName(name.Identifier.ValueText))
 				continue;
 			if (invocation.Parent is ExpressionStatementSyntax statement
 				&& ReferenceEquals(statement.Expression, invocation))
@@ -1187,16 +1177,7 @@ public static class ScriptCompiler
 			InvocationExpressionSyntax rewritten =
 				(InvocationExpressionSyntax)(base.VisitInvocationExpression(node) ?? node);
 			if (node.Expression is not IdentifierNameSyntax name
-				|| name.Identifier.ValueText is not
-					("Note" or "NoteVirtual" or "NoteFilter" or "NoteFilterVirtual"
-						or "ChannelFilter" or "ChannelFilterVirtual"
-						or "Off" or "Cut" or "OffVirtual" or "CutVirtual"
-						or "OffVirtualInScope" or "CutVirtualInScope"
-						or "OffAllVirtual" or "CutAllVirtual"
-						or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
-						or "Filter" or "FilterCutoff" or "FilterResonance"
-						or "VolumeVirtual" or "SourceFrameVirtual"
-						or "DisplacementVirtual" or "PastVirtual"))
+				|| !ScriptPatternEmissionPolicy.IsEmitterName(name.Identifier.ValueText))
 				return rewritten;
 			ArgumentSyntax span = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(
 				$"new SequenceCallsite({node.SpanStart}, {node.Span.Length})"));
@@ -1631,19 +1612,8 @@ public static class ScriptCompiler
 		{
 			ExpressionStatementSyntax visited =
 				(ExpressionStatementSyntax)(base.VisitExpressionStatement(node) ?? node);
-			if (node.Expression is not InvocationExpressionSyntax invocation
-				|| invocation.Expression is not IdentifierNameSyntax name
-				|| name.Identifier.ValueText is not
-					("Note" or "Off" or "Cut" or "Tempo" or "Speed"
-						or "Seek" or "Pan" or "Surround"
-						or "Filter" or "FilterCutoff" or "FilterResonance"
-						or "NoteFilter" or "NoteFilterVirtual"
-						or "ChannelFilter" or "ChannelFilterVirtual"
-						or "NoteVirtual" or "OffVirtual" or "CutVirtual"
-						or "OffVirtualInScope" or "CutVirtualInScope"
-						or "OffAllVirtual" or "CutAllVirtual"
-						or "VolumeVirtual" or "SourceFrameVirtual"
-						or "DisplacementVirtual" or "PastVirtual"))
+			if (invocation.Expression is not IdentifierNameSyntax name
+				|| !ScriptPatternEmissionPolicy.IsEmitterName(name.Identifier.ValueText))
 				return visited;
 
 			// Execute the original helper (and its validation) exactly once.
