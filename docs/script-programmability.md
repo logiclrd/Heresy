@@ -92,11 +92,11 @@ predicates and selectors may run on deferred *synchronous* enumeration;
 they do not schedule background callbacks themselves. The runtime
 verifier audits lambda bodies and signatures, rejecting forbidden APIs
 even when the LINQ iterator is never enumerated. Musical note/control
-helpers inside lambdas are not supported, preserving direct-statement
-streaming/yield behavior; method-group delegates, async lambdas and
-expression trees also remain restricted pending separate lifecycle
-review. Lambda-local loops receive synchronous work checkpoints, even
-in streaming Pattern execution.
+helpers inside lambdas are not supported in the **current strict streaming
+mode**, preserving the direct-statement and incremental-yield contract.
+Method-group delegate conversions, async lambdas and expression trees
+are also currently restricted. Lambda-local loops receive synchronous
+work checkpoints, even in streaming Pattern execution.
 
 C# operations are checked against the exact
 [runtime type/member allow-list](script-runtime-allow-list.txt), bound with
@@ -108,12 +108,38 @@ these two contexts, preserving Heresy's narrow musical helper API and
 opaque song-object boundary. A `foreach` is checkpointed to retain the
 existing execution-work protections.
 
-**Not yet enabled:** author-defined classes/functions, lambdas, method-group
-delegates and deferred callbacks, unsafe code, asynchronous execution,
-reflection, exception-control constructs, and other unreviewed language
-forms. The script Instrument, Envelope and parametric **scalar expression**
-contexts deliberately retain their more restrictive policies. This
-feature is tracked in [issue #58](https://github.com/logiclrd/Heresy/issues/58);
+### Strict event emission and proposed relaxed ordering
+
+**Strict streaming is the current/default Script Pattern mode.** Pattern
+event-generator helpers such as `Note`, `Off`, `Cut` and control/filter
+emission must be direct statements, because the incremental compiler
+yields immediately after each emitter call. Consequently, even though
+those helpers are allowed as direct calls, they are **not allowed as
+lambda-body calls or method-group delegate targets in strict mode**.
+This is a streaming delivery/ordering restriction, not a claim that LINQ
+callbacks run on a separate thread. Ordinary inline LINQ predicates
+that compute data remain supported.
+
+[Issue #52](https://github.com/logiclrd/Heresy/issues/52) proposes an
+**opt-in relaxed preprocessing mode**, tentatively written
+`#order relaxed`. When implemented, the Pattern would first run to
+completion, gather all of its note/control events, and sort them by
+musical row and the applicable time semantics, with stable tie ordering,
+before passing them to normal playback. Because the collection phase
+does not stream each event as it is generated, **event-generator calls
+would be allowed inside lambdas and as method-group delegate targets**
+in that mode, and **no per-emitter `yield return EmitPendingStep()`**
+would be injected. Any yields used later to replay sorted events belong
+to the playback implementation, not author callbacks. The directive,
+event gathering/sorting, resource limits, and relaxed-mode exception
+have **not** been implemented or approved for compilation yet.
+
+**Other features not yet enabled:** author-defined classes/functions,
+method-group delegate conversions (generally), unsafe code, asynchronous
+execution, reflection, exception-control constructs, and other
+unreviewed language forms. The Script Instrument, Envelope and parametric
+**scalar expression** contexts retain their more restrictive policies.
+The managed-data feature is tracked in [issue #58](https://github.com/logiclrd/Heresy/issues/58);
 the full planned scope is not yet finished.
 
 ## Shared restricted-script pitch conversion helpers (November 2026)
