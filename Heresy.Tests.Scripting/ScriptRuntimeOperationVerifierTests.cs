@@ -213,10 +213,10 @@ public sealed class ScriptRuntimeOperationVerifierTests
     }
 
     [Test]
-    public void NoExistingScriptCompilerBehaviorIsChangedByAnUnusedVerifier()
+    public void ManagedCollectionsAreEnabledInPatternScripts()
     {
-        const string source = "var notes = new List<string>();";
+        const string source = "var notes = new System.Collections.Generic.List<string>();";
         var restrictions = ScriptCompiler.AnalyzePatternSource(source);
-        restrictions.Should().Contain(x => x.Message.Contains("Object creation"));
+        restrictions.Should().NotContain(x => x.Severity == Heresy.Scripting.Analysis.ScriptDiagnosticSeverity.Error);
     }
 }
