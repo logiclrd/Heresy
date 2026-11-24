@@ -42,12 +42,12 @@ public sealed class ScriptCanonicalApiAuditTests
         Audit(source).Should().BeEmpty(
             "ordinary managed allocation is approved by the owner policy");
         ScriptCompiler.AnalyzePatternSource(source)
-            .Should().Contain(d => d.Message.Contains("Object creation"),
-                "the legacy syntax restrictions must remain enabled for this slice");
+            .Should().NotContain(d => d.Severity == ScriptDiagnosticSeverity.Error,
+                "approved managed-data syntax is now enabled for Patterns");
     }
 
     [Test]
-    public void CanonicalSequenceAllowsCollectionsButDoesNotChangeProductionSyntax()
+    public void CanonicalSequenceAllowsCollectionsInProduction()
     {
         const string source = """
             var indices = new System.Collections.Generic.List<int> { 17 };
@@ -56,7 +56,7 @@ public sealed class ScriptCanonicalApiAuditTests
 
         Audit(source, ScriptWrapperKind.Sequence).Should().BeEmpty();
         ScriptCompiler.AnalyzeSequenceSource(source)
-            .Should().Contain(d => d.Message.Contains("Object creation"));
+            .Should().NotContain(d => d.Severity == ScriptDiagnosticSeverity.Error);
     }
 
     [Test]
