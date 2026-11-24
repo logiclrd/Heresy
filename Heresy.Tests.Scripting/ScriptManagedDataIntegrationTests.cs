@@ -123,14 +123,16 @@ public sealed class ScriptManagedDataIntegrationTests
     }
 
     [Test]
-    public void MethodGroupsAreDeferredUntilCallbackLifetimePolicyIsEstablished()
+    public void ApprovedFrameworkMethodGroupsAreAvailable()
     {
         const string source = """
-            System.Func<string, string> deferred = System.IO.Path.GetFileName;
+            System.Func<string, bool> isEmpty = string.IsNullOrEmpty;
+            bool result = isEmpty("");
             """;
         ScriptCompiler.AnalyzePatternSource(source)
-            .Should().Contain(d => d.Severity == ScriptDiagnosticSeverity.Error
-                && d.Message.Contains("Method-group"));
+            .Should().NotContain(d => d.Severity == ScriptDiagnosticSeverity.Error);
+        ScriptCompiler.AnalyzeSequenceSource(source)
+            .Should().NotContain(d => d.Severity == ScriptDiagnosticSeverity.Error);
     }
 
     [Test]
