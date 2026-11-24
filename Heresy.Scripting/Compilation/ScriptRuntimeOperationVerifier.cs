@@ -279,6 +279,23 @@ internal sealed class ScriptRuntimeOperationVerifier
             case IInvocationOperation invoke:
                 CheckMember(invoke.TargetMethod, ScriptMemberUse.CallOrMethodGroup,
                     invoke.Syntax);
+                // A musical helper inside a LINQ callback would emit an
+                // event while the stream is enumerated, outside the direct
+                // statement/yield contract of streamed Pattern scripts.
+                // Lambda predicates/selectors may compute data only.
+                if (_approvedHostMember is not null
+                    && invoke.TargetMethod.ContainingType is { } owner
+                    && _approvedOpaqueHostType?.Invoke(owner) == true
+                    && IsInsideLambda(invoke))
+                    Add(invoke.Syntax,
+                        "Musical script helpers cannot run inside lambdas.");
+                break;
+            case IAnonymousFunctionOperation lambda:
+                if (lambda.Symbol.IsAsync)
+                    Add(lambda.Syntax, "Async lambdas are not approved.");
+                foreach (IParameterSymbol parameter in lambda.Symbol.Parameters)
+                    CheckType(parameter.Type, lambda.Syntax);
+                CheckType(lambda.Symbol.ReturnType, lambda.Syntax);
                 break;
             case IObjectCreationOperation creation:
                 if (creation.Constructor is { } constructor)
@@ -373,6 +390,17 @@ internal sealed class ScriptRuntimeOperationVerifier
 
         foreach (IOperation child in operation.ChildOperations)
             Visit(child);
+    }
+
+    private static bool IsInsideLambda(IOperation operation)
+    {
+        for (IOperation? ancestor = operation.Parent; ancestor is not null;
+            ancestor = ancestor.Parent)
+        {
+            if (ancestor is IAnonymousFunctionOperation)
+                return true;
+        }
+        return false;
     }
 
     private void CheckUsing(IUsingOperation operation)
