@@ -494,8 +494,9 @@ Do not reintroduce completed-task checklists here.
   itself a security escape; arbitrary new allocation byte quotas are
   not part of the approved design. Engine per-sample/device hot-path
   discipline remains separate. Keep Script Instrument/Envelope expression
-  contexts restricted until their own redesigns. **The API policy is
-  documented, but compiler enforcement is not implemented.** Do not fold
+  contexts restricted until their own redesigns. **Initial compiler enforcement and ordinary managed-data syntax
+  are implemented in draft PR #67; full language coverage and manual
+  acceptance remain outstanding.** Do not fold
   this into F6 trace PR #50.
   [Authoritative runtime type/member allow-list](script-runtime-allow-list.txt);
   [code-isolation plan](script-managed-allocation-design.md);
