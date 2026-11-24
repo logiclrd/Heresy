@@ -1,6 +1,6 @@
 # Script Pattern / Script Sequence code-isolation and allocation plan
 
-**Status:** Owner-approved *API allow-list* and implementation plan for [issue #58](https://github.com/logiclrd/Heresy/issues/58). The first compiler enforcement and managed-data language slice is implemented in draft PR #67, but **this is not yet a claim of complete sandbox coverage**. Source of truth: [`script-runtime-allow-list.txt`](script-runtime-allow-list.txt), committed **verbatim** from the owner's final 2026-11-23 attachment. All its basic/core/generic types, assembly-scoped wildcard categories, interfaces, exceptions, and selective blocks remain authoritative; the plan below describes how to implement them, rather than silently replacing them with a narrower list.
+**Status (2026-11-24):** This began as the owner-approved API isolation design for [issue #58](https://github.com/logiclrd/Heresy/issues/58). The production Pattern/Sequence capability gate, managed data, synchronous LINQ/lambdas and approved method groups are now implemented in [draft PR #67](https://github.com/logiclrd/Heresy/pull/67). The baseline [`script-runtime-allow-list.txt`](script-runtime-allow-list.txt) retains the owner's 2026-11-23 approved rules, extended by the owner's subsequent explicit approval of public types **defined in System.Linq.dll** (not other LINQ assemblies). The architecture protects application-level capabilities, **not an OS-enforced sandbox**. Keep this file's remaining design principles separate from unimplemented features such as relaxed ordering, user declarations and async execution.
 
 ## Approved intent and threat model
 
@@ -10,16 +10,16 @@
 - The requested policy is specifically for Pattern and Sequence scripts. Existing Envelope, parametric, and three expression-based Script Instrument contexts keep their current restrictions unless independently redesigned. The future procedural Instrument setup/per-note allocation policy is separate.
 - `System.String::IsInterned` is intentionally **not blocked**. Inspection of Heresy's CLR intern pool is acceptable to the owner. The owner also explicitly prefers the blanket `System.Globalization.*` property-assignment restriction over trying to prove which aliased formatting objects were cloned.
 
-## Current compiler seams (reviewed on `main` at `7bbc256356a60e0e7240622108007add2578f4cf`)
+## Compiler implementation and original design seams
 
-| Component | Current implementation | Required change |
-| --- | --- | --- |
-| `ScriptCompiler.ValidateRestrictedSyntax` | Rejects object/array creation, strings, interpolated strings, `foreach`, lambdas, `using`, exception handling and other language features, for **all** script types. | Separate language-shape rules by script context; remove blanket bans in Pattern/Sequence **only after** semantic capability checks cover those operations. |
-| `ValidateRestrictedSemantics` | Explicit script helpers, `System.Math`, pitch-math helpers and selected enums; invocation and member-access checks only. | Add symbol/operation-based type and member policy, retaining the protected Heresy helper surface and trusted callsite-overload checks. |
-| `PrepareCompilation` | Shared by analysis and eager/incremental compilation. | Select the identical context-specific validator for editor diagnostics, ordinary playback, export and instrumented F6 compilation; no user-authored bypass via rewrites. |
-| Incremental Pattern rewriting | Direct emitting helpers are rewritten to yield immediately; an invocation nested in another expression is prohibited. | Keep one step per musical helper, preserve full original source spans, and ensure allocation/control-flow syntax cannot hide emission without yield. |
-| Loop/runtime guards | Injected checkpoints and existing `ScriptExecutionBudget` protect sequencing work; Sequence lookup has a fresh budget. | Retain current safeguards and good diagnostics. No novel allocation-bytes accounting is implied by this proposal. |
-| Editor docs/tests | Pattern/Sequence help currently says no strings/allocations/foreach. | Update these descriptions **when the compiler actually implements the feature**, never in advance. |
+| Component | Implemented status in PR #67 |
+| --- | --- |
+| `ValidateRestrictedSyntax` | Context-specific: approved managed data, `foreach`, `using`, inline lambdas and collections in Patterns/Sequences; Instrument/Envelope/parametric expression contexts remain restricted. |
+| `ValidateCanonicalAuthoredOperations` | Checks the bound operations of **unmodified author code** against the CoreLib and exact System.Linq.dll rules, selective member blocks, approved Heresy helpers and opaque musical values. |
+| Generated wrapper containment | Rejects injected types, methods, source directives and member escapes; protects author/generated identity across instrumentation. |
+| Incremental Pattern/F6 rewrites | Resolve the original Roslyn helper method identities before inserting yields or F6 metadata; local delegates with identical spellings are never mistaken for host emitters. |
+| Loop/runtime guards | Preserve checkpoints and existing `ScriptExecutionBudget`; no speculative per-invocation allocation byte quotas. |
+| Editor docs/tests | Document permitted syntax and strict-mode event-emitter limitations, with eager/streamed/F6 tests and manual LINQ playback checks. |
 
 ## Authoritative policy interpretation
 
@@ -54,13 +54,14 @@
 - **Compatibility**: established Script Instrument/Envelope/parametric restrictions, no new audio-callback allocations, no change to F6 trace losslessness or row/offset ordering, no silent dropping of valid notes.
 - **Docs**: update `ScriptEditorHelp` and [script-programmability](script-programmability.md) with only implemented features; retain all approved types and blocks in [the raw allow-list](script-runtime-allow-list.txt).
 
-## Proposed implementation sequencing (still pending code review)
+## Implementation sequence and acceptance boundary
 
-1. **Policy parser + exact symbol resolver**, unit tests for every literal category and excluded member, and infrastructure that rejects assembly/namespace spoofing. Compiler behavior unchanged.
-2. **Read-only semantic audit** over authored and generated bound code: comprehensive `IOperation` coverage and negative tests, then opt in to the broad allow-list for Pattern/Sequence analysis. Keep expression scripts untouched.
-3. **Safe authored language constructs** (managed constructors, strings, arrays, collections, delegates, `foreach`, `using`, etc.) in small verifiable groups, guarding hidden invocations and preserving incremental pattern yielding. Add user-defined type declarations only after wrapper/lifetime decisions.
-4. **End-to-end playback/editor regressions**, help reference updates, Windows/Linux/macOS CI and manual F6 auditions. Track feature implementation separately from approval of this document.
+1. **Completed:** policy parser, assembly-identity/type/member checks and wrapper/author source containment.
+2. **Completed:** canonical Roslyn operation validation before any trusted yield, loop or F6 rewrites; blocked framework/host entry points and exact approved helper members.
+3. **Completed:** managed strings, arrays, collections, construction, synchronous `foreach`/`using`, inline lambdas, LINQ-to-Objects, and method groups of approved non-emitting methods.
+4. **Closing audit:** ensure method-bound emission/callsite rewrites work with shadowed local names, preserve F6 offsets and provide negative regression coverage. Run exact-head CI and receive owner merge approval.
+5. **Separate future designs (not prerequisites):** `#order relaxed` sorted preprocessing ([#52](https://github.com/logiclrd/Heresy/issues/52)), author-defined types/local functions, asynchronous/deferred callbacks, and unreviewed C# language shapes.
 
 ### Acceptance boundary
 
-The owner's final attached file approves the **API policy** and the direction of code isolation; it does not pre-approve a claim that the compiler now safely runs unrestricted C#. Draft PR #67 now includes approved managed strings, arrays, collections, `foreach`, synchronous `using`, inline lambdas, LINQ-to-Objects and **method-group conversions of approved non-emitting methods** in Pattern/Sequence contexts. Strict streaming still requires Pattern event generators to be direct statements; they cannot be called in lambda bodies or captured as method groups. Issue #52 designs future opt-in relaxed preprocessing for such emissions. Async/outliving callbacks, user-authored declarations and other unreviewed forms remain restricted. Further adversarial and manual testing is required before merging; issue #58 stays open.
+The owner's final attached file approves the **API policy** and the direction of code isolation; it does not pre-approve a claim that the compiler now safely runs unrestricted C#. Draft PR #67 now includes approved managed strings, arrays, collections, `foreach`, synchronous `using`, inline lambdas, LINQ-to-Objects and **method-group conversions of approved non-emitting methods** in Pattern/Sequence contexts. Strict streaming still requires Pattern event generators to be direct statements; they cannot be called in lambda bodies or captured as method groups. Issue #52 designs future opt-in relaxed preprocessing for such emissions. Async/outliving callbacks, user-authored declarations and other unreviewed forms remain restricted. Finish exact-head CI and the focused closing audit; issue #58 stays open until the owner approves the merge.
