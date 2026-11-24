@@ -239,6 +239,65 @@ public sealed class ScriptRuntimeApiPolicyTests
     }
 
     [Test]
+    public void SystemLinqAssemblyPublicTypesAreApprovedButOtherLinqAssembliesAreNot()
+    {
+        MetadataReference[] refs =
+        [
+            ..References,
+            MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location),
+            MetadataReference.CreateFromFile(typeof(Queryable).Assembly.Location),
+            MetadataReference.CreateFromFile(typeof(ParallelEnumerable).Assembly.Location),
+            MetadataReference.CreateFromFile(
+                typeof(System.Linq.Expressions.Expression).Assembly.Location),
+        ];
+        CSharpCompilation c = CSharpCompilation.Create(
+            "HeresyLinqAssemblyIdentityProbe",
+            [CSharpSyntaxTree.ParseText("class Script {}")], refs,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        Type(c, "System.Linq.Enumerable").ContainingAssembly.Identity.Name
+            .Should().Be("System.Linq");
+        foreach (string name in new[]
+        {
+            "System.Linq.Enumerable",
+            "System.Linq.IGrouping\`2",
+            "System.Linq.ILookup\`2",
+            "System.Linq.IOrderedEnumerable\`1",
+            "System.Linq.Lookup\`2",
+        })
+            Policy.IsAllowedRuntimeType(Type(c, name), c)
+                .Should().BeTrue("all public System.Linq.dll runtime types are approved");
+
+        foreach (string name in new[]
+        {
+            "System.Linq.Queryable",
+            "System.Linq.ParallelEnumerable",
+            "System.Linq.Expressions.Expression",
+        })
+            Policy.IsAllowedRuntimeType(Type(c, name), c)
+                .Should().BeFalse(name + " lives outside System.Linq.dll");
+    }
+
+    [Test]
+    public void IdenticalLinqNamespaceInAuthoredAssemblyIsNotApproved()
+    {
+        CSharpCompilation c = CSharpCompilation.Create(
+            "UntrustedNamespace",
+            [CSharpSyntaxTree.ParseText(
+                "namespace System.Linq { public class LooksApproved {} }")],
+            [
+                ..References,
+                MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location),
+            ],
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var declaration = c.SyntaxTrees.Single().GetRoot()
+            .DescendantNodes().OfType<ClassDeclarationSyntax>().Single();
+        INamedTypeSymbol type = c.GetSemanticModel(c.SyntaxTrees.Single())
+            .GetDeclaredSymbol(declaration)!;
+        Policy.IsAllowedRuntimeType(type, c).Should().BeFalse();
+    }
+
+    [Test]
     public void UserDefinedFinalizersAreBlockedWithoutDisallowingEveryUserMethod()
     {
         CSharpCompilation c = Compile("class C { ~C() {} void Work() {} }");
