@@ -62,9 +62,15 @@ A switch is also supported:
       default: return default;
   }
 
-C# subset: locals, conditionals, loops, switches, arithmetic and Math methods.
-No strings, allocations, lambdas, foreach, I/O, async, exceptions or reflection.
-Only Heresy script helpers and System.Math calls are permitted. 
+C# subset: locals, conditionals, loops (including foreach), switches,
+arithmetic, strings/interpolation, arrays, managed object creation and using.
+Approved framework types include List<T>, Dictionary<TKey,TValue>, StringBuilder,
+and ordinary string and collection members; see docs/script-runtime-allow-list.txt.
+The allow-list excludes particular mutating or capability-bearing members,
+including filesystem access through path-based constructors.
+Lambdas, method-group delegates, user-defined helpers, unsafe, async, reflection,
+and exception-control constructs remain unavailable at this stage.
+Heresy-specific calls remain limited to approved script helpers.
 """;
 
     public const string PatternReference = """
@@ -199,9 +205,14 @@ COPYABLE EXAMPLES (substitute actual object IDs)
   OffVirtual(4, 7U);
 
 RESTRICTIONS
-Only script helpers, the four pitch conversions, System.Math, and named
-voice-action enum constants are allowed method/member accesses. No strings, object/array allocation,
-lambdas, foreach, I/O, async, reflection or exception control.
+Musical helpers, the four pitch conversions, and named voice-action enum
+constants are approved. Ordinary managed strings, arrays, collections, and
+foreach are also available through the reviewed .NET runtime allow-list
+(docs/script-runtime-allow-list.txt). For example:
+  var rows = new List<int> { 0, 2, 4 };
+  foreach (int row in rows) Note(row, 0, _O(35));
+No arbitrary Heresy host-object access, filesystem capabilities, lambdas,
+method-group delegates, unsafe, async, reflection or exception control yet.
 Emission is streaming; out-of-order events may be dropped. For each note
 pitchMultiplier/playbackSpeedMultiplier must be positive finite numbers.
 """;
