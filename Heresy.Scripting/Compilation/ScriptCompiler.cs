@@ -1246,6 +1246,7 @@ public static class ScriptCompiler
 		string source)
 		=> $$"""
 			using System;
+			using System.Collections.Generic;
 			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
@@ -1373,6 +1374,7 @@ public static class ScriptCompiler
 	private static string BuildSequenceWrapper(string className, string source)
 		=> $$"""
 			using System;
+			using System.Collections.Generic;
 			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
