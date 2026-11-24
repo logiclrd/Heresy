@@ -834,6 +834,9 @@ public static class ScriptCompiler
 					GotoStatementSyntax
 						or LabeledStatementSyntax =>
 						"Goto control flow is not available in Heresy scripts.",
+					ForEachStatementSyntax foreachStatement
+						when foreachStatement.AwaitKeyword.RawKind != 0 =>
+						"Asynchronous foreach is not available in Heresy scripts.",
 					ForEachStatementSyntax when !permitManagedData =>
 						"foreach is not available in the initial restricted scripting surface.",
 					ForEachVariableStatementSyntax =>
@@ -1535,6 +1538,14 @@ public static class ScriptCompiler
 						?? node);
 			return visited.WithStatement(
 				Guard(visited.Statement));
+		}
+
+		public override SyntaxNode? VisitForEachStatement(
+			ForEachStatementSyntax node)
+		{
+			ForEachStatementSyntax visited =
+				(ForEachStatementSyntax)(base.VisitForEachStatement(node) ?? node);
+			return visited.WithStatement(Guard(visited.Statement));
 		}
 
 		public override SyntaxNode? VisitWhileStatement(
