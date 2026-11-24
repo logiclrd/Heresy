@@ -1,6 +1,6 @@
 # Script Pattern / Script Sequence code-isolation and allocation plan
 
-**Status:** Owner-approved *API allow-list* and implementation plan for [issue #58](https://github.com/logiclrd/Heresy/issues/58). This document is **not** a claim that the compiler enforces it yet. Source of truth: [`script-runtime-allow-list.txt`](script-runtime-allow-list.txt), committed **verbatim** from the owner's final 2026-11-23 attachment. All its basic/core/generic types, assembly-scoped wildcard categories, interfaces, exceptions, and selective blocks remain authoritative; the plan below describes how to implement them, rather than silently replacing them with a narrower list.
+**Status:** Owner-approved *API allow-list* and implementation plan for [issue #58](https://github.com/logiclrd/Heresy/issues/58). The first compiler enforcement and managed-data language slice is implemented in draft PR #67, but **this is not yet a claim of complete sandbox coverage**. Source of truth: [`script-runtime-allow-list.txt`](script-runtime-allow-list.txt), committed **verbatim** from the owner's final 2026-11-23 attachment. All its basic/core/generic types, assembly-scoped wildcard categories, interfaces, exceptions, and selective blocks remain authoritative; the plan below describes how to implement them, rather than silently replacing them with a narrower list.
 
 ## Approved intent and threat model
 
@@ -63,4 +63,4 @@
 
 ### Acceptance boundary
 
-The owner's final attached file approves the **API policy** and the direction of code isolation; it does not pre-approve a claim that the compiler now safely runs unrestricted C#. This PR records the policy and design; it makes **no production compiler/runtime modifications** and should remain draft until the implementation scope is reviewed. Issue #58 stays open.
+The owner's final attached file approves the **API policy** and the direction of code isolation; it does not pre-approve a claim that the compiler now safely runs unrestricted C#. Draft PR #67 now includes production compiler changes enabling approved managed strings, arrays, collections, `foreach` and synchronous `using` in Pattern/Sequence contexts. Deferred callbacks, lambdas, method-group delegates, user-authored declarations and other unreviewed C# forms remain restricted. Further adversarial and manual testing is required before merging; issue #58 stays open.
