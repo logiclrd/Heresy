@@ -566,8 +566,9 @@ public static class ScriptCompiler
 
 		// Validate only ORIGINAL user statements, before loop checkpoints,
 		// incremental yields, or F6 SequenceCallsite constructors are injected.
-		// The legacy restricted semantic validator below remains mandatory:
-		// this is not yet authorization for broader managed C# features.
+		// This canonical gate is the Pattern/Sequence author-facing
+		// authorization check. The legacy semantic checker remains mandatory
+		// only in conservative Instrument/Envelope/parametric contexts.
 		if (wrapperKind != ScriptWrapperKind.None)
 		{
 			diagnostics.AddRange(ValidateCanonicalAuthoredOperations(
@@ -652,7 +653,9 @@ public static class ScriptCompiler
 	/// clean wrapper. Instrumentation may insert trusted members *within* the
 	/// #line region, so inspecting the rewritten wrapper is not sufficient to
 	/// distinguish user capabilities from compiler-generated operations.
-	/// The ordinary restricted helper/member validation still runs afterward.
+	/// Exact helper/member permissions are verified by this canonical gate;
+	/// generated rewrites are checked for wrapper structure, not audited as
+	/// if their trusted injected operations were authored.
 	/// </summary>
 	internal static IReadOnlyList<ScriptAnalysisDiagnostic>
 		ValidateCanonicalAuthoredOperations(
@@ -727,10 +730,11 @@ public static class ScriptCompiler
 		INamedTypeSymbol? nna = canonical.GetTypeByMetadataName(
 			typeof(InstrumentNnaAction).FullName!);
 
-		// These Heresy-owned values are intentionally opaque: the existing
-		// syntax/semantic validator separately forbids arbitrary calls or
-		// member access on them. Do not use this exception after relaxing
-		// those rules without a complete host-object provenance audit.
+		// These Heresy-owned value types are intentionally opaque. The
+		// canonical verifier checks every authored member against the exact
+		// permitted helper list, rejects other host/generated members, and
+		// blocks inherited protected host-object operations. The type
+		// exception alone never authorizes calls on musical objects.
 		IAssemblySymbol? coreAssembly = canonical.GetTypeByMetadataName(
 			typeof(SequencingContext).FullName!)?.ContainingAssembly;
 		IAssemblySymbol? scriptAssembly = patternBase?.ContainingAssembly;
