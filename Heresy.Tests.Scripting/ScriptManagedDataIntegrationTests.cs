@@ -126,7 +126,7 @@ public sealed class ScriptManagedDataIntegrationTests
     public void MethodGroupsAreDeferredUntilCallbackLifetimePolicyIsEstablished()
     {
         const string source = """
-            System.Func<string> deferred = System.IO.Path.GetFileName;
+            System.Func<string, string> deferred = System.IO.Path.GetFileName;
             """;
         ScriptCompiler.AnalyzePatternSource(source)
             .Should().Contain(d => d.Severity == ScriptDiagnosticSeverity.Error
