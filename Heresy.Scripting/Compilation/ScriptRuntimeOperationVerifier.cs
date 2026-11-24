@@ -288,6 +288,14 @@ internal sealed class ScriptRuntimeOperationVerifier
                     Add(creation.Syntax, "Object constructor could not be resolved.");
                 break;
             case IMethodReferenceOperation reference:
+                // Even a permitted API can be stored as a delegate and later
+                // dispatched by another permitted API on an unmanaged
+                // lifetime/thread (for example Progress<T>). Keep deferred
+                // execution unavailable in the first data-allocation slice.
+                // Direct invocations are unaffected.
+                if (_approvedHostMember is not null)
+                    Add(reference.Syntax,
+                        "Method-group delegates require a separate lifecycle audit.");
                 CheckMember(reference.Method, ScriptMemberUse.CallOrMethodGroup,
                     reference.Syntax);
                 break;
