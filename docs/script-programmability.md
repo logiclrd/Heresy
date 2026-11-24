@@ -94,9 +94,11 @@ verifier audits lambda bodies and signatures, rejecting forbidden APIs
 even when the LINQ iterator is never enumerated. Musical note/control
 helpers inside lambdas are not supported in the **current strict streaming
 mode**, preserving the direct-statement and incremental-yield contract.
-Method-group delegate conversions, async lambdas and expression trees
-are also currently restricted. Lambda-local loops receive synchronous
-work checkpoints, even in streaming Pattern execution.
+Method-group delegate conversions of **approved non-emitting methods**
+are supported, while any Pattern event generator remains ineligible as a
+delegate target. Async lambdas and expression trees remain restricted.
+Lambda-local loops receive synchronous work checkpoints, even in
+streaming Pattern execution.
 
 C# operations are checked against the exact
 [runtime type/member allow-list](script-runtime-allow-list.txt), bound with
@@ -135,9 +137,9 @@ event gathering/sorting, resource limits, and relaxed-mode exception
 have **not** been implemented or approved for compilation yet.
 
 **Other features not yet enabled:** author-defined classes/functions,
-method-group delegate conversions (generally), unsafe code, asynchronous
-execution, reflection, exception-control constructs, and other
-unreviewed language forms. The Script Instrument, Envelope and parametric
+Pattern emitter method-group conversions and lambda-body emission in
+strict mode, unsafe code, asynchronous execution, reflection,
+exception-control constructs, and other unreviewed language forms. The Script Instrument, Envelope and parametric
 **scalar expression** contexts retain their more restrictive policies.
 The managed-data feature is tracked in [issue #58](https://github.com/logiclrd/Heresy/issues/58);
 the full planned scope is not yet finished.
