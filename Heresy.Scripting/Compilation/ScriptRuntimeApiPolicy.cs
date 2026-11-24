@@ -30,6 +30,7 @@ internal sealed class ScriptRuntimeApiPolicy
     private bool _allowCoreLibraryEnums;
     private bool _allowCoreLibraryExceptions;
     private bool _allowCoreLibraryInterfaces;
+    private bool _allowSystemLinqAssembly;
     private bool _allowCalendarSubclasses;
     private bool _blockGlobalizationPropertyWrites;
     private bool _blockPathReaderWriterConstructors;
@@ -76,9 +77,17 @@ internal sealed class ScriptRuntimeApiPolicy
             {
                 if (line is not ("Basic types:" or "Exceptions:" or "Core types:"
                     or "Generic building blocks:" or "Interfaces:"
-                    or "Selectively block:"))
+                    or "Additional assemblies:" or "Selectively block:"))
                     throw new FormatException("Unknown script API policy section: " + line);
                 section = line;
+                continue;
+            }
+
+            if (section == "Additional assemblies:"
+                && line == "All public types defined in System.Linq.dll")
+            {
+                policy._allowSystemLinqAssembly = true;
+                policy.EntryCount++;
                 continue;
             }
 
@@ -123,7 +132,8 @@ internal sealed class ScriptRuntimeApiPolicy
         if (!policy._allowCoreLibraryEnums || !policy._allowCoreLibraryExceptions
             || !policy._allowCoreLibraryInterfaces || !policy._allowCalendarSubclasses
             || !policy._blockGlobalizationPropertyWrites
-            || !policy._blockPathReaderWriterConstructors || !policy._blockUserFinalizers)
+            || !policy._blockPathReaderWriterConstructors || !policy._blockUserFinalizers
+            || !policy._allowSystemLinqAssembly)
             throw new FormatException("The script API policy is missing a required category.");
 
         return policy;
@@ -193,9 +203,22 @@ internal sealed class ScriptRuntimeApiPolicy
         // Compare the actual core-library symbol identity, not just its name.
         IAssemblySymbol core = compilation.GetSpecialType(
             SpecialType.System_Object).ContainingAssembly;
-        if (core.Identity.Name != CoreLibraryName
-            || !SymbolEqualityComparer.Default.Equals(
-                named.ContainingAssembly, core))
+        bool inCoreLibrary = core.Identity.Name == CoreLibraryName
+            && SymbolEqualityComparer.Default.Equals(
+                named.ContainingAssembly, core);
+        // System.Linq.dll contains synchronous LINQ-to-Objects operations.
+        // The same namespace also appears in System.Linq.Parallel.dll,
+        // System.Linq.Queryable.dll, and System.Linq.Expressions.dll:
+        // those different assemblies must NEVER acquire this permission.
+        INamedTypeSymbol? enumerable = compilation.GetTypeByMetadataName(
+            "System.Linq.Enumerable");
+        IAssemblySymbol? linqAssembly = enumerable?.ContainingAssembly;
+        bool inApprovedLinq = _allowSystemLinqAssembly
+            && linqAssembly?.Identity.Name == "System.Linq"
+            && SymbolEqualityComparer.Default.Equals(
+                named.ContainingAssembly, linqAssembly)
+            && named.OriginalDefinition.DeclaredAccessibility == Accessibility.Public;
+        if (!inCoreLibrary && !inApprovedLinq)
             return false;
 
         // An open generic definition contains its own type parameters, while
@@ -215,6 +238,9 @@ internal sealed class ScriptRuntimeApiPolicy
 
         INamedTypeSymbol definition = named.OriginalDefinition;
         string name = MetadataName(definition);
+        if (inApprovedLinq)
+            return true;
+
         if (_types.Contains(name)
             || _namespacePrefixes.Any(prefix =>
                 name.StartsWith(prefix, StringComparison.Ordinal))
