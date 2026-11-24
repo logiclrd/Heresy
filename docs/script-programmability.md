@@ -58,6 +58,38 @@ These principles establish *constraints*, not a promise of unrestricted
 C# inside per-sample rendering. Extending the allow-list should be a
 deliberate, testable design decision.
 
+## Managed data in Script Patterns and Script Sequences (issue #58)
+
+Pattern and Sequence scripts accept ordinary **managed strings, interpolated
+strings, arrays, `new` object creation on approved runtime types, collection
+initializers, `foreach`, and synchronous `using`**. The generated wrappers
+import `System.Collections.Generic`, so `List<T>` and
+`Dictionary<TKey,TValue>` are available directly:
+
+```csharp
+var rows = new List<int> { 0, 2, 4 };
+foreach (int row in rows)
+    Note(row, 0, _O(35));
+```
+
+C# operations are checked against the exact
+[runtime type/member allow-list](script-runtime-allow-list.txt), bound with
+Roslyn **before** loop, streaming and F6 trace rewrites. In particular,
+allowing `System.IO.Path` doesn't permit `Path.GetTempFileName()`, which
+creates a file; filesystem constructors and other selected operations are
+explicitly blocked. The compiler checks all original member accesses in
+these two contexts, preserving Heresy's narrow musical helper API and
+opaque song-object boundary. A `foreach` is checkpointed to retain the
+existing execution-work protections.
+
+**Not yet enabled:** author-defined classes/functions, lambdas, method-group
+delegates and deferred callbacks, unsafe code, asynchronous execution,
+reflection, exception-control constructs, and other unreviewed language
+forms. The script Instrument, Envelope and parametric **scalar expression**
+contexts deliberately retain their more restrictive policies. This
+feature is tracked in [issue #58](https://github.com/logiclrd/Heresy/issues/58);
+the full planned scope is not yet finished.
+
 ## Shared restricted-script pitch conversion helpers (November 2026)
 
 All eight restricted script compiler wrappers now expose the same pure
@@ -264,10 +296,10 @@ fades for 0.2 active seconds after Note Off. For a guaranteed
 finite end, also set `ReleaseDuration` to 200 milliseconds.
 
 The source must be a **single expression** of at most 2,048
-characters and at most 256 parsed syntax nodes. The same
-restricted-C# analyzer used by Pattern scripts rejects object
-creation, statements, framework access, I/O and unapproved
-calls. Pure `System.Math` functions/constants and the two
+characters and at most 256 parsed syntax nodes. The Envelope-specific
+restricted-C# analysis rejects object creation, statements, framework
+access, I/O and unapproved calls; unlike Script Patterns and Sequences,
+this scalar-expression contract has **not** been broadened. Pure `System.Math` functions/constants and the two
 numeric parameters are available. The code is compiled once
 using Roslyn in `Heresy.Scripting`; its stateless
 `IScriptEnvelopeEvaluator` is called by the
