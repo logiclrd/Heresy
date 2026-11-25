@@ -1998,13 +1998,14 @@ public static class ScriptCompiler
 
 			// A late emission may belong to row zero. Do not yield or
 			// publish anything from the authored invocation before it returns.
-			program.Execute();
+			program.ExecuteRelaxed();
 			NoteEvent[] events = receiver.Freeze().ToArray();
 			Array.Sort(events, static (a, b) =>
 			{
 				int byRow = a.Offset.RowOffset.CompareTo(b.Offset.RowOffset);
 				return byRow != 0 ? byRow : a.EmissionOrder.CompareTo(b.EmissionOrder);
 			});
+			context.Cancellation.ThrowIfCancellationRequested();
 			return events;
 		}
 
