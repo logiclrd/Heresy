@@ -143,6 +143,11 @@ public sealed class PlaybackSession
 		_targetedVirtualOutputFilters = [];
 	private readonly SortedDictionary<(long Owner, VirtualChannelIdentity Id), ChannelOutputFilterState>
 		_scopedVirtualOutputFilters = [];
+	// Only materialized filters with a confirmed final-use barrier enter
+	// this set; no tombstone is kept for unmaterialized or reclaimed IDs.
+	private readonly HashSet<(long Owner, VirtualChannelIdentity Id)> _retiringVirtualFilters = [];
+	internal int RetainedScopedVirtualFilterCount => _scopedVirtualOutputFilters.Count;
+	internal int RetiringVirtualFilterCount => _retiringVirtualFilters.Count;
 	private readonly NoteSchedule _schedule;
 	private readonly ISoundResolver _soundResolver;
 	private readonly TrackerTickClock _tickClock;
@@ -897,7 +902,8 @@ public sealed class PlaybackSession
 			ulong panbrelloSeed = unchecked(
 				0x5649525455414C00UL
 					+ 0x9E3779B97F4A7C15UL
-						* ((ulong)channelId.Slot + 1UL));
+						* ((ulong)channelId.Slot + 1UL)
+					+ channelId.Generation * 0xD1B54A32D192ED03UL);
 
 			state = new PlaybackChannelState(
 				_context.Configuration.OutputChannelCount,
@@ -1174,6 +1180,58 @@ public sealed class PlaybackSession
 					voice.OriginPhysicalPlaybackOwner).AntiClickTail);
 				RetireDisplacedVoiceAt(i);
 			}
+		}
+	}
+
+	/// <summary>
+	/// Renderer-side final-use barrier for a generated scoped virtual
+	/// identity. The scheduler must call only after all authored ownership
+	/// and queued/prefetched/deferred event references are exhausted.
+	/// This is not a note command and never cuts a current or displaced voice.
+	/// Legacy numeric channels retain their existing persistent-filter policy.
+	/// </summary>
+	public void RetireScopedVirtualChannel(long owner, VirtualChannelIdentity id)
+	{
+		if (owner < 0 || id.Generation == 0)
+			throw new ArgumentOutOfRangeException(owner < 0 ? nameof(owner) : nameof(id));
+		var key = (owner, id);
+		if (_scopedVirtualOutputFilters.ContainsKey(key))
+		{
+			_retiringVirtualFilters.Add(key);
+			ReclaimRetiredVirtualFilters();
+		}
+	}
+
+	private void ReclaimRetiredVirtualFilters()
+	{
+		if (_retiringVirtualFilters.Count == 0) return;
+		List<(long Owner, VirtualChannelIdentity Id)>? reclaim = null;
+		foreach (var key in _retiringVirtualFilters)
+		{
+			if (_scopedVirtualChannels.ContainsKey(key))
+				continue;
+			// An old displaced voice can still contribute a cancellation
+			// anti-click tail to its originating host. Preserve that host
+			// until the independent voice and the host's filter tail end.
+			bool displaced = false;
+			foreach (PlaybackVoice voice in _virtualVoices)
+				if (voice.OriginScopedVirtualOwner == key.Owner
+					&& voice.OriginVirtualIdentity == key.Id)
+				{
+					displaced = true;
+					break;
+				}
+			if (displaced || (_scopedVirtualOutputFilters.TryGetValue(key, out var filter)
+				&& filter.HasTail))
+				continue;
+			(reclaim ??= []).Add(key);
+		}
+		if (reclaim is null) return;
+		foreach (var key in reclaim)
+		{
+			_scopedVirtualOutputFilters.Remove(key);
+			ClearHostCompletionActions(null, key.Id, key.Owner);
+			_retiringVirtualFilters.Remove(key);
 		}
 	}
 
@@ -3567,6 +3625,7 @@ public sealed class PlaybackSession
 				outputChannelCount,
 				destination);
 			ReclaimRetiredPhysicalScopes();
+			ReclaimRetiredVirtualFilters();
 		}
 		finally
 		{
