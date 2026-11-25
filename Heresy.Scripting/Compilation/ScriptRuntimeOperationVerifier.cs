@@ -30,18 +30,21 @@ internal sealed class ScriptRuntimeOperationVerifier
     private readonly ScriptRuntimeApiPolicy _policy;
     private readonly Func<ISymbol, bool>? _approvedHostMember;
     private readonly Func<ITypeSymbol, bool>? _approvedOpaqueHostType;
+    private readonly bool _allowRelaxedPatternEmission;
     private readonly List<ScriptRuntimeOperationFinding> _findings = [];
 
     private ScriptRuntimeOperationVerifier(SemanticModel model,
         ScriptRuntimeApiPolicy policy,
         Func<ISymbol, bool>? approvedHostMember = null,
-        Func<ITypeSymbol, bool>? approvedOpaqueHostType = null)
+        Func<ITypeSymbol, bool>? approvedOpaqueHostType = null,
+        bool allowRelaxedPatternEmission = false)
     {
         _model = model;
         _compilation = model.Compilation;
         _policy = policy;
         _approvedHostMember = approvedHostMember;
         _approvedOpaqueHostType = approvedOpaqueHostType;
+        _allowRelaxedPatternEmission = allowRelaxedPatternEmission;
     }
 
     /// <summary>
@@ -77,7 +80,8 @@ internal sealed class ScriptRuntimeOperationVerifier
     internal static IReadOnlyList<ScriptRuntimeOperationFinding> AnalyzeCanonical(
         SemanticModel model, SyntaxNode authoredStatement,
         Func<ISymbol, bool> approvedHostMember,
-        Func<ITypeSymbol, bool> approvedOpaqueHostType)
+        Func<ITypeSymbol, bool> approvedOpaqueHostType,
+        bool allowRelaxedPatternEmission = false)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(authoredStatement);
@@ -89,7 +93,7 @@ internal sealed class ScriptRuntimeOperationVerifier
 
         ScriptRuntimeOperationVerifier visitor = new(
             model, ScriptRuntimeApiPolicy.Default,
-            approvedHostMember, approvedOpaqueHostType);
+            approvedHostMember, approvedOpaqueHostType, allowRelaxedPatternEmission);
         visitor.Visit(operation);
         visitor.CheckTypeSyntax(authoredStatement);
         return visitor._findings.Distinct().ToArray();
@@ -280,11 +284,10 @@ internal sealed class ScriptRuntimeOperationVerifier
             case IInvocationOperation invoke:
                 CheckMember(invoke.TargetMethod, ScriptMemberUse.CallOrMethodGroup,
                     invoke.Syntax);
-                // A musical helper inside a LINQ callback would emit an
-                // event while the stream is enumerated, outside the direct
-                // statement/yield contract of streamed Pattern scripts.
-                // Lambda predicates/selectors may compute data only.
-                if (_approvedHostMember is not null
+                // Strict callbacks cannot suspend the outer iterator at
+                // each emission. Relaxed callbacks use a synchronous buffer,
+                // but still pass the exact same member authorization above.
+                if (!_allowRelaxedPatternEmission && _approvedHostMember is not null
                     && ScriptPatternEmissionPolicy.IsEmitterMethod(
                         invoke.TargetMethod, _compilation)
                     && IsInsideLambda(invoke))
@@ -310,7 +313,7 @@ internal sealed class ScriptRuntimeOperationVerifier
                 // allow-list as direct calls. The one contextual exception is
                 // a Pattern event generator: in strict streaming it requires
                 // an immediate outer-iterator yield and cannot be delegated.
-                if (_approvedHostMember is not null
+                if (!_allowRelaxedPatternEmission && _approvedHostMember is not null
                     && ScriptPatternEmissionPolicy.IsEmitterMethod(
                         reference.Method, _compilation))
                     Add(reference.Syntax,

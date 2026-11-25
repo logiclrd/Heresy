@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
@@ -68,7 +69,7 @@ public sealed class OfflineSongRenderPlanFactory
 		_samples = sampleDataProvider ?? throw new ArgumentNullException(nameof(sampleDataProvider));
 	}
 
-	public OfflineSongRenderPlan Create(SongDocument document)
+	public OfflineSongRenderPlan Create(SongDocument document, CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		if (document.RootSequenceId.IsNone)
@@ -91,7 +92,7 @@ public sealed class OfflineSongRenderPlanFactory
 			PreparedIncrementalPlaybackPlan playback =
 				new PreparedIncrementalPlaybackFactory(configuration, _samples)
 					.Create(snapshot, snapshot.Document.RootSequenceId,
-						shouldFollowOrderJump: FollowJump);
+						shouldFollowOrderJump: FollowJump, cancellationToken: cancellationToken);
 			return new OfflineSongRenderPlan(playback);
 		}
 		catch (ArgumentException error)

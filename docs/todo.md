@@ -483,7 +483,7 @@ Do not reintroduce completed-task checklists here.
   separate from a read-only API-reference UI, which must document
   **only the functions currently available**.
 
-- [ ] **Broaden restricted-C# Script Pattern and Script Sequence API
+- [x] **Broaden restricted-C# Script Pattern and Script Sequence API
   under the owner-approved code-isolation policy (issue #58).** Permit
   ordinary managed allocation, strings, collections, and constructors on
   approved types, including `List<string>`; validate **all** executable
@@ -494,14 +494,13 @@ Do not reintroduce completed-task checklists here.
   itself a security escape; arbitrary new allocation byte quotas are
   not part of the approved design. Engine per-sample/device hot-path
   discipline remains separate. Keep Script Instrument/Envelope expression
-  contexts restricted until their own redesigns. **Draft PR #67 now
+  contexts restricted until their own redesigns. **Merged PR #67
   implements the approved managed-data, LINQ/lambda, and non-emitting
   method-group subset, with canonical Roslyn API enforcement, F6/streaming
-  integration, and owner-verified musical playback.** The closing audit
-  covers shadowed helper names, the protected host-method boundary,
-  exact-head CI, and owner merge approval. Future unrestricted C# types,
-  async callbacks, and relaxed ordering are independent follow-ups, not
-  acceptance requirements for #58. Do not fold this into F6 trace PR #50.
+  integration, and owner-verified musical playback.** Issue #58 is closed.
+  Author-defined C# types and async callbacks remain independent follow-ups.
+  Relaxed Pattern ordering is implemented separately in PR #69 (#52);
+  see [the ordering contract](script-programmability.md#script-pattern-ordering-modes-issue-52-pr-69).
   [Authoritative runtime type/member allow-list](script-runtime-allow-list.txt);
   [code-isolation plan](script-managed-allocation-design.md);
   [general allocation policy](allocation-policy.md).

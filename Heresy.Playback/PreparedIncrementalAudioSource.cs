@@ -17,12 +17,13 @@ namespace Heresy.Playback;
 /// step, never an event queue, a replay journal or a second producer.
 /// This source MUST NOT be called by a device audio callback.
 /// </summary>
-public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSource, IDisposable
+public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSource, ICooperativeRenderStop, IDisposable
 {
 	private const int MaximumStepsPerRender = 1_000_000;
 	private sealed record PendingEvent(long Frame, long Owner, NoteEvent Note);
 
 	private readonly IncrementalRecursiveTimeline _timeline;
+	private readonly SequencingCancellation? _cancellation;
 	private readonly PlaybackSession _session;
 	private readonly Action<NoteEvent>? _validateNote;
 	private readonly bool _endInputAtNaturalCompletion;
@@ -54,7 +55,8 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		Func<NoteEvent, long, long, NoteEvent>? prepareEvent = null,
 		bool endInputAtNaturalCompletion = false,
 		Action? repeatRoot = null,
-		Action? afterRender = null)
+		Action? afterRender = null,
+		SequencingCancellation? cancellation = null)
 	{
 		_timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
 		_session = session ?? throw new ArgumentNullException(nameof(session));
@@ -63,6 +65,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_repeatRoot = repeatRoot;
 		_transform = prepareEvent;
 		_afterRender = afterRender;
+		_cancellation = cancellation;
 		_timeline.ScopeRetired += OnScopeRetired;
 		_timeline.ScopeCanceled += OnScopeCanceled;
 		_timeline.RootPatternRowsEnded += OnRootPatternRowsEnded;
@@ -74,6 +77,8 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		Format = new AudioOutputFormat(
 			session.SampleRate, session.OutputChannelCount);
 	}
+
+	public void RequestStop() => _cancellation?.RequestStop();
 
 	public AudioOutputFormat Format { get; }
 	public long NextFrame => _session.NextFrame;

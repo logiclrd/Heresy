@@ -1,6 +1,12 @@
 # Incremental sequencing pivot (October 8, 2026)
 
 > **Read this first — production state as of October 10, 2026.**
+> **November 24 update (PR #69):** Script Patterns may opt into
+> `#order relaxed`, which buffers and sorts raw events for one invocation
+> before replay through the existing timeline. The Core consumer still
+> requires nondecreasing raw positions; strict mode remains the default.
+> See [the Script Pattern ordering contract](script-programmability.md#script-pattern-ordering-modes-issue-52-pr-69).
+>
 > This is a chronological engineering log, **not** a list of open
 > architectural work. The first 30+ milestones describe intermediate
 > experiments and must be read in the context of their later corrections.
@@ -3746,3 +3752,22 @@ cross-producer cancellation and live lifetime contract can now be
 closed. Unrelated advanced tracker timing, source seeking and
 export stress/compatibility TODOs remain open and must not be
 mistaken for unfinished baseline flattened-source ownership.
+
+## Script Pattern relaxed ordering (November 24, 2026; PR #69)
+
+The Core chronological consumer contract above is unchanged. The new
+relaxed Roslyn producer collects one invocation synchronously, validates
+through the existing musical helpers, sorts by raw musical row and
+original emission ordinal, then replays raw steps. It does not resolve
+wall deadlines or create a second scheduler. Strict producers retain
+streaming and the existing stale-row diagnostics. The raw-event buffer is
+an explicit opt-in exception to the usual streaming residency model, not
+a retained replay journal or PCM cache. It is discarded with the producer.
+
+The root stop signal reaches relaxed checkpoints and the final collection
+boundary, including flattened and independently clocked private children.
+Buffered worker shutdown signals before joining; export passes its external
+cancellation token. This remains cooperative, not preemptive. Existing
+work and per-row limits remain in force. See the current
+[authoring contract](script-programmability.md#script-pattern-ordering-modes-issue-52-pr-69)
+for semantics, restrictions and F6 provenance.

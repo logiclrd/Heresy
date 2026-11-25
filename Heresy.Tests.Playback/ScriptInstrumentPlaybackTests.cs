@@ -663,6 +663,93 @@ public sealed class ScriptInstrumentPlaybackTests
         Assert.That(error!.Message, Does.Contain("invalid tone index"));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void RelaxedEqualRowNoteFilterOrderMatchesStrictAndRemainsObservable(bool filterFirst)
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance echo = Echo(song, 0.001);
+        string note = $"Note(0, 0, _O({sample.Value}));";
+        string filter = $"NoteFilter(0, 0, _O({echo.DefinitionId.Value}));";
+        string sameRow = filterFirst ? filter + note : note + filter;
+        ObjectId strict = ScriptPattern(song, sameRow + "Cut(2, 0);");
+        ObjectId relaxed = ScriptPattern(song, "#order relaxed\nCut(2, 0);" + sameRow);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var baseline = factory.Create(song, strict);
+        using var candidate = factory.Create(song, relaxed);
+        float[] expected = new float[320], actual = new float[320];
+        baseline.Source.Render(expected.Length, expected);
+        candidate.Source.Render(actual.Length, actual);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(actual[1], Is.EqualTo(filterFirst ? 0.5f : 1f).Within(1e-5f),
+                "A same-row NoteFilter before any note is a no-op, not a filter on the later start.");
+            var messages = candidate.SequencingContext.Diagnostics.Drain();
+            Assert.That(messages.Count(m => m.Code == "HRSEQ007"),
+                Is.EqualTo(filterFirst ? 1 : 0));
+            Assert.That(candidate.SequencingContext.Diagnostics.DroppedOutOfOrderNotes, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void RelaxedTimingAndWallOffsetsMatchStrictInRealtimeAndOfflinePlans()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance echo = Echo(song, 0.001);
+        string start = $"Note(0, 0, _O({sample.Value}));";
+        string delayed = $"Note(0.25, 0, _O({sample.Value}), volume: 0.5, timeOffsetSeconds: 0.16);";
+        string select = $"ChannelFilter(1.5, 0, _O({echo.DefinitionId.Value}));";
+        const string tempo = "Tempo(1, 250);";
+        const string speed = "Speed(2, 3);";
+        const string clear = "ChannelFilter(2, 0);";
+        const string cut = "Cut(2.5, 0);";
+        ObjectId strict = ScriptPattern(song, start + delayed + tempo + select + speed + clear + cut);
+        ObjectId relaxed = ScriptPattern(song,
+            "#order relaxed\n" + cut + select + start + speed + clear + delayed + tempo);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var baseline = factory.Create(song, strict);
+        using var candidate = factory.Create(song, relaxed);
+        using var chunks = factory.Create(song, relaxed);
+        ObjectId seqId = song.AllocateObjectId();
+        DataSequenceDefinition sequence = new(seqId, "Offline");
+        sequence.Entries.Add(new SequenceEntry(relaxed));
+        song.Add(sequence);
+        song.RootSequenceId = seqId;
+        using var offline = new OfflineSongRenderPlanFactory(Mono()).Create(song);
+
+        float[] expected = new float[360], actual = new float[360],
+            split = new float[360], exported = new float[360];
+        baseline.Source.Render(expected.Length, expected);
+        candidate.Source.Render(actual.Length, actual);
+        offline.Source.Render(exported.Length, exported);
+        int[] sizes = [1, 11, 7, 31, 2, 53];
+        for (int pos = 0, i = 0; pos < split.Length; i++)
+        {
+            int count = Math.Min(split.Length - pos, sizes[i % sizes.Length]);
+            chunks.Source.Render(count, split.AsSpan(pos, count));
+            pos += count;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(split, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(exported, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(expected.Any(v => Math.Abs(v) > .1f), Is.True, "nonvacuous audio comparison");
+            Assert.That(expected[60], Is.EqualTo(.5f).Within(1e-5f));
+            Assert.That(expected[160], Is.EqualTo(1f).Within(1e-5f),
+                "row 1.5 filter activates before the earlier row's 190-ms delayed note");
+            Assert.That(candidate.Source.LogicalDuration, Is.EqualTo(baseline.Source.LogicalDuration));
+            Assert.That(offline.LogicalDuration, Is.EqualTo(baseline.Source.LogicalDuration));
+            Assert.That(candidate.SequencingContext.Diagnostics.DroppedOutOfOrderNotes, Is.Zero);
+            Assert.That(chunks.SequencingContext.Diagnostics.DroppedOutOfOrderNotes, Is.Zero);
+            Assert.That(offline.Diagnostics.DroppedOutOfOrderNotes, Is.Zero);
+        });
+    }
+
     private static ObjectId ScriptPattern(SongDocument song, string source)
     {
         ObjectId id = song.AllocateObjectId();

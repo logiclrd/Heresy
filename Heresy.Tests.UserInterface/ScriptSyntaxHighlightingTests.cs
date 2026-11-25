@@ -64,6 +64,26 @@ public sealed class ScriptSyntaxHighlightingTests
 						System.StringComparison.Ordinal));
 	}
 
+	[TestCase("strict")]
+	[TestCase("relaxed")]
+	public void VisibleOrderDirectiveSharesPreprocessorColourAndPreservesReferences(string order)
+	{
+		DocumentWorkspace workspace = new();
+		ObjectId id = workspace.Document.AllocateObjectId();
+		workspace.Document.Add(new ScriptPatternDefinition(id, "Piano"));
+
+		string source = $"#order {order}\r\nNote(0, 0, _O(1));";
+		var analysis = ScriptSourceDocumentAnalyzer.Analyze(workspace, source);
+		analysis.Syntax.IsReliable.Should().BeTrue();
+		var references = ScriptReferenceVisualTokenCatalog.Create(analysis.References);
+		var spans = ScriptSyntaxHighlightCatalog.Create(analysis.SyntaxSnapshot, references);
+
+		Texts(source, spans, ScriptSyntaxHighlightKind.Preprocessor)
+			.Should().Contain(text => text.StartsWith("#order", System.StringComparison.Ordinal));
+		Texts(source, spans, ScriptSyntaxHighlightKind.ObjectReference)
+			.Should().Contain("_O(1)");
+	}
+
 	[Test]
 	public void AdjacentUnaryMinusSharesNumberColourButBinaryMinusDoesNot()
 	{

@@ -37,7 +37,8 @@ public sealed class SequencingContext
 		IReadOnlyList<ParentVolumeChannel>? parentOverallChannels = null,
 		ScopedSequencingChannelMemory? scopedMemory = null,
 		long scopeId = 0,
-		IReadOnlyList<long>? parentSourceScopes = null)
+		IReadOnlyList<long>? parentSourceScopes = null,
+		SequencingCancellation? cancellation = null)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
@@ -62,6 +63,7 @@ public sealed class SequencingContext
 		TrackerMidiMacros = trackerMidiMacros
 			?? TrackerMidiMacroConfiguration.CreateImpulseTrackerDefault();
 		Diagnostics = diagnostics ?? new SequencingDiagnosticLog();
+		Cancellation = cancellation ?? new SequencingCancellation();
 	}
 
 	private readonly bool _useLocalChannelMemory;
@@ -86,6 +88,9 @@ public sealed class SequencingContext
 	/// Bounded recoverable sequencing warnings, shared by child contexts.
 	/// </summary>
 	public SequencingDiagnosticLog Diagnostics { get; }
+
+	/// <summary>Shared stop signal; never owns or mutates a cursor.</summary>
+	public SequencingCancellation Cancellation { get; }
 
 	public double PitchMultiplier { get; }
 	public double PlaybackSpeedMultiplier { get; }
@@ -189,7 +194,8 @@ public sealed class SequencingContext
 			parentOverallChannels: parents,
 			scopedMemory: ScopedMemory,
 			scopeId: childScopeId,
-			parentSourceScopes: parentSourceScopes)
+			parentSourceScopes: parentSourceScopes,
+				cancellation: Cancellation)
 			{
 				FlattenedSourceExpander = FlattenedSourceExpander,
 				IsFlattenedSource = IsFlattenedSource,
@@ -216,7 +222,7 @@ public sealed class SequencingContext
 			channelStates: new SequencingChannelStateMap(),
 			trackerMidiMacros: TrackerMidiMacros,
 			diagnostics: Diagnostics,
-			gainMultiplier: GainMultiplier);
+			gainMultiplier: GainMultiplier, cancellation: Cancellation);
 
 	private static double ValidateGain(double value, string paramName)
 	{

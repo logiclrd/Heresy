@@ -16,6 +16,7 @@ using Heresy.Scripting.Runtime;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 using Microsoft.CodeAnalysis.Text;
 
 namespace Heresy.Scripting.Compilation;
@@ -69,13 +70,19 @@ public static class ScriptCompiler
 	{
 		ArgumentNullException.ThrowIfNull(source);
 
+		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(source);
+		if (HasErrors(order.Diagnostics))
+			return order.Diagnostics;
+		source = order.CompilerSource;
+
 		const string className = "__HeresyPattern_Analysis";
 		return PrepareCompilation(
 			source,
 			BuildPatternWrapper(
 				className,
 				InstrumentLoops(source)),
-			wrapperKind: ScriptWrapperKind.Pattern)
+			wrapperKind: ScriptWrapperKind.Pattern,
+			patternOrder: order.Order)
 			.Diagnostics;
 	}
 
@@ -99,16 +106,21 @@ public static class ScriptCompiler
 	{
 		ArgumentNullException.ThrowIfNull(definition);
 
+		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(definition.Source);
+		if (HasErrors(order.Diagnostics))
+			return new(null, order.Diagnostics);
+		string source = order.CompilerSource;
+
 		string className =
 			"__HeresyPattern_" + Guid.NewGuid().ToString("N");
 		ScriptCompilationResult<Type> compiled =
 			CompileType(
-				definition.Source,
+				source,
 				className,
 				BuildPatternWrapper(
 					className,
-					InstrumentLoops(definition.Source)),
-				typeof(PatternScriptProgram));
+					InstrumentLoops(source)),
+				typeof(PatternScriptProgram), patternOrder: order.Order);
 
 		if (!compiled.Success || compiled.Program is null)
 		{
@@ -117,26 +129,29 @@ public static class ScriptCompiler
 				compiled.Diagnostics);
 		}
 
-		return new(
-			new CompiledPatternGenerator(
-				compiled.Program,
-				definition.RowCount,
-				definition.ChannelCount),
-			compiled.Diagnostics);
+		IRawPatternNoteGenerator generator = order.Order == ScriptPatternOrder.Relaxed
+			? new CompiledRelaxedPatternGenerator(compiled.Program,
+				definition.RowCount, definition.ChannelCount)
+			: new CompiledPatternGenerator(compiled.Program,
+				definition.RowCount, definition.ChannelCount);
+		return new(generator, compiled.Diagnostics);
 	}
 
 	/// <summary>
-	/// Compile a separate, invocation-local streaming Roslyn Pattern program.
-	/// Raw note positions are nondecreasing among accepted events. Earlier
-	/// emissions are silently discarded; equal-row emissions remain in order.
-	/// This API is not used by production song compilation or the recursive
-	/// timeline until CPU checkpoint scheduling and full parity are ready.
+	/// Compile the invocation-local raw Pattern producer for the scheduler.
+	/// Strict mode streams and drops backward raw positions; relaxed mode
+	/// completes synchronous collection before replaying sorted raw events.
 	/// </summary>
 	public static ScriptCompilationResult<IIncrementalRawPatternNoteGenerator>
 		CompileIncrementalPattern(ScriptPatternDefinition definition,
 		bool instrumentActionCallsites = false)
 	{
 		ArgumentNullException.ThrowIfNull(definition);
+
+		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(definition.Source);
+		if (HasErrors(order.Diagnostics))
+			return new(null, order.Diagnostics);
+		string source = order.CompilerSource;
 
 		// Establish exact helper symbols on the unrewritten source before
 		// inserting either trusted F6 callsites or streaming yields. A local
@@ -146,21 +161,39 @@ public static class ScriptCompiler
 		if (HasErrors(authored))
 			return new(null, authored);
 		HashSet<int> emitterStarts = ResolveAuthoredCallStarts(
-			definition.Source, ScriptWrapperKind.Pattern);
+			source, ScriptWrapperKind.Pattern);
+
+		if (order.Order == ScriptPatternOrder.Relaxed)
+		{
+			string relaxedClass = "__HeresyRelaxedPattern_" + Guid.NewGuid().ToString("N");
+			// Only F6 builds the delegate provenance adapters and scopes.
+			string instrumented = instrumentActionCallsites
+				? InstrumentRelaxedPatternCallsites(source, emitterStarts)
+				: InstrumentLoops(source);
+			var relaxed = CompileType(source, relaxedClass,
+				BuildPatternWrapper(relaxedClass, instrumented),
+				typeof(PatternScriptProgram),
+				allowInjectedPlayCallsites: instrumentActionCallsites,
+				patternOrder: order.Order);
+			if (!relaxed.Success || relaxed.Program is null)
+				return new(null, relaxed.Diagnostics);
+			return new(new CompiledRelaxedPatternGenerator(relaxed.Program,
+				definition.RowCount, definition.ChannelCount), relaxed.Diagnostics);
+		}
 
 		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
-			ValidateIncrementalPatternStatements(definition.Source, emitterStarts);
+			ValidateIncrementalPatternStatements(source, emitterStarts);
 		if (restrictions.Count != 0)
 			return new(null, restrictions);
 
 		string className =
 			"__HeresyIncrementalPattern_" + Guid.NewGuid().ToString("N");
 		ScriptCompilationResult<Type> compiled = CompileType(
-			definition.Source,
+			source,
 			className,
 			BuildIncrementalPatternWrapper(
 				className,
-				InstrumentIncrementalPattern(definition.Source,
+				InstrumentIncrementalPattern(source,
 					emitterStarts, instrumentActionCallsites)),
 			typeof(PatternScriptProgram),
 			allowInjectedPlayCallsites: instrumentActionCallsites,
@@ -479,7 +512,8 @@ public static class ScriptCompiler
 		string wrapperSource,
 		Type requiredBaseType,
 		bool allowInjectedPlayCallsites = false,
-		bool incrementalPattern = false)
+		bool incrementalPattern = false,
+		ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict)
 	{
 		ScriptWrapperKind wrapperKind = requiredBaseType == typeof(PatternScriptProgram)
 			? incrementalPattern ? ScriptWrapperKind.IncrementalPattern
@@ -492,7 +526,7 @@ public static class ScriptCompiler
 				source,
 				wrapperSource,
 				allowInjectedPlayCallsites,
-				wrapperKind);
+				wrapperKind, patternOrder);
 		List<ScriptAnalysisDiagnostic> diagnostics =
 			[.. prepared.Diagnostics];
 
@@ -549,7 +583,8 @@ public static class ScriptCompiler
 		string source,
 		string wrapperSource,
 		bool allowInjectedPlayCallsites = false,
-		ScriptWrapperKind wrapperKind = ScriptWrapperKind.None)
+		ScriptWrapperKind wrapperKind = ScriptWrapperKind.None,
+		ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict)
 	{
 		ScriptReferenceAnalysis referenceAnalysis =
 			ScriptReferenceAnalyzer.Analyze(source);
@@ -572,7 +607,7 @@ public static class ScriptCompiler
 		if (wrapperKind != ScriptWrapperKind.None)
 		{
 			diagnostics.AddRange(ValidateCanonicalAuthoredOperations(
-				source, wrapperKind));
+				source, wrapperKind, patternOrder));
 			if (HasErrors(diagnostics))
 				return new(null, diagnostics);
 		}
@@ -659,7 +694,8 @@ public static class ScriptCompiler
 	/// </summary>
 	internal static IReadOnlyList<ScriptAnalysisDiagnostic>
 		ValidateCanonicalAuthoredOperations(
-			string source, ScriptWrapperKind wrapperKind)
+			string source, ScriptWrapperKind wrapperKind,
+			ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict)
 	{
 		ScriptWrapperKind canonicalKind =
 			wrapperKind == ScriptWrapperKind.Sequence
@@ -768,7 +804,9 @@ public static class ScriptCompiler
 			foreach (ScriptRuntimeOperationFinding finding
 				in ScriptRuntimeOperationVerifier.AnalyzeCanonical(
 					model, statement,
-					IsApprovedHeresyMember, IsOpaqueHeresyType))
+					IsApprovedHeresyMember, IsOpaqueHeresyType,
+					allowRelaxedPatternEmission: canonicalKind == ScriptWrapperKind.Pattern
+						&& patternOrder == ScriptPatternOrder.Relaxed))
 			{
 				Location location = Location.Create(tree, finding.Span);
 				AddRestrictedDiagnostic(diagnostics,
@@ -1224,6 +1262,182 @@ public static class ScriptCompiler
 		root = new LoopCheckpointRewriter(cooperative: true).Visit(root)
 			?? root;
 		return root.ToFullString();
+	}
+
+	private static string InstrumentRelaxedPatternCallsites(string source,
+		IReadOnlySet<int> emitterStarts)
+	{
+		SyntaxNode root = CSharpSyntaxTree.ParseText(source, ScriptParseOptions).GetRoot();
+		string prefix = "__heresyTrace";
+		var identifiers = root.DescendantTokens()
+			.Where(t => t.IsKind(SyntaxKind.IdentifierToken))
+			.Select(t => t.ValueText).ToArray();
+		while (identifiers.Any(id => id.StartsWith(prefix, StringComparison.Ordinal)))
+			prefix += "_";
+
+		var (delegates, methodGroups) = ResolveRelaxedTraceSites(source);
+		Dictionary<ScriptSourceSpan, string> replacements = [];
+		List<string> localAdapters = [];
+		// A single reference site for a bound emitter has exact fallback
+		// provenance. If multiple sites reference the same method, do not
+		// substitute different delegate targets: that would change delegate
+		// equality, combination and removal in F6. The authored invocation
+		// scope still supplies exact provenance in that case.
+		foreach (var (method, sites) in methodGroups)
+		{
+			if (sites.Count != 1)
+				continue;
+			ScriptSourceSpan span = sites[0];
+			string name = prefix + "Group" + localAdapters.Count;
+			replacements.Add(span, name);
+			string parameters = string.Join(", ", method.Parameters.Select(p =>
+				p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+				+ " @" + p.Name + DefaultParameterSyntax(p)));
+			string arguments = string.Join(", ", method.Parameters.Select(p => "@" + p.Name));
+			localAdapters.Add($"void {name}({parameters}) {{ base.{method.Name}({TraceCallsite(span)}, {arguments}); }}");
+		}
+
+		root = new RelaxedPatternEmitterCallsiteRewriter(emitterStarts, delegates,
+			replacements, prefix).Visit(root) ?? root;
+		root = new LoopCheckpointRewriter().Visit(root) ?? root;
+		// Local adapter declarations are compiler-owned, after the original
+		// authored source, and never included in the canonical API audit.
+		return root.ToFullString() + "\n" + string.Join("\n", localAdapters);
+	}
+
+	private static string DefaultParameterSyntax(IParameterSymbol parameter)
+		=> !parameter.HasExplicitDefaultValue ? ""
+			: " = " + (parameter.ExplicitDefaultValue switch
+			{
+				null => "default",
+				bool b => b ? "true" : "false",
+				object value => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture),
+			});
+
+	private static string TraceCallsite(ScriptSourceSpan span)
+		=> $"new global::Heresy.Core.Sequences.SequenceCallsite({span.Start}, {span.Length})";
+
+	private sealed record DelegateTraceSite(IMethodSymbol Method, bool ExplicitInvoke);
+
+	private static (Dictionary<ScriptSourceSpan, DelegateTraceSite> Delegates,
+		Dictionary<IMethodSymbol, List<ScriptSourceSpan>> MethodGroups)
+		ResolveRelaxedTraceSites(string source)
+	{
+		SyntaxTree tree = CSharpSyntaxTree.ParseText(
+			BuildPatternWrapper("__HeresyRelaxedTraceResolution", source), WrapperParseOptions);
+		CSharpCompilation compilation = CSharpCompilation.Create(
+			"Heresy.RelaxedTraceResolution." + Guid.NewGuid().ToString("N"),
+			[tree], MetadataReferences, new CSharpCompilationOptions(
+				OutputKind.DynamicallyLinkedLibrary, allowUnsafe: false, checkOverflow: true));
+		SemanticModel semantic = compilation.GetSemanticModel(tree);
+		Dictionary<ScriptSourceSpan, DelegateTraceSite> delegates = [];
+		Dictionary<IMethodSymbol, List<ScriptSourceSpan>> groups =
+			new(SymbolEqualityComparer.Default);
+		var entry = tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>()
+			.Single(m => m.Identifier.ValueText == "ExecuteScript");
+		IOperation body = semantic.GetOperation(entry.Body!)
+			?? throw new InvalidOperationException("Relaxed trace source did not bind.");
+		Stack<IOperation> pending = new();
+		pending.Push(body);
+		while (pending.TryPop(out IOperation? operation))
+		{
+			if (IsScriptLocation(operation.Syntax.GetLocation()))
+			{
+				if (operation is IInvocationOperation invoke
+					&& invoke.TargetMethod.MethodKind == MethodKind.DelegateInvoke
+					&& invoke.Syntax is InvocationExpressionSyntax invocation)
+				{
+					bool explicitInvoke = invocation.Expression is MemberAccessExpressionSyntax access
+						&& semantic.GetSymbolInfo(access).Symbol is IMethodSymbol
+							{ MethodKind: MethodKind.DelegateInvoke };
+					delegates[MapSpan(invocation.GetLocation(), source)] =
+						new(invoke.TargetMethod, explicitInvoke);
+				}
+				else if (operation is IMethodReferenceOperation reference
+					&& reference.Parent is IDelegateCreationOperation
+					&& reference.Syntax is IdentifierNameSyntax
+					&& ScriptPatternEmissionPolicy.IsEmitterMethod(reference.Method, compilation))
+				{
+					if (!groups.TryGetValue(reference.Method, out var sites))
+						groups.Add(reference.Method, sites = []);
+					var span = MapSpan(reference.Syntax.GetLocation(), source);
+					if (!sites.Contains(span))
+						sites.Add(span);
+				}
+			}
+			foreach (IOperation child in operation.ChildOperations)
+				pending.Push(child);
+		}
+		return (delegates, groups);
+	}
+
+	// Rewrite only original bound nodes, before any trusted code changes
+	// their spans. Wrapping the receiver rather than moving the original
+	// arguments into a lambda preserves evaluation order, named/optional
+	// argument binding, short-circuit evaluation and by-ref arguments.
+	private sealed class RelaxedPatternEmitterCallsiteRewriter(
+		IReadOnlySet<int> emitterStarts,
+		IReadOnlyDictionary<ScriptSourceSpan, DelegateTraceSite> delegates,
+		IReadOnlyDictionary<ScriptSourceSpan, string> methodGroups,
+		string prefix) : CSharpSyntaxRewriter
+	{
+		private static ScriptSourceSpan Span(SyntaxNode node)
+			=> new(node.SpanStart, node.Span.Length);
+
+		public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
+			=> methodGroups.TryGetValue(Span(node), out string? name)
+				? SyntaxFactory.IdentifierName(name).WithTriviaFrom(node)
+				: base.VisitIdentifierName(node);
+
+		public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node)
+		{
+			var rewritten = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
+			ScriptSourceSpan span = Span(node);
+			if (delegates.TryGetValue(span, out DelegateTraceSite? site))
+			{
+				IMethodSymbol method = site.Method;
+				// Explicit .Invoke is semantically the same delegate call;
+				// its receiver is the expression left of .Invoke.
+				ExpressionSyntax receiver = site.ExplicitInvoke
+					&& rewritten.Expression is MemberAccessExpressionSyntax rewrittenAccess
+					? rewrittenAccess.Expression : rewritten.Expression;
+				string target = prefix + "Target";
+				string previous = prefix + "Previous";
+				string parameters = string.Join(", ", method.Parameters.Select((p, i) =>
+					ParameterModifier(p.RefKind, declaration: true)
+					+ p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+					+ " " + prefix + "Arg" + i));
+				string arguments = string.Join(", ", method.Parameters.Select((p, i) =>
+					ParameterModifier(p.RefKind, declaration: false) + prefix + "Arg" + i));
+				string returnPrefix = method.ReturnsVoid ? ""
+					: method.ReturnsByRef || method.ReturnsByRefReadonly ? "return ref " : "return ";
+				string adapter =
+					$"base.__HeresyWrapDelegate({receiver.WithoutTrivia().ToFullString()}, "
+					+ $"{target} => ({parameters}) => {{ "
+					+ $"var {previous} = base.__HeresyPushDelegateCallsite({TraceCallsite(span)}); "
+					+ $"try {{ {returnPrefix}{target}({arguments}); }} "
+					+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }} }})";
+				return rewritten.WithExpression(SyntaxFactory.ParseExpression(adapter)
+					.WithTriviaFrom(rewritten.Expression));
+			}
+			if (!emitterStarts.Contains(node.SpanStart))
+				return rewritten;
+
+			ArgumentSyntax callsite = SyntaxFactory.Argument(
+				SyntaxFactory.ParseExpression(TraceCallsite(span)));
+			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
+				rewritten.ArgumentList.Arguments.Insert(0, callsite)));
+		}
+
+		private static string ParameterModifier(RefKind kind, bool declaration)
+			=> kind switch
+			{
+				RefKind.Ref => "ref ",
+				RefKind.Out => "out ",
+				RefKind.In => "in ",
+				RefKind.RefReadOnlyParameter => declaration ? "ref readonly " : "in ",
+				_ => "",
+			};
 	}
 
 	private sealed class StrictPatternEmitterRewriter(
@@ -1761,6 +1975,56 @@ public static class ScriptCompiler
 				yield return step;
 			}
 			yield return new RawPatternStep.Advance(_rowCount);
+		}
+	}
+
+	/// <summary>
+	/// A synchronous authored invocation, with no publication until it has
+	/// completed successfully. Both raw consumer contracts replay the same
+	/// stable musical-row ordering; wall deadlines remain scheduler-owned.
+	/// </summary>
+	private sealed class CompiledRelaxedPatternGenerator(
+		Type programType, int rowCount, int channelCount)
+		: IRawPatternNoteGenerator, IIncrementalRawPatternNoteGenerator
+	{
+		private NoteEvent[] Collect(SequencingContext context)
+		{
+			NoteScheduleBuilder receiver = new();
+			PatternScriptProgram program =
+				Activator.CreateInstance(programType, context, receiver,
+					(double)rowCount, channelCount) as PatternScriptProgram
+				?? throw new InvalidOperationException(
+					"Could not construct the relaxed pattern script.");
+
+			// A late emission may belong to row zero. Do not yield or
+			// publish anything from the authored invocation before it returns.
+			program.ExecuteRelaxed();
+			NoteEvent[] events = receiver.Freeze().ToArray();
+			Array.Sort(events, static (a, b) =>
+			{
+				int byRow = a.Offset.RowOffset.CompareTo(b.Offset.RowOffset);
+				return byRow != 0 ? byRow : a.EmissionOrder.CompareTo(b.EmissionOrder);
+			});
+			context.Cancellation.ThrowIfCancellationRequested();
+			return events;
+		}
+
+		public void GenerateRawNotes(SequencingContext context, INoteReceiver output,
+			out double generatedRowCount)
+		{
+			ArgumentNullException.ThrowIfNull(context);
+			ArgumentNullException.ThrowIfNull(output);
+			generatedRowCount = rowCount;
+			foreach (NoteEvent note in Collect(context))
+				output.Append(note);
+		}
+
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			ArgumentNullException.ThrowIfNull(context);
+			foreach (NoteEvent note in Collect(context))
+				yield return new RawPatternStep.Emit(note);
+			yield return new RawPatternStep.Advance(rowCount);
 		}
 	}
 

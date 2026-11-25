@@ -3298,6 +3298,133 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
 	}
 
+	[TestCase(false, true, false)]
+	[TestCase(true, false, false)]
+	[TestCase(true, true, false)]
+	[TestCase(false, true, true)]
+	[TestCase(true, false, true)]
+	[TestCase(true, true, true)]
+	public void NestedRelaxedAndStrictPatternsMatchChronologicalPcm(
+		bool relaxedParent, bool relaxedChild, bool mixdown)
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav", LongWave(8192)));
+		ObjectId Add(string source, int rows, int channels)
+		{
+			ObjectId id = doc.AllocateObjectId();
+			doc.Add(new ScriptPatternDefinition(id, "Pattern")
+			{ Source = source, RowCount = rows, ChannelCount = channels });
+			return id;
+		}
+		ObjectId strictChild = Add($"Note(0, 0, _O({sample.Value})); Cut(1, 0);", 2, 1);
+		ObjectId child = relaxedChild
+			? Add($"#order relaxed\nCut(1, 0); Note(0, 0, _O({sample.Value}));", 2, 1)
+			: strictChild;
+		string Start(ObjectId id) =>
+			$"Note(0, 0, _O({id.Value}), mixdown: {(mixdown ? "true" : "false")});";
+		string later = $"Note(2, 1, _O({sample.Value})); Cut(3, 1);";
+		ObjectId baseline = Add(Start(strictChild) + later, 4, 2);
+		ObjectId candidate = Add(relaxedParent ? "#order relaxed\n" + later + Start(child)
+			: Start(child) + later, 4, 2);
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var strict = factory.Create(doc, baseline);
+		using var relaxed = factory.Create(doc, candidate);
+		float[] expected = new float[480], actual = new float[480];
+		strict.Source.Render(expected.Length, expected);
+		for (int pos = 0; pos < actual.Length;)
+		{
+			int count = Math.Min(37, actual.Length - pos);
+			relaxed.Source.Render(count, actual.AsSpan(pos, count));
+			pos += count;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+			Assert.That(expected[10], Is.GreaterThan(.1f));
+			Assert.That(expected[180], Is.Zero.Within(1e-6f));
+			Assert.That(expected[250], Is.GreaterThan(.1f));
+			Assert.That(relaxed.SequencingContext.Diagnostics.DroppedOutOfOrderNotes, Is.Zero);
+		});
+	}
+
+	[Test]
+	public void RelaxedStartingRowAndRepeatedOrdersRegenerateWithoutPlayingSkippedEvents()
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav", LongWave(8192)));
+		ObjectId pattern = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(pattern, "Start row")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"#order relaxed\nCut(3, 0); Note(2, 0, _O({sample.Value}), volume: .5 + Random() * .25); Note(0, 0, _O({sample.Value}));"
+		});
+		ObjectId sequence = doc.AllocateObjectId();
+		doc.Add(new ScriptSequenceDefinition(sequence, "Repeat from row one")
+		{
+			Source = $"return sequenceIndex < 2 ? Play(_O({pattern.Value}), 1) : default;"
+		});
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var whole = factory.Create(doc, sequence);
+		using var chunks = factory.Create(doc, sequence);
+		float[] a = new float[720], b = new float[720];
+		whole.Source.Render(a.Length, a);
+		for (int pos = 0; pos < b.Length;)
+		{
+			int count = Math.Min(43, b.Length - pos);
+			chunks.Source.Render(count, b.AsSpan(pos, count));
+			pos += count;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(b, Is.EqualTo(a).Within(1e-6f));
+			Assert.That(a[50], Is.Zero.Within(1e-6f), "Row zero was skipped.");
+			Assert.That(a[130], Is.GreaterThan(.1f));
+			Assert.That(a[410], Is.Zero.Within(1e-6f), "Second visit also skips row zero.");
+			Assert.That(a[490], Is.GreaterThan(.1f));
+			Assert.That(a[130], Is.Not.EqualTo(a[490]).Within(1e-6f),
+				"Each invocation consumes a new deterministic random draw.");
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void RootStopSignalReachesNestedRelaxedCollection(bool mixdown)
+	{
+		SongDocument doc = new();
+		ObjectId child = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(child, "Relaxed child")
+		{ RowCount = 1, ChannelCount = 1, Source = "#order relaxed\nwhile (true) { }" });
+		ObjectId parent = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(parent, "Strict parent")
+		{
+			RowCount = 2, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({child.Value}), mixdown: {(mixdown ? "true" : "false")});"
+		});
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(doc, parent);
+		plan.Source.RequestStop();
+		Assert.Throws<OperationCanceledException>(() => plan.Source.Render(1, new float[1]));
+	}
+
+	[Test]
+	public void OfflinePlanPropagatesExternalCancellationIntoRelaxedCollection()
+	{
+		SongDocument doc = new();
+		ObjectId pattern = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(pattern, "Relaxed")
+		{ RowCount = 1, ChannelCount = 1, Source = "#order relaxed\nwhile (true) { }" });
+		ObjectId root = doc.AllocateObjectId();
+		DataSequenceDefinition sequence = new(root, "Song");
+		sequence.Entries.Add(new SequenceEntry(pattern));
+		doc.Add(sequence);
+		doc.RootSequenceId = root;
+		using var cancellation = new System.Threading.CancellationTokenSource();
+		using var plan = new OfflineSongRenderPlanFactory(Mono(1000)).Create(doc, cancellation.Token);
+		cancellation.Cancel();
+		Assert.Throws<OperationCanceledException>(() => plan.Source.Render(1, new float[1]));
+	}
+
 	private static RenderConfiguration Mono(int rate)
 		=> new(rate, [new OutputChannelConfiguration(
 			Vector3.Zero, positionalImportance: 0.0)]);

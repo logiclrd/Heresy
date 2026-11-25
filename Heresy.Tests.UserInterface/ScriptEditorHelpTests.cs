@@ -44,6 +44,20 @@ public sealed class ScriptEditorHelpTests
     }
 
     [Test]
+    public void PatternReferenceExplainsOrderingModesAndTheirTradeoffs()
+    {
+        string reference = ScriptEditorHelp.PatternReference;
+        Assert.That(reference, Does.Contain("#order strict").And.Contain("default if omitted"));
+        Assert.That(reference, Does.Contain("#order relaxed").And.Contain("before the first C# statement"));
+        Assert.That(reference, Does.Contain("Equal rows retain original emission order"));
+        Assert.That(reference, Does.Contain("Generation must complete successfully"));
+        Assert.That(reference, Does.Contain("additional memory").And.Contain("cooperative cancellation"));
+        Assert.That(reference, Does.Contain("synchronous lambdas").And.Contain("method-group delegates"));
+        Assert.That(reference, Does.Not.Contain("future design"));
+        Assert.That(reference, Does.Contain("F6 highlights an active authored delegate invocation"));
+    }
+
+    [Test]
     public void SequenceReferenceDescribesActualPatternOrderContract()
     {
         string reference = ScriptEditorHelp.SequenceReference;

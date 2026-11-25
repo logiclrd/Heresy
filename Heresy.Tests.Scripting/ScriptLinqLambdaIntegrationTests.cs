@@ -186,6 +186,128 @@ public sealed class ScriptLinqLambdaIntegrationTests
     }
 
     [Test]
+    public void RelaxedCallbacksEmitThroughExpressionBodiesBlocksAndDeferredLinq()
+    {
+        const string source = """
+            #order relaxed
+            int channel = 1;
+            Action<int> emit = n => Note(n, channel, _O(17));
+            emit(6);
+            new List<int> { 4, 1, 3 }.ForEach(emit);
+            var ignored = Enumerable.Range(0, 3).Select(n =>
+            {
+                Cut(n, 0);
+                return n;
+            });
+            var deferred = Enumerable.Range(0, 3).Select(n =>
+            {
+                for (int j = 0; j < 1; j++)
+                    Off(5 - n, 0);
+                return n;
+            });
+            foreach (int n in deferred)
+                if (n == 0)
+                    Note(0, 0, _O(17));
+            new List<int> { 2, 1 }.ForEach(n => Cut(n, 1));
+            """;
+        var pattern = new ScriptPatternDefinition((ObjectId)1U, "Relaxed callbacks")
+        { Source = source, RowCount = 8, ChannelCount = 2 };
+        var eager = ScriptCompiler.CompilePattern(pattern);
+        var ordinary = ScriptCompiler.CompileIncrementalPattern(pattern);
+        var traced = ScriptCompiler.CompileIncrementalPattern(pattern, instrumentActionCallsites: true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(eager.Success, Is.True, string.Join("; ", eager.Diagnostics.Select(d => d.Message)));
+            Assert.That(ordinary.Success, Is.True, string.Join("; ", ordinary.Diagnostics.Select(d => d.Message)));
+            Assert.That(traced.Success, Is.True, string.Join("; ", traced.Diagnostics.Select(d => d.Message)));
+        });
+
+        NoteScheduleBuilder receiver = new();
+        eager.Program!.GenerateRawNotes(new SequencingContext(), receiver, out _);
+        var expected = receiver.Freeze().ToArray();
+        var actual = ordinary.Program!.EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+        var annotated = traced.Program!.EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(expected.Select(n => n.Offset.RowOffset),
+                Is.EqualTo(new[] { 0d, 1d, 1d, 2d, 3d, 3d, 4d, 4d, 5d, 6d }));
+            Assert.That(actual.Select(n => n.Offset), Is.EqualTo(expected.Select(n => n.Offset)));
+            Assert.That(actual.Select(n => n.Target), Is.EqualTo(expected.Select(n => n.Target)));
+            Assert.That(actual.Select(n => n.Commands.Single()), Is.EqualTo(expected.Select(n => n.Commands.Single())));
+            Assert.That(annotated.Select(n => n.Offset), Is.EqualTo(expected.Select(n => n.Offset)));
+            Assert.That(annotated.Select(n => n.Target), Is.EqualTo(expected.Select(n => n.Target)));
+            Assert.That(annotated.Select(n => n.Commands.Single().GetType()),
+                Is.EqualTo(expected.Select(n => n.Commands.Single().GetType())));
+            Assert.That(actual.All(n => n.EditorCallsite is null), Is.True);
+            // Framework-owned invocation of an expression lambda highlights
+            // its direct emitter. Direct delegate-call overrides are separate.
+            Assert.That(annotated.Where(n => n.Offset.RowOffset == 1
+                    && n.Commands.Single() is StartNoteCommand)
+                .Select(n => source.Substring(n.EditorCallsite!.Value.Start, n.EditorCallsite.Value.Length)),
+                Is.EqualTo(new[] { "Note(n, channel, _O(17))" }));
+            Assert.That(annotated.Where(n => n.Offset.RowOffset == 2)
+                .Select(n => source.Substring(n.EditorCallsite!.Value.Start, n.EditorCallsite.Value.Length)),
+                Is.EqualTo(new[] { "Cut(n, 1)" }));
+            Assert.That(annotated.Where(n => n.Commands.Single() is NoteOffCommand)
+                .Select(n => source.Substring(n.EditorCallsite!.Value.Start, n.EditorCallsite.Value.Length)),
+                Is.All.EqualTo("Off(5 - n, 0)"));
+        });
+    }
+
+    [Test]
+    public void RelaxedForClauseCanEmitWithoutAStandaloneStatement()
+    {
+        const string source = """
+            #order relaxed
+            for (int row = 3; row >= 0; Note(row, 0, _O(17)), row--) { }
+            """;
+        var pattern = new ScriptPatternDefinition((ObjectId)1U, "For clause")
+        { Source = source, RowCount = 4, ChannelCount = 1 };
+        var normal = ScriptCompiler.CompileIncrementalPattern(pattern);
+        var f6 = ScriptCompiler.CompileIncrementalPattern(pattern, instrumentActionCallsites: true);
+        Assert.That(normal.Success && f6.Success, Is.True,
+            string.Join("; ", normal.Diagnostics.Concat(f6.Diagnostics).Select(d => d.Message)));
+        var expected = normal.Program!.EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+        var traced = f6.Program!.EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+        Assert.That(expected.Select(n => n.Offset.RowOffset), Is.EqualTo(new[] { 0d, 1d, 2d, 3d }));
+        Assert.That(traced.Select(n => n.Offset), Is.EqualTo(expected.Select(n => n.Offset)));
+        Assert.That(traced.Select(n => source.Substring(n.EditorCallsite!.Value.Start,
+            n.EditorCallsite.Value.Length)), Is.All.EqualTo("Note(row, 0, _O(17))"));
+        pattern.Source = source.Replace("#order relaxed", "#order strict", StringComparison.Ordinal);
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(pattern).Success, Is.False);
+    }
+
+    [Test]
+    public void RelaxedCallbackExceptionDiscardsPreviouslyCollectedEvents()
+    {
+        var pattern = new ScriptPatternDefinition((ObjectId)1U, "Callback failure")
+        {
+            RowCount = 4, ChannelCount = 1,
+            Source = """
+                #order relaxed
+                new List<int> { 0, 3, 5 }.ForEach(n => Note(n, 0, _O(17)));
+                """,
+        };
+        var eager = ScriptCompiler.CompilePattern(pattern);
+        var streamed = ScriptCompiler.CompileIncrementalPattern(pattern);
+        var traced = ScriptCompiler.CompileIncrementalPattern(pattern, instrumentActionCallsites: true);
+        Assert.That(eager.Success && streamed.Success && traced.Success, Is.True);
+        NoteScheduleBuilder output = new();
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            eager.Program!.GenerateRawNotes(new SequencingContext(), output, out _));
+        Assert.That(output.Count, Is.Zero);
+        foreach (var compiled in new[] { streamed, traced })
+        {
+            using var iterator = compiled.Program!.EnumerateRawSteps(new SequencingContext()).GetEnumerator();
+            Assert.Throws<ArgumentOutOfRangeException>(() => iterator.MoveNext());
+        }
+    }
+
+    [Test]
     public void LambdaBodyDiagnosticsProjectToAuthoredSource()
     {
         const string source = """

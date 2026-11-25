@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -94,7 +95,10 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 		if (_disposed)
 			return;
 		_disposed = true;
+		// The buffered owner marks itself disposed before signaling the source,
+		// so expected stop cancellation is not published as a worker fault.
 		_renderingWorker?.Dispose();
+		SequencingContext.Cancellation.RequestStop();
 		Source.Dispose();
 		Timeline.Dispose();
 		_disposePrivateMixdowns();
@@ -228,7 +232,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null,
 		bool repeatPattern = false,
 		ObjectId? instrumentedSequenceId = null,
-		ObjectId? instrumentedPatternId = null)
+		ObjectId? instrumentedPatternId = null,
+		CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -262,7 +267,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		// injected providers and codec-dependent work cannot run in Render.
 		sounds.PrepareDirectSources();
 
-		SequencingContext sequencingContext = new();
+		SequencingContext sequencingContext = new(cancellation: new SequencingCancellation(cancellationToken));
 		IncrementalRecursiveTimeline timeline =
 			scripts.CreateTimeline(sequencingContext);
 		try
@@ -275,7 +280,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 			PreparedIncrementalAudioSource source = CreatePrivateMixdownAwareSource(
 				timeline, session, scripts, sounds, [root],
 				out Action disposePrivateMixdowns,
-				sequencingContext.Diagnostics,
+				sequencingContext.Diagnostics, sequencingContext.Cancellation,
 				repeatSourceId: repeatPattern ? root : null,
 				repeatStartRow: startRow);
 			return new PreparedIncrementalPlaybackPlan(
@@ -324,7 +329,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				CreatePrivateMixdownAwareSource(
 					timeline, session, scripts, sounds, [transient.Id],
 					out Action disposeChildren,
-					context.Diagnostics);
+					context.Diagnostics, context.Cancellation);
 			return new PreparedIncrementalPlaybackPlan(
 				frozen, timeline, session, source,
 				invocation, disposeChildren, context, liveSynthResolver);
@@ -352,6 +357,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		IReadOnlyList<ObjectId> ancestry,
 		out Action disposePrivateMixdowns,
 		SequencingDiagnosticLog diagnostics,
+		SequencingCancellation cancellation,
 		bool isPrivateChild = false,
 		double privateClockRate = 1.0,
 		ObjectId? repeatSourceId = null,
@@ -648,7 +654,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 					scripts.CreateTimeline(new SequencingContext(
 						pitchMultiplier: pitchMultiplier,
 						playbackSpeedMultiplier: playbackSpeedMultiplier,
-						diagnostics: diagnostics));
+						diagnostics: diagnostics, cancellation: cancellation));
 				try
 				{
 					childTimeline.AddRoot(childSource);
@@ -666,7 +672,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 						CreatePrivateMixdownAwareSource(
 							childTimeline, childSession, scripts, sounds,
 							childAncestry, out Action disposeDescendants,
-							diagnostics,
+							diagnostics, cancellation,
 							isPrivateChild: true,
 							privateClockRate: playbackSpeedMultiplier);
 					return new PrivateRecursivePlayback(childTimeline,
@@ -960,6 +966,6 @@ public sealed class PreparedIncrementalPlaybackFactory
 			repeatRoot: repeatSourceId is ObjectId repeated
 				? () => timeline.AddRoot(repeated, startRow: repeatStartRow)
 				: null,
-			afterRender: RetireFinished);
+			afterRender: RetireFinished, cancellation: cancellation);
 	}
 }

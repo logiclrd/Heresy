@@ -417,7 +417,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 	private sealed class LiveRecursiveSource(
 		PreparedIncrementalPlaybackPlan plan,
 		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput,
-		IFirPreparationAudioSource, IDisposable
+		IFirPreparationAudioSource, ICooperativeRenderStop, IDisposable
 	{
 		// Publication and note messages share FIFO ordering on the producer.
 		private abstract record LiveAction;
@@ -489,6 +489,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			if (plan.Source.IsComplete && positions is not null)
 				positions.Finish(plan.Source.LogicalDuration);
 		}
+		public void RequestStop() => plan.Source.RequestStop();
 		public void Dispose() => plan.Dispose();
 	}
 }

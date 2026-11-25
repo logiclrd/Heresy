@@ -27,6 +27,12 @@ public readonly record struct AudioOutputFormat
 	public int SamplesPerFrame => ChannelCount;
 }
 
+/// <summary>Thread-safe stop signal only; the rendering worker owns its state and cleanup.</summary>
+public interface ICooperativeRenderStop
+{
+	void RequestStop();
+}
+
 public interface IAudioOutputSource
 {
 	AudioOutputFormat Format { get; }

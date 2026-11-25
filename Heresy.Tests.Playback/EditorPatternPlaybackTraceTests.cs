@@ -24,6 +24,64 @@ namespace Heresy.Tests.Playback;
 public sealed class EditorPatternPlaybackTraceTests
 {
     [Test]
+    public void RelaxedDelegateOriginsReachEditorTimelineAtScheduledRowsWithoutChangingPcm()
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long source", "delegate.wav", LongMonoWave()));
+        const string source = """
+            #order relaxed
+            Action<int> foo = n => Note(n, 0, _O(20));
+            Action<double, double> tempo = Tempo;
+            Cut(5, 0);
+            tempo(4, 250);
+            new List<int> { 2 }.ForEach(foo);
+            foo(0);
+            """;
+        var pattern = new ScriptPatternDefinition((ObjectId)5U, "Relaxed traced delegates")
+        { RowCount = 8, ChannelCount = 1, Source = source };
+        song.Add(pattern);
+        RenderConfiguration config = new(48000, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0)]);
+        var tracedFactory = new PlaybackRequestAudioSourceFactory(config);
+        var ordinaryFactory = new PlaybackRequestAudioSourceFactory(config);
+        var request = PatternPlaybackRequest.Create(song, pattern.Id) with
+        { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
+        IAudioOutputSource traced = tracedFactory.Create(request);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(PatternPlaybackRequest.Create(song, pattern.Id));
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            const int frames = 30000;
+            float[] withTrace = new float[frames], withoutTrace = new float[frames];
+            traced.Render(frames, withTrace);
+            ordinary.Render(frames, withoutTrace);
+            SequenceCallsite Span(string text) =>
+                new(source.IndexOf(text, StringComparison.Ordinal), text.Length);
+            var atZero = timeline!.GetPositionAt(TimeSpan.FromMilliseconds(20));
+            var atTwo = timeline.GetPositionAt(TimeSpan.FromMilliseconds(260));
+            var atFour = timeline.GetPositionAt(TimeSpan.FromMilliseconds(490));
+            Assert.Multiple(() =>
+            {
+                Assert.That(atZero?.EditorActiveNoteCallsites,
+                    Is.EquivalentTo(new[] { Span("foo(0)") }));
+                Assert.That(atTwo?.EditorActiveNoteCallsites,
+                    Does.Contain(Span("Note(n, 0, _O(20))")));
+                Assert.That(atFour?.EditorPatternCallsites,
+                    Does.Contain(Span("tempo(4, 250)")));
+                Assert.That(withTrace, Is.EqualTo(withoutTrace).Within(1e-6f));
+                Assert.That(withTrace.Any(v => Math.Abs(v) > 1e-5f), Is.True);
+            });
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
+    [Test]
     public void F6SustainedOriginsFollowRealVoicesAcrossRowsAndCuts()
     {
         SongDocument song = new();
