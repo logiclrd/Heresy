@@ -80,7 +80,8 @@ public static class ScriptCompiler
 			BuildPatternWrapper(
 				className,
 				InstrumentLoops(source)),
-			wrapperKind: ScriptWrapperKind.Pattern)
+			wrapperKind: ScriptWrapperKind.Pattern,
+			patternOrder: order.Order)
 			.Diagnostics;
 	}
 
@@ -118,7 +119,7 @@ public static class ScriptCompiler
 				BuildPatternWrapper(
 					className,
 					InstrumentLoops(source)),
-				typeof(PatternScriptProgram));
+				typeof(PatternScriptProgram), patternOrder: order.Order);
 
 		if (!compiled.Success || compiled.Program is null)
 		{
@@ -155,34 +156,35 @@ public static class ScriptCompiler
 		// inserting either trusted F6 callsites or streaming yields. A local
 		// delegate called Note/Tempo is not a musical event generator.
 		IReadOnlyList<ScriptAnalysisDiagnostic> authored =
-			AnalyzePatternSource(source);
+			AnalyzePatternSource(definition.Source);
 		if (HasErrors(authored))
 			return new(null, authored);
 		HashSet<int> emitterStarts = ResolveAuthoredCallStarts(
 			source, ScriptWrapperKind.Pattern);
 
-		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
-			ValidateIncrementalPatternStatements(source, emitterStarts);
-		if (restrictions.Count != 0)
-			return new(null, restrictions);
-
 		if (order.Order == ScriptPatternOrder.Relaxed)
 		{
 			string relaxedClass = "__HeresyRelaxedPattern_" + Guid.NewGuid().ToString("N");
-			// Direct emitter F6 spans are preserved now; callback and delegate
-			// provenance is a separate extension of this path.
+			// Direct emitter F6 spans include calls inside callbacks. Delegate
+			// invocation overrides and method-group provenance are separate.
 			string instrumented = instrumentActionCallsites
 				? InstrumentRelaxedPatternCallsites(source, emitterStarts)
 				: InstrumentLoops(source);
 			var relaxed = CompileType(source, relaxedClass,
 				BuildPatternWrapper(relaxedClass, instrumented),
 				typeof(PatternScriptProgram),
-				allowInjectedPlayCallsites: instrumentActionCallsites);
+				allowInjectedPlayCallsites: instrumentActionCallsites,
+				patternOrder: order.Order);
 			if (!relaxed.Success || relaxed.Program is null)
 				return new(null, relaxed.Diagnostics);
 			return new(new CompiledRelaxedPatternGenerator(relaxed.Program,
 				definition.RowCount, definition.ChannelCount), relaxed.Diagnostics);
 		}
+
+		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
+			ValidateIncrementalPatternStatements(source, emitterStarts);
+		if (restrictions.Count != 0)
+			return new(null, restrictions);
 
 		string className =
 			"__HeresyIncrementalPattern_" + Guid.NewGuid().ToString("N");
@@ -510,7 +512,8 @@ public static class ScriptCompiler
 		string wrapperSource,
 		Type requiredBaseType,
 		bool allowInjectedPlayCallsites = false,
-		bool incrementalPattern = false)
+		bool incrementalPattern = false,
+		ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict)
 	{
 		ScriptWrapperKind wrapperKind = requiredBaseType == typeof(PatternScriptProgram)
 			? incrementalPattern ? ScriptWrapperKind.IncrementalPattern
@@ -523,7 +526,7 @@ public static class ScriptCompiler
 				source,
 				wrapperSource,
 				allowInjectedPlayCallsites,
-				wrapperKind);
+				wrapperKind, patternOrder);
 		List<ScriptAnalysisDiagnostic> diagnostics =
 			[.. prepared.Diagnostics];
 
@@ -580,7 +583,8 @@ public static class ScriptCompiler
 		string source,
 		string wrapperSource,
 		bool allowInjectedPlayCallsites = false,
-		ScriptWrapperKind wrapperKind = ScriptWrapperKind.None)
+		ScriptWrapperKind wrapperKind = ScriptWrapperKind.None,
+		ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict)
 	{
 		ScriptReferenceAnalysis referenceAnalysis =
 			ScriptReferenceAnalyzer.Analyze(source);
@@ -603,7 +607,7 @@ public static class ScriptCompiler
 		if (wrapperKind != ScriptWrapperKind.None)
 		{
 			diagnostics.AddRange(ValidateCanonicalAuthoredOperations(
-				source, wrapperKind));
+				source, wrapperKind, patternOrder));
 			if (HasErrors(diagnostics))
 				return new(null, diagnostics);
 		}
@@ -690,7 +694,8 @@ public static class ScriptCompiler
 	/// </summary>
 	internal static IReadOnlyList<ScriptAnalysisDiagnostic>
 		ValidateCanonicalAuthoredOperations(
-			string source, ScriptWrapperKind wrapperKind)
+			string source, ScriptWrapperKind wrapperKind,
+			ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict)
 	{
 		ScriptWrapperKind canonicalKind =
 			wrapperKind == ScriptWrapperKind.Sequence
@@ -799,7 +804,9 @@ public static class ScriptCompiler
 			foreach (ScriptRuntimeOperationFinding finding
 				in ScriptRuntimeOperationVerifier.AnalyzeCanonical(
 					model, statement,
-					IsApprovedHeresyMember, IsOpaqueHeresyType))
+					IsApprovedHeresyMember, IsOpaqueHeresyType,
+					allowRelaxedPatternEmission: canonicalKind == ScriptWrapperKind.Pattern
+						&& patternOrder == ScriptPatternOrder.Relaxed))
 			{
 				Location location = Location.Create(tree, finding.Span);
 				AddRestrictedDiagnostic(diagnostics,
@@ -1261,15 +1268,33 @@ public static class ScriptCompiler
 		IReadOnlySet<int> emitterStarts)
 	{
 		SyntaxNode root = CSharpSyntaxTree.ParseText(source, ScriptParseOptions).GetRoot();
-		root = new StrictPatternEmitterRewriter(emitterStarts,
-			instrumentActionCallsites: true, yieldAfterEmission: false).Visit(root) ?? root;
+		root = new RelaxedPatternEmitterCallsiteRewriter(emitterStarts).Visit(root) ?? root;
 		root = new LoopCheckpointRewriter().Visit(root) ?? root;
 		return root.ToFullString();
 	}
 
+	// Relaxed emission is synchronous even in expression-bodied lambdas,
+	// for clauses and nested expressions. Instrument the actual invocation,
+	// not its enclosing statement, without inserting any yields.
+	private sealed class RelaxedPatternEmitterCallsiteRewriter(
+		IReadOnlySet<int> emitterStarts) : CSharpSyntaxRewriter
+	{
+		public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node)
+		{
+			var rewritten = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
+			if (!emitterStarts.Contains(node.SpanStart))
+				return rewritten;
+
+			ArgumentSyntax callsite = SyntaxFactory.Argument(
+				SyntaxFactory.ParseExpression(
+					$"new SequenceCallsite({node.SpanStart}, {node.Span.Length})"));
+			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
+				rewritten.ArgumentList.Arguments.Insert(0, callsite)));
+		}
+	}
+
 	private sealed class StrictPatternEmitterRewriter(
-		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites,
-		bool yieldAfterEmission = true)
+		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites)
 		: CSharpSyntaxRewriter
 	{
 		public override SyntaxNode? VisitExpressionStatement(
@@ -1294,9 +1319,6 @@ public static class ScriptCompiler
 						rewritten.ArgumentList.WithArguments(
 							rewritten.ArgumentList.Arguments.Insert(0, callsite))));
 			}
-
-			if (!yieldAfterEmission)
-				return visited;
 
 			// Every approved event generator executes exactly once, followed
 			// by an outer-iterator yield. Local methods/delegates with the
