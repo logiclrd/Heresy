@@ -483,20 +483,29 @@ Do not reintroduce completed-task checklists here.
   separate from a read-only API-reference UI, which must document
   **only the functions currently available**.
 
-- [ ] **Relax restricted-C# allocations for Script Patterns and Script
-  Sequences (issue #58).** User-authored Pattern/Sequence scripts should
-  be permitted to allocate managed objects; the current restricted syntax
-  and semantic API must be reviewed and safely broadened, not simply
-  disabled. Keep compiler safety, deterministic streaming, work/memory
-  limits, source remapping and note/event ordering intact. The engine's
-  hot paths should avoid new allocations in code that systematically
-  executes more than roughly 100 times per musical row; in cooler paths,
-  try to avoid allocations rather than banning modest per-action/row
-  metadata. Repeated user allocation in tight loops merits resource
-  safeguards, but is not automatically forbidden by the engine policy.
-  **Separate future TODO; do not implement in F6 trace PR #50.**
-  Full discovery/acceptance: https://github.com/logiclrd/Heresy/issues/58
-  General policy: [allocation policy](allocation-policy.md).
+- [ ] **Broaden restricted-C# Script Pattern and Script Sequence API
+  under the owner-approved code-isolation policy (issue #58).** Permit
+  ordinary managed allocation, strings, collections, and constructors on
+  approved types, including `List<string>`; validate **all** executable
+  operations by Roslyn symbol identity, with explicit member exclusions
+  and no uncontrolled host-object capability exposure. Preserve existing
+  work/runaway guards, deterministic streaming, source remapping and
+  note/event ordering. Voluntary script memory/CPU consumption is not
+  itself a security escape; arbitrary new allocation byte quotas are
+  not part of the approved design. Engine per-sample/device hot-path
+  discipline remains separate. Keep Script Instrument/Envelope expression
+  contexts restricted until their own redesigns. **Draft PR #67 now
+  implements the approved managed-data, LINQ/lambda, and non-emitting
+  method-group subset, with canonical Roslyn API enforcement, F6/streaming
+  integration, and owner-verified musical playback.** The closing audit
+  covers shadowed helper names, the protected host-method boundary,
+  exact-head CI, and owner merge approval. Future unrestricted C# types,
+  async callbacks, and relaxed ordering are independent follow-ups, not
+  acceptance requirements for #58. Do not fold this into F6 trace PR #50.
+  [Authoritative runtime type/member allow-list](script-runtime-allow-list.txt);
+  [code-isolation plan](script-managed-allocation-design.md);
+  [general allocation policy](allocation-policy.md).
+  Full task: https://github.com/logiclrd/Heresy/issues/58.
 
 - [ ] **Revisit Instrument model, common tone editor, and procedural
   Script Instrument authoring (exploratory design; no implementation yet).**

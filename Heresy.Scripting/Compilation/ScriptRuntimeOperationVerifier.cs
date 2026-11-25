@@ -1,0 +1,708 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
+using Microsoft.CodeAnalysis.Text;
+
+namespace Heresy.Scripting.Compilation;
+
+/// <summary>A finding against the author's original syntax, never a string-based
+/// approximation of the referenced API's name.</summary>
+internal sealed record ScriptRuntimeOperationFinding(
+    TextSpan Span, string Reason);
+
+/// <summary>
+/// Read-only, deny-by-default *prototype* for the next Pattern/Sequence
+/// compiler stage. Resolves executable operations to Roslyn symbols, including
+/// implicit foreach calls and method-group targets. It is intentionally NOT
+/// wired into ScriptCompiler: entire-source coverage, generated wrapper trust
+/// boundaries, diagnostics and incremental rewrites must be verified before
+/// it becomes an authoring gate.
+/// </summary>
+internal sealed class ScriptRuntimeOperationVerifier
+{
+    private readonly SemanticModel _model;
+    private readonly Microsoft.CodeAnalysis.Compilation _compilation;
+    private readonly ScriptRuntimeApiPolicy _policy;
+    private readonly Func<ISymbol, bool>? _approvedHostMember;
+    private readonly Func<ITypeSymbol, bool>? _approvedOpaqueHostType;
+    private readonly List<ScriptRuntimeOperationFinding> _findings = [];
+
+    private ScriptRuntimeOperationVerifier(SemanticModel model,
+        ScriptRuntimeApiPolicy policy,
+        Func<ISymbol, bool>? approvedHostMember = null,
+        Func<ITypeSymbol, bool>? approvedOpaqueHostType = null)
+    {
+        _model = model;
+        _compilation = model.Compilation;
+        _policy = policy;
+        _approvedHostMember = approvedHostMember;
+        _approvedOpaqueHostType = approvedOpaqueHostType;
+    }
+
+    /// <summary>
+    /// Examine one bound executable scope (usually a method body) and its type
+    /// syntax. A null operation is a hard error, never silent acceptance.
+    /// </summary>
+    internal static IReadOnlyList<ScriptRuntimeOperationFinding> Analyze(
+        SemanticModel model, SyntaxNode executableScope,
+        ScriptRuntimeApiPolicy? policy = null)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(executableScope);
+        IOperation root = model.GetOperation(executableScope)
+            ?? throw new InvalidOperationException(
+                "The requested script scope did not bind to a Roslyn operation.");
+
+        ScriptRuntimeOperationVerifier visitor =
+            new(model, policy ?? ScriptRuntimeApiPolicy.Default);
+        visitor.Visit(root);
+        visitor.CheckTypeSyntax(executableScope);
+        return visitor._findings.Distinct().ToArray();
+    }
+
+    /// <summary>
+    /// Audit one statement from the *unmodified* Pattern/Sequence source
+    /// embedded in its canonical wrapper. Trusted Heresy helpers may carry
+    /// opaque Core/Scripting value types only through the explicitly approved
+    /// helper symbols. This canonical pass itself denies other host-owned
+    /// members, generated-wrapper methods and inherited protected Object
+    /// methods; the type exception is NOT permission to access arbitrary
+    /// musical object internals.
+    /// </summary>
+    internal static IReadOnlyList<ScriptRuntimeOperationFinding> AnalyzeCanonical(
+        SemanticModel model, SyntaxNode authoredStatement,
+        Func<ISymbol, bool> approvedHostMember,
+        Func<ITypeSymbol, bool> approvedOpaqueHostType)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(authoredStatement);
+        ArgumentNullException.ThrowIfNull(approvedHostMember);
+        ArgumentNullException.ThrowIfNull(approvedOpaqueHostType);
+        IOperation operation = model.GetOperation(authoredStatement)
+            ?? throw new InvalidOperationException(
+                "Canonical authored statement was not bound.");
+
+        ScriptRuntimeOperationVerifier visitor = new(
+            model, ScriptRuntimeApiPolicy.Default,
+            approvedHostMember, approvedOpaqueHostType);
+        visitor.Visit(operation);
+        visitor.CheckTypeSyntax(authoredStatement);
+        return visitor._findings.Distinct().ToArray();
+    }
+
+    /// <summary>
+    /// Inspect every authored executable declaration in one C# source tree,
+    /// rather than just an explicitly selected method body. This is a
+    /// pre-integration audit: the production compiler still retains its
+    /// existing restricted rules. A multi-tree input requires a separately
+    /// designed trust boundary and is rejected rather than partly inspected.
+    /// </summary>
+    internal static IReadOnlyList<ScriptRuntimeOperationFinding> AnalyzeSource(
+        CSharpCompilation compilation, ScriptRuntimeApiPolicy? policy = null)
+    {
+        ArgumentNullException.ThrowIfNull(compilation);
+        SyntaxTree[] trees = compilation.SyntaxTrees.ToArray();
+        if (trees.Length != 1)
+            throw new InvalidOperationException(
+                "The source audit requires exactly one authored C# tree.");
+
+        SyntaxTree tree = trees[0];
+        SyntaxNode root = tree.GetRoot();
+        ScriptRuntimeOperationVerifier visitor = new(
+            compilation.GetSemanticModel(tree),
+            policy ?? ScriptRuntimeApiPolicy.Default);
+
+        foreach (Diagnostic diagnostic in compilation.GetDiagnostics())
+        {
+            if (diagnostic.Severity == DiagnosticSeverity.Error
+                && diagnostic.Location.SourceTree == tree)
+                visitor.Add(diagnostic.Location.SourceSpan,
+                    "Unresolved C# source: " + diagnostic.Id);
+        }
+
+        foreach (SyntaxTrivia trivia in root.DescendantTrivia(descendIntoTrivia: true))
+        {
+            if (trivia.IsDirective)
+                visitor.Add(trivia.Span, "Source directives are not approved.");
+        }
+
+        // Every source declaration is visited. A declaration that can contain
+        // executable code must have its body or initializer bound separately;
+        // visiting only the entry method misses static and field initializers,
+        // lambda bodies, local functions and expression-bodied members.
+        foreach (SyntaxNode node in root.DescendantNodesAndSelf())
+        {
+            switch (node)
+            {
+                case MethodDeclarationSyntax method:
+                    visitor.AuditBody(method.Body, method.ExpressionBody?.Expression);
+                    visitor.RejectExtern(method.Modifiers, method);
+                    break;
+                case ConstructorDeclarationSyntax constructor:
+                    visitor.AuditBody(constructor.Body,
+                        constructor.ExpressionBody?.Expression);
+                    visitor.RejectExtern(constructor.Modifiers, constructor);
+                    if (constructor.Initializer is { } initializer)
+                    {
+                        ISymbol? target = visitor._model.GetSymbolInfo(initializer).Symbol;
+                        if (target is IMethodSymbol methodSymbol)
+                            visitor.CheckMember(methodSymbol, ScriptMemberUse.Construct,
+                                initializer);
+                        else
+                            visitor.Add(initializer,
+                                "Constructor initializer did not bind to a method.");
+                        foreach (ArgumentSyntax arg in initializer.ArgumentList.Arguments)
+                            visitor.AuditExecutable(arg.Expression);
+                    }
+                    break;
+                case AccessorDeclarationSyntax accessor:
+                    visitor.AuditBody(accessor.Body,
+                        accessor.ExpressionBody?.Expression);
+                    break;
+                case OperatorDeclarationSyntax op:
+                    visitor.AuditBody(op.Body, op.ExpressionBody?.Expression);
+                    break;
+                case ConversionOperatorDeclarationSyntax conversion:
+                    visitor.AuditBody(conversion.Body,
+                        conversion.ExpressionBody?.Expression);
+                    break;
+                case DestructorDeclarationSyntax destructor:
+                    visitor.AuditBody(destructor.Body,
+                        destructor.ExpressionBody?.Expression);
+                    if (visitor._model.GetDeclaredSymbol(destructor) is { } finalizer
+                        && visitor._policy.IsBlockedMember(finalizer,
+                            ScriptMemberUse.CallOrMethodGroup,
+                            visitor._compilation))
+                        visitor.Add(destructor, "User-defined finalizers are blocked.");
+                    break;
+                case LocalFunctionStatementSyntax local:
+                    visitor.AuditBody(local.Body, local.ExpressionBody?.Expression);
+                    visitor.RejectExtern(local.Modifiers, local);
+                    break;
+                case SimpleLambdaExpressionSyntax lambda:
+                    visitor.AuditExecutable(lambda.Body);
+                    break;
+                case ParenthesizedLambdaExpressionSyntax lambda:
+                    visitor.AuditExecutable(lambda.Body);
+                    break;
+                case AnonymousMethodExpressionSyntax anonymous:
+                    visitor.AuditExecutable(anonymous.Block);
+                    break;
+                case PropertyDeclarationSyntax property:
+                    visitor.AuditExecutable(property.ExpressionBody?.Expression);
+                    visitor.AuditExecutable(property.Initializer?.Value);
+                    break;
+                case IndexerDeclarationSyntax indexer:
+                    visitor.AuditExecutable(indexer.ExpressionBody?.Expression);
+                    break;
+                case FieldDeclarationSyntax field:
+                    foreach (VariableDeclaratorSyntax v in field.Declaration.Variables)
+                        visitor.AuditExecutable(v.Initializer?.Value);
+                    break;
+                case EventFieldDeclarationSyntax field:
+                    foreach (VariableDeclaratorSyntax v in field.Declaration.Variables)
+                        visitor.AuditExecutable(v.Initializer?.Value);
+                    break;
+                case ParameterSyntax parameter:
+                    visitor.AuditExecutable(parameter.Default?.Value);
+                    break;
+                case GlobalStatementSyntax statement:
+                    visitor.AuditExecutable(statement.Statement);
+                    break;
+                case AttributeListSyntax attribute:
+                    visitor.Add(attribute, "User-authored attributes require a separate review.");
+                    break;
+                case RecordDeclarationSyntax record:
+                    visitor.Add(record,
+                        "Record generated members require a separate audit.");
+                    break;
+                case TypeDeclarationSyntax typeDeclaration
+                    when typeDeclaration.ParameterList is not null:
+                    visitor.Add(typeDeclaration.ParameterList,
+                        "Primary constructor and base-call lowering requires a separate audit.");
+                    break;
+                case UnsafeStatementSyntax unsafeStatement:
+                    visitor.Add(unsafeStatement, "Unsafe code is not approved.");
+                    break;
+                case PointerTypeSyntax pointer:
+                    visitor.Add(pointer, "Pointer types are not approved.");
+                    break;
+                case FunctionPointerTypeSyntax functionPointer:
+                    visitor.Add(functionPointer, "Function pointers are not approved.");
+                    break;
+            }
+        }
+
+        visitor.CheckTypeSyntax(root);
+        return visitor._findings.Distinct().OrderBy(x => x.Span.Start).ToArray();
+    }
+
+    private void AuditBody(BlockSyntax? body, ExpressionSyntax? expression)
+    {
+        AuditExecutable(body);
+        AuditExecutable(expression);
+    }
+
+    private void AuditExecutable(SyntaxNode? executable)
+    {
+        if (executable is null)
+            return;
+        IOperation? operation = _model.GetOperation(executable);
+        if (operation is null)
+        {
+            Add(executable, "Executable source could not be bound.");
+            return;
+        }
+        Visit(operation);
+    }
+
+    private void RejectExtern(SyntaxTokenList modifiers, SyntaxNode node)
+    {
+        if (modifiers.Any(token => token.IsKind(SyntaxKind.ExternKeyword)
+            || token.IsKind(SyntaxKind.UnsafeKeyword)))
+            Add(node, "Extern or unsafe declarations are not approved.");
+    }
+
+    private void Visit(IOperation operation)
+    {
+        if (operation.Kind == OperationKind.Invalid)
+            Add(operation.Syntax, "Invalid or unresolved operation.");
+        if (operation.Type is { } type)
+            CheckType(type, operation.Syntax);
+
+        switch (operation)
+        {
+            case IInvocationOperation invoke:
+                CheckMember(invoke.TargetMethod, ScriptMemberUse.CallOrMethodGroup,
+                    invoke.Syntax);
+                // A musical helper inside a LINQ callback would emit an
+                // event while the stream is enumerated, outside the direct
+                // statement/yield contract of streamed Pattern scripts.
+                // Lambda predicates/selectors may compute data only.
+                if (_approvedHostMember is not null
+                    && ScriptPatternEmissionPolicy.IsEmitterMethod(
+                        invoke.TargetMethod, _compilation)
+                    && IsInsideLambda(invoke))
+                    Add(invoke.Syntax,
+                        "Pattern event generators require direct statements in strict streaming; they cannot run inside lambdas.");
+                break;
+            case IAnonymousFunctionOperation lambda:
+                if (lambda.Symbol.IsAsync)
+                    Add(lambda.Syntax, "Async lambdas are not approved.");
+                foreach (IParameterSymbol parameter in lambda.Symbol.Parameters)
+                    CheckType(parameter.Type, lambda.Syntax);
+                CheckType(lambda.Symbol.ReturnType, lambda.Syntax);
+                break;
+            case IObjectCreationOperation creation:
+                if (creation.Constructor is { } constructor)
+                    CheckMember(constructor, ScriptMemberUse.Construct,
+                        creation.Syntax);
+                else
+                    Add(creation.Syntax, "Object constructor could not be resolved.");
+                break;
+            case IMethodReferenceOperation reference:
+                // Method-group targets must pass the identical symbol
+                // allow-list as direct calls. The one contextual exception is
+                // a Pattern event generator: in strict streaming it requires
+                // an immediate outer-iterator yield and cannot be delegated.
+                if (_approvedHostMember is not null
+                    && ScriptPatternEmissionPolicy.IsEmitterMethod(
+                        reference.Method, _compilation))
+                    Add(reference.Syntax,
+                        "Pattern event generator method groups require relaxed ordering; strict streaming needs direct statements.");
+                CheckMember(reference.Method, ScriptMemberUse.CallOrMethodGroup,
+                    reference.Syntax);
+                break;
+            case IPropertyReferenceOperation property:
+                CheckMember(property.Property,
+                    IsWrite(property) ? ScriptMemberUse.Write : ScriptMemberUse.Read,
+                    property.Syntax);
+                break;
+            case IFieldReferenceOperation field:
+                CheckMember(field.Field, IsWrite(field)
+                    ? ScriptMemberUse.Write : ScriptMemberUse.Read, field.Syntax);
+                break;
+            case IEventReferenceOperation @event:
+                CheckMember(@event.Event, ScriptMemberUse.Read, @event.Syntax);
+                break;
+            case IConversionOperation conversion
+                when conversion.OperatorMethod is { } method:
+                CheckMember(method, ScriptMemberUse.CallOrMethodGroup,
+                    conversion.Syntax);
+                break;
+            case IBinaryOperation binary when binary.OperatorMethod is { } method:
+                CheckMember(method, ScriptMemberUse.CallOrMethodGroup,
+                    binary.Syntax);
+                break;
+            case IUnaryOperation unary when unary.OperatorMethod is { } method:
+                CheckMember(method, ScriptMemberUse.CallOrMethodGroup,
+                    unary.Syntax);
+                break;
+            case ICompoundAssignmentOperation compound
+                when compound.OperatorMethod is { } method:
+                CheckMember(method, ScriptMemberUse.CallOrMethodGroup,
+                    compound.Syntax);
+                break;
+            case IIncrementOrDecrementOperation increment
+                when increment.OperatorMethod is { } method:
+                CheckMember(method, ScriptMemberUse.CallOrMethodGroup,
+                    increment.Syntax);
+                break;
+            case IForEachLoopOperation loop:
+                CheckForEach(loop);
+                break;
+            case IUsingOperation usingStatement:
+                CheckUsing(usingStatement);
+                break;
+            case IUsingDeclarationOperation usingDeclaration:
+                CheckUsing(usingDeclaration);
+                break;
+            case IWithOperation withOperation:
+                CheckMember(withOperation.CloneMethod,
+                    ScriptMemberUse.CallOrMethodGroup, withOperation.Syntax);
+                break;
+            case IEventAssignmentOperation eventAssignment:
+                if (eventAssignment.EventReference is IEventReferenceOperation eventReference)
+                    CheckMember(eventAssignment.Adds
+                        ? eventReference.Event.AddMethod
+                        : eventReference.Event.RemoveMethod,
+                        ScriptMemberUse.CallOrMethodGroup, eventAssignment.Syntax);
+                else
+                    Add(eventAssignment.Syntax, "Event accessor could not be resolved.");
+                break;
+            case ITypeOfOperation:
+                Add(operation.Syntax, "Runtime type objects are unavailable.");
+                break;
+            case IAwaitOperation or ILockOperation
+                or IDynamicInvocationOperation or IDynamicMemberReferenceOperation
+                or IDynamicIndexerAccessOperation or IDynamicObjectCreationOperation
+                or IFunctionPointerInvocationOperation or IAddressOfOperation
+                or IAnonymousObjectCreationOperation or ICollectionExpressionOperation
+                or IInterpolatedStringHandlerCreationOperation
+                or IRecursivePatternOperation or IListPatternOperation:
+                Add(operation.Syntax,
+                    "Execution or object form is not approved for script isolation.");
+                break;
+        }
+
+        foreach (IOperation child in operation.ChildOperations)
+            Visit(child);
+    }
+
+    private static bool IsInsideLambda(IOperation operation)
+    {
+        for (IOperation? ancestor = operation.Parent; ancestor is not null;
+            ancestor = ancestor.Parent)
+        {
+            if (ancestor is IAnonymousFunctionOperation)
+                return true;
+        }
+        return false;
+    }
+
+    private void CheckUsing(IUsingOperation operation)
+    {
+        if (operation.IsAsynchronous)
+        {
+            Add(operation.Syntax, "Asynchronous disposal is not approved.");
+            return;
+        }
+
+        if (operation.Syntax is not UsingStatementSyntax syntax)
+        {
+            Add(operation.Syntax, "Unrecognized using statement binding.");
+            return;
+        }
+
+        if (syntax.Declaration is { } declaration)
+            CheckUsingDeclarations(declaration.Variables, syntax);
+        else if (syntax.Expression is { } expression)
+            CheckDispose(_model.GetTypeInfo(expression).Type, syntax);
+        else
+            Add(syntax, "Using resources did not bind.");
+    }
+
+    private void CheckUsing(IUsingDeclarationOperation operation)
+    {
+        if (operation.IsAsynchronous)
+        {
+            Add(operation.Syntax, "Asynchronous disposal is not approved.");
+            return;
+        }
+
+        if (operation.Syntax is LocalDeclarationStatementSyntax syntax)
+            CheckUsingDeclarations(syntax.Declaration.Variables, syntax);
+        else
+            Add(operation.Syntax, "Unrecognized using declaration binding.");
+    }
+
+    private void CheckUsingDeclarations(
+        SeparatedSyntaxList<VariableDeclaratorSyntax> variables,
+        SyntaxNode syntax)
+    {
+        if (variables.Count == 0)
+            Add(syntax, "Using declaration contains no bound resources.");
+
+        foreach (VariableDeclaratorSyntax variable in variables)
+        {
+            if (_model.GetDeclaredSymbol(variable) is ILocalSymbol local)
+                CheckDispose(local.Type, variable);
+            else
+                Add(variable, "Using resource type could not be resolved.");
+        }
+    }
+
+    private void CheckDispose(ITypeSymbol? resourceType, SyntaxNode syntax)
+    {
+        if (resourceType is not INamedTypeSymbol named)
+        {
+            Add(syntax, "Implicit disposal requires a resolved named resource type.");
+            return;
+        }
+
+        CheckType(named, syntax);
+
+        // A synchronous using can dispatch through IDisposable or (for
+        // ref structs) through an accessible instance Dispose pattern.
+        // The called implementation must pass the same member checks as
+        // any explicitly written invocation. No unknown lowering is trusted.
+        INamedTypeSymbol? disposable =
+            _compilation.GetTypeByMetadataName("System.IDisposable");
+        IMethodSymbol? interfaceMethod = disposable?.GetMembers("Dispose")
+            .OfType<IMethodSymbol>().SingleOrDefault();
+
+        if (interfaceMethod is not null
+            && named.AllInterfaces.Any(i =>
+                SymbolEqualityComparer.Default.Equals(i, disposable)))
+        {
+            if (named.FindImplementationForInterfaceMember(interfaceMethod)
+                is IMethodSymbol implementation)
+            {
+                CheckMember(implementation, ScriptMemberUse.CallOrMethodGroup,
+                    syntax);
+                return;
+            }
+
+            Add(syntax, "IDisposable implementation could not be resolved.");
+            return;
+        }
+
+        IMethodSymbol[] methods = named.GetMembers("Dispose")
+            .OfType<IMethodSymbol>()
+            .Where(method => !method.IsStatic
+                && method.Parameters.Length == 0
+                && method.ReturnsVoid
+                && method.DeclaredAccessibility == Accessibility.Public)
+            .ToArray();
+        if (methods.Length == 1)
+            CheckMember(methods[0], ScriptMemberUse.CallOrMethodGroup, syntax);
+        else
+            Add(syntax, "Implicit Dispose target could not be verified.");
+    }
+
+    private void CheckForEach(IForEachLoopOperation loop)
+    {
+        if (loop.Syntax is not CommonForEachStatementSyntax syntax)
+        {
+            Add(loop.Syntax, "Unrecognized foreach binding.");
+            return;
+        }
+
+        ForEachStatementInfo info = _model.GetForEachStatementInfo(syntax);
+        CheckMember(info.GetEnumeratorMethod, ScriptMemberUse.CallOrMethodGroup,
+            syntax);
+        CheckMember(info.MoveNextMethod, ScriptMemberUse.CallOrMethodGroup,
+            syntax);
+        CheckMember(info.CurrentProperty, ScriptMemberUse.Read, syntax);
+        CheckMember(info.DisposeMethod, ScriptMemberUse.CallOrMethodGroup,
+            syntax);
+        if (info.ElementType is { } type)
+            CheckType(type, syntax);
+    }
+
+    private void CheckTypeSyntax(SyntaxNode scope)
+    {
+        // Operations don't expose every type-only reference (for example a
+        // named generic argument or a cast target). Check the semantic symbol
+        // independently, not a spelling-based namespace prefix.
+        foreach (TypeSyntax syntax in scope.DescendantNodesAndSelf()
+            .OfType<TypeSyntax>())
+        {
+            ITypeSymbol? type = _model.GetTypeInfo(syntax).Type;
+            if (type is not null)
+                CheckType(type, syntax);
+        }
+
+        if (scope.DescendantNodesAndSelf().OfType<StackAllocArrayCreationExpressionSyntax>()
+            .Any())
+        {
+            foreach (StackAllocArrayCreationExpressionSyntax allocation
+                in scope.DescendantNodesAndSelf()
+                    .OfType<StackAllocArrayCreationExpressionSyntax>())
+                Add(allocation, "Stack allocation is not allowed.");
+        }
+    }
+
+    private void CheckMember(ISymbol? member, ScriptMemberUse use,
+        SyntaxNode syntax)
+    {
+        if (member is null)
+            return; // e.g. arrays/strings may have no enumerator method.
+
+        if (_policy.IsBlockedMember(member, use, _compilation))
+        {
+            Add(syntax, "Blocked runtime member: " + member.ToDisplayString());
+            return;
+        }
+
+        // A script's generated class inherits protected System.Object
+        // members that ordinary user-owned data cannot call. In particular,
+        // MemberwiseClone() would duplicate the Pattern/Sequence host receiver
+        // with its references to execution budget and event sinks. Those
+        // inherited protected members are NOT part of the author-facing API.
+        if (_approvedHostMember is not null
+            && member.ContainingType?.SpecialType == SpecialType.System_Object
+            && member.DeclaredAccessibility is Accessibility.Protected
+                or Accessibility.ProtectedOrInternal
+                or Accessibility.ProtectedAndInternal)
+        {
+            Add(syntax, "Unapproved protected host receiver member: "
+                + member.ToDisplayString());
+            return;
+        }
+
+        // The canonical authored-source pass explicitly approves the exact
+        // documented helper symbols. Everything else from Heresy assemblies
+        // is rejected below; legacy expression-script rules are independent.
+        if (_approvedHostMember?.Invoke(member) == true)
+            return;
+
+        // The core/script assemblies provide opaque musical values to helper
+        // methods, NOT an ambient permission to access their members. This
+        // guard is mandatory: Pattern/Sequence validation now relies on
+        // this bound-operation verifier rather than the old checker.
+        if (_approvedHostMember is not null
+            && member.ContainingType is { } hostType
+            && _approvedOpaqueHostType?.Invoke(hostType) == true)
+        {
+            Add(syntax, "Unapproved Heresy host member: "
+                + member.ToDisplayString());
+            return;
+        }
+
+        // Authored source cannot invoke arbitrary members of the generated
+        // wrapper, even though that type belongs to the same compilation.
+        if (_approvedHostMember is not null
+            && SymbolEqualityComparer.Default.Equals(
+                member.ContainingAssembly, _compilation.Assembly))
+        {
+            Add(syntax, "Unapproved generated-script member: "
+                + member.ToDisplayString());
+            return;
+        }
+
+        if (member is IMethodSymbol method)
+        {
+            foreach (IParameterSymbol parameter in method.Parameters)
+                CheckType(parameter.Type, syntax);
+            foreach (ITypeSymbol type in method.TypeArguments)
+                CheckType(type, syntax);
+            CheckType(method.ReturnType, syntax);
+        }
+        else if (member is IPropertySymbol property)
+            CheckType(property.Type, syntax);
+        else if (member is IFieldSymbol field)
+            CheckType(field.Type, syntax);
+        else if (member is IEventSymbol eventSymbol)
+            CheckType(eventSymbol.Type, syntax);
+
+        if (member.ContainingType is { } containing)
+            CheckType(containing, syntax);
+    }
+
+    private void CheckType(ITypeSymbol type, SyntaxNode syntax)
+    {
+        if (_approvedOpaqueHostType?.Invoke(type) == true)
+            return;
+
+        if (type is ITypeParameterSymbol)
+            return; // Source type-parameter constraints need a separate audit.
+
+        // User-defined types are only usable once all their declarations and
+        // executable bodies are checked in a full-assembly validation pass.
+        // This probe reports their use as requiring that further review.
+        if (SymbolEqualityComparer.Default.Equals(
+            type.ContainingAssembly, _compilation.Assembly))
+        {
+            if (type is INamedTypeSymbol named && named.IsAnonymousType)
+                Add(syntax, "Anonymous generated types require further review.");
+            return;
+        }
+
+        if (!IsApprovedCanonicalRuntimeType(type))
+            Add(syntax, "Type outside approved runtime API: "
+                + type.ToDisplayString());
+    }
+
+    private bool IsApprovedCanonicalRuntimeType(ITypeSymbol type)
+    {
+        if (_policy.IsAllowedRuntimeType(type, _compilation))
+            return true;
+
+        // The Pattern/Sequence helper surface can return opaque musical
+        // values such as ObjectId. Holding one in an approved managed
+        // container/delegate does not authorize any new Heresy members.
+        // Preserve that narrow exception recursively for generic arguments,
+        // while requiring every enclosing generic definition to be approved.
+        // Other script contexts still use the unmodified runtime policy.
+        if (_approvedOpaqueHostType is null)
+            return false;
+        if (_approvedOpaqueHostType(type))
+            return true;
+        if (type is IArrayTypeSymbol array)
+            return IsApprovedCanonicalRuntimeType(array.ElementType);
+        if (type is INamedTypeSymbol named && named.IsGenericType
+            && _policy.IsAllowedRuntimeType(named.OriginalDefinition, _compilation)
+            && named.TypeArguments.All(IsApprovedCanonicalRuntimeType)
+            && (named.ContainingType is null
+                || IsApprovedCanonicalRuntimeType(named.ContainingType)))
+            return true;
+
+        return false;
+    }
+
+    private static bool IsWrite(IOperation reference)
+    {
+        // Skip parentheses and compiler-generated conversions around an
+        // assignment target, but do not mistake a property used as an
+        // object's *receiver* for the property being assigned.
+        IOperation current = reference;
+        while (current.Parent is IParenthesizedOperation
+            or IConversionOperation { IsImplicit: true })
+            current = current.Parent!;
+
+        return current.Parent switch
+        {
+            IAssignmentOperation assignment
+                when ReferenceEquals(assignment.Target, current) => true,
+            ICompoundAssignmentOperation compound
+                when ReferenceEquals(compound.Target, current) => true,
+            IIncrementOrDecrementOperation increment
+                when ReferenceEquals(increment.Target, current) => true,
+            IArgumentOperation argument when argument.Parameter?.RefKind
+                is RefKind.Ref or RefKind.Out => true,
+            _ => false,
+        };
+    }
+
+    private void Add(SyntaxNode syntax, string reason)
+        => Add(syntax.Span, reason);
+
+    private void Add(TextSpan span, string reason)
+        => _findings.Add(new ScriptRuntimeOperationFinding(span, reason));
+}

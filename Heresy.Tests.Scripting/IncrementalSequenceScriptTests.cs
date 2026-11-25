@@ -166,7 +166,7 @@ public sealed class IncrementalSequenceScriptTests
 	public void RestrictedFrameworkAccessStaysRejected()
 	{
 		ScriptSequenceDefinition source = new((ObjectId)1U, "Sandbox")
-			{ Source = "return System.IO.File.ReadAllText(\"forbidden\");" };
+			{ Source = "System.IO.File.ReadAllText(\"forbidden\"); return default;" };
 		var compiled = ScriptCompiler.CompileIncrementalSequence(source);
 		compiled.Success.Should().BeFalse();
 		compiled.Diagnostics.Should().Contain(d => d.Code == "HRS2001");

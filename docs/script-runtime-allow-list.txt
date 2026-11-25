@@ -1,0 +1,215 @@
+Allow list
+==========
+
+Important: Matching these types and methods is to be done via Roslyn tokens, never directly against source code text.
+
+Important: For blocked methods, both method calls and method group conversions must be blocked.
+
+Basic types:
+System.Boolean
+System.Byte
+System.Char
+System.DateOnly
+System.DateTime
+System.DateTimeKind
+System.DateTimeOffset
+System.DayOfWeek
+System.Decimal
+System.Double
+System.Guid
+System.Half
+System.Int16
+System.Int32
+System.Int64
+System.Int128
+System.IntPtr
+System.Object
+System.SByte
+System.Single
+System.String
+System.TimeOnly
+System.UInt16
+System.UInt32
+System.UInt64
+System.UInt128
+System.UIntPtr
+System.Void
+
+All enumerated types defined within System.PrivateCoreLib
+
+Exceptions:
+System.Exception and any subclass defined within System.Private.CoreLib
+
+Core types:
+System.Action
+System.Array
+System.ArraySegment`1
+System.AsyncCallback
+System.Attribute
+System.AttributeUsageAttribute
+System.Base64
+System.Base64Url
+System.BitConverter
+System.Buffer
+System.CharEnumerator
+System.Comparison`1
+System.Convert
+System.Converter`2
+System.DBNull
+System.Delegate
+System.Enum
+System.EventArgs
+System.EventHandler
+System.EventHandler`1
+System.EventHandler`2
+System.FormattableString
+System.HashCode
+System.Index
+System.Lazy`1
+System.Lazy`2
+System.Math
+System.MathF
+System.Memory`1
+System.MulticastDelegate
+System.Nullable
+System.Nullable`1
+System.OperatingSystem
+System.Predicate`1
+System.Random
+System.Range
+System.ReadOnlyMemory`1
+System.ReadOnlySpan`1
+System.SearchValues
+System.SearchValues`1
+System.Span`1
+System.StringComparer
+System.TimeProvider
+System.TimeZone
+System.TimeZoneInfo
+System.Tuple
+System.TupleExtensions
+System.TypeCode
+System.ValueTuple
+System.Version
+System.WeakReference
+System.WeakReference`1
+System.Buffers.ArrayPool`1
+System.Buffers.OperationStatus
+System.Buffers.ReadOnlySpanAction`2
+System.Buffers.SpanAction`2
+System.Buffers.Text.Base64
+System.Buffers.Text.Base64Url
+System.CodeDom.Compiler.IndentedTextWriter
+System.Collections.*
+System.Collections.Generic.*
+System.Collections.ObjectModel.*
+System.Diagnostics.Stopwatch
+System.Globalization.Calendar and all subclasses
+System.Globalization.CharUnicodeInfo
+System.Globalization.CompareInfo
+System.Globalization.CultureInfo (*see below)
+System.Globalization.DateTimeFormatInfo
+System.Globalization.DaylightTime
+System.Globalization.GlobalizationExtensions
+System.Globalization.IdnMapping
+System.Globalization.NumberFormatInfo
+System.Globalization.RegionInfo
+System.Globalization.SortKey
+System.Globalization.SortVersion
+System.Globalization.StringInfo
+System.Globalization.TextElementEnumerator
+System.Globalization.TextInfo
+System.IO.BinaryReader
+System.IO.BinaryWriter
+System.IO.Path
+System.IO.StreamReader (*see below)
+System.IO.StreamWriter (*see below)
+System.IO.StringReader
+System.IO.StringWriter
+System.IO.TextReader
+System.IO.TextWriter
+System.Net.WebUtility
+System.Numerics.BitOperations
+System.Numerics.TotalOrderIeee754Comparer`1
+System.Text.* (*see below)
+System.Threading.CancellationToken
+System.Threading.CancellationTokenSource
+System.Threading.Timeout
+
+Generic building blocks:
+System.Action`1
+System.Action`2
+System.Action`3
+System.Action`4
+System.Action`5
+System.Action`6
+System.Action`7
+System.Action`8
+System.Action`9
+System.Action`10
+System.Action`11
+System.Action`12
+System.Action`13
+System.Action`14
+System.Action`15
+System.Func`1
+System.Func`2
+System.Func`3
+System.Func`4
+System.Func`5
+System.Func`6
+System.Func`7
+System.Func`8
+System.Func`9
+System.Func`10
+System.Func`11
+System.Func`12
+System.Func`13
+System.Func`14
+System.Func`15
+System.Func`16
+System.Tuple`1
+System.Tuple`2
+System.Tuple`3
+System.Tuple`4
+System.Tuple`5
+System.Tuple`6
+System.Tuple`7
+System.Tuple`8
+System.ValueTuple`1
+System.ValueTuple`2
+System.ValueTuple`3
+System.ValueTuple`4
+System.ValueTuple`5
+System.ValueTuple`6
+System.ValueTuple`7
+System.ValueTuple`8
+
+Interfaces:
+Any interface defined in System.Private.CoreLib
+
+Additional assemblies:
+All public types defined in System.Linq.dll
+
+Selectively block:
+Object::GetType()
+System.Delegate::CreateDelegate
+System.Delegate::DynamicInvoke
+System.Delegate::Method
+System.Delegate::Target
+System.Exception::TargetSite
+System.String::Intern
+System.TimeProvider::CreateTimer
+System.TimeZoneInfo::ClearCachedData
+System.Buffers.ArrayPool`1::Shared
+System.Globalization.CultureInfo: instantiation, ClearCachedData
+System.Globalization.CultureInfo::ClearCachedData
+System.Globalization.DateTimeFormatInfo::SetAllDateTimePatterns
+System.Globalization.*: property assignment
+System.IO.Path::GetTempFileName
+System.IO.StreamReader, System.IO.StreamWriter: constructors that take file paths
+System.Text.Encoding::RegisterProvider
+System.Threading.CancellationToken::Register
+System.Threading.CancellationToken::UnsafeRegister
+System.Threading.CancellationTokenSource::CancelAfter
+User-defined finalizers
