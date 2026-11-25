@@ -1,0 +1,203 @@
+# Script Pattern virtual-note ownership redesign (#54)
+
+Status: approved owner contract, implementation planning / migration inventory.
+Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
+[Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
+this document records the implementation choices and boundaries. No public
+API or saved-song migration has been implemented yet.
+
+## Public scripting surface
+
+Replace the caller-selected virtual ID, not the underlying virtual-channel
+capability. `NoteVirtual(row, sourceId, pitchMultiplier = 1.0, ...)` returns
+an exclusive `VirtualNote`. Its remaining parameters/defaults match the
+existing helper: playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds,
+eventFilterDefinitionId. `VirtualNote.Note(row, sourceId, ...)` retriggers
+on the same logical channel. It is not named Replace. The wrapper is a
+reference object so ownership changes invalidate all aliases at once.
+
+| Existing virtual helper | Replacement |
+| --- | --- |
+| NoteVirtual(row, virtualId, sourceId, ...) | NoteVirtual(row, sourceId, ...) returning VirtualNote |
+| NoteVirtual on an existing ID | note.Note(row, sourceId, ...) |
+| VolumeVirtual | note.Volume |
+| SourceFrameVirtual | note.SourceFrame (native source frames, not seconds) |
+| DisplacementVirtual / PastVirtual | note.Displacement / note.Past |
+| OffVirtual / CutVirtual | note.Off / note.Cut |
+| NoteFilterVirtual / ChannelFilterVirtual | note.NoteFilter / note.ChannelFilter |
+
+The two Filter assignment commands have different semantics. Do not silently
+turn the existing physical resonant Filter(cutoff, resonance) into a virtual
+capability or conflate note and channel filter assignment. If a shorter
+`Filter` alias is desired, settle its meaning explicitly rather than
+inventing a new musical operation. The existing no-ID scope/global
+Off/Cut broadcasts may remain distinct from the owning group API; they do
+not grant a numeric-ID lookup or a way to reacquire a transferred lease.
+They must never be used to implement group fanout.
+
+`NewNoteGroup()` constructs a mutable owning group; `group += note`
+moves the underlying lease, invalidating the source wrapper permanently.
+A group forwards existing-note controls only; no group Note. Transfer
+validates destination and source before mutation; duplicate, disposed,
+transferred, or cross-invocation ownership is warning-only, with no
+musical commands. The same group instance remains the destination.
+Explicit Dispose is idempotent, including on a transferred wrapper.
+
+The approved examples use using blocks and compound assignment. Roslyn
+must be tested for readonly using-local compound assignment: do not assume
+an ordinary static operator + returning the same object permits reassignment
+of a using variable. Investigate the compiler's supported instance compound
+assignment operator or an explicit trusted lowering that preserves the
+authored semantics. The approved syntax must work, not merely a workaround
+in the editor examples.
+
+## Identity and lifetime
+
+Keep three independent lifetimes:
+
+1. An invocation-local allocator owns live leases, with an immediately
+   reusable slot on release. Disposal is bookkeeping, not a musical event.
+2. Each emitted virtual target carries an immutable identity. Pending
+   events and old voices keep that identity after lease release.
+3. Audio channel state, displaced NNA voices, output-filter history,
+   and anti-click tails retire according to actual audio lifetime.
+
+Proposed internal identity: a value type with uint slot and ulong
+generation; generation zero reserved for existing engine/preview targets.
+Use an invocation-wide monotonically increasing generation counter, with
+explicit exhaustion check, and a free-slot stack. No per-slot historical
+generation map or per-lease tombstones; bookkeeping scales with peak
+simultaneous ownership. The renderer's effective identity is the existing
+cursor owner plus the full value. Never derive a new generation from a
+currently sounding voice. Preserve legacy non-script uint entrypoints
+where necessary for live audition and data/engine tests; scripts do not
+receive that ID or generation. Do not narrow a generated identity to uint
+in a resolver, sorting key, displaced voice or renderer cache.
+
+Lease ownership state is distinct from audio. A retained silent wrapper
+must not keep an otherwise unnecessary PlaybackChannelState alive.
+An old generation may still have events after the script has disposed it,
+even after a reused slot has started a new voice. No Off, Cut, Fade or
+other musical command is injected on disposal.
+
+### Reclamation proof obligation
+
+PlaybackSession currently removes empty _scopedVirtualChannels after
+voice and anti-click completion, but _scopedVirtualOutputFilters is a
+separate keyed map and is still flushed for every segment. Merely widening
+the key would make old generation filter entries accumulate indefinitely.
+Also, early deletion of persistent channel filter configuration would break
+a valid later retrigger on the same lease. Design explicit non-musical
+retirement/last-reference bookkeeping: a generation may retire only after
+no additional authored emission can refer to it, all scheduled uses (including
+deferred wall offsets and prefetched events) are consumed/canceled, and
+its voice/filter/anti-click tails no longer require the state. Relaxed
+collection can determine complete raw event horizons before replay; strict
+collection cannot predict future author actions. Natural cursor completion,
+cancellation, and source rewinds must all participate. Do not retire at
+Dispose alone, or assume row order is wall-deadline order. Need tests to
+choose/validate the sideband representation before broad implementation.
+No per-frame scan over historical released leases, no indefinitely growing
+identity-to-retirement journal, and no change to legacy non-script filter
+semantics.
+
+## Compiler integration after #58 and #69
+
+The issue's older observation that using/member calls are prohibited is
+superseded: canonical Roslyn IOperation validation now supports managed
+data, synchronous using, approved bound members and LINQ. #69 adds strict
+and relaxed Pattern modes. Expand the exact bound-symbol host allow-list
+for the two opaque wrapper types and approved methods, IDisposable
+implementation and compound assignment operator only. Constructors, arbitrary
+host properties, metadata helpers, forged identity, other host members and
+reflection remain unavailable. Audit before trusted rewrites.
+
+Strict mode still has a single pending-event slot. A NoteVirtual initializer
+must create the lease and emit its start, then suspend before the next
+authored action. Handle method statements must suspend after their event.
+Group operations must enumerate/forward one event per suspension, not
+append multiple events to the same pending slot. A using initializer
+requires a scope-preserving lowering: ensure disposal even on cancellation
+while suspended at the initial emission. Compound assignment must preserve
+receiver/argument evaluation, transfer semantics, and the original span.
+Prove the permitted language shapes rather than attempting unrestricted
+expression splitting across iterator suspension. Relaxed mode uses its
+existing transactional synchronous collector, so callbacks and group
+fanout can append normally; maintain the same ownership rules and stable
+sorting. No callback is permitted to outlive its invocation.
+
+F6: use original full authored NoteVirtual/handle/group invocation spans,
+including initializer and transfer contexts; all member emissions of one
+group action share its span. Respect #69 active delegate invocation override
+and framework-callback fallback. Metadata-only runtime entrypoints cannot
+be authored; ordinary playback does not acquire F6 instrumentation.
+
+Compile-time warnings should be conservative: demonstrably unowned return
+values and unproven termination; known transfer/Dispose/using ownership
+paths; avoid claiming complete alias analysis. Runtime invalid operations
+must be suppressed with a bounded diagnostic (use the existing
+SequencingDiagnosticLog pattern with dedicated codes/counter); no silent
+ownership errors. Invocation cleanup reports/reclaims still-owned leases
+even if a script loses its last wrapper reference, and cannot affect already
+scheduled musical commands. Cleanup works across normal completion,
+exception and iterator disposal.
+
+## Source migration inventory
+
+The following is the first pass at the exact merged baseline, not a claim
+that grep exhaustively proves every reference. Repeat semantic/build
+inventory during migration.
+
+- Core: ChannelTarget (uint VirtualChannelId), NoteEvent and
+  PatternNoteProcessor.CompareTargets; raw and resolved scheduler/cursor
+  paths, deferred deadlines and scope/cancellation/broadcast behavior.
+- Render: PlaybackSession scoped channel and output-filter dictionaries
+  (currently (long Owner, uint Id)), anti-click cut and displaced voice
+  routing, filter fork/buses/tails, PlaybackVoice.OriginVirtualChannelId,
+  cancellation and output retirement. Preserve targeted legacy virtual
+  preview behavior. Inspect all equality, seed, sort and cache key uses.
+- Playback: PreparedIncrementalPlaybackFactory scoped/private mixdown
+  tracking and instrument binding, PatternLiveEventCompiler and other live
+  preview entrypoints (retain non-script numeric behavior).
+- Scripting: ScriptProgramRuntime existing helpers and F6 overloads,
+  ScriptPatternEmissionPolicy, ScriptCompiler canonical checks and strict/
+  relaxed rewriters, ScriptRuntimeOperationVerifier using/member/operator
+  authorization, wrapper containment; add allocator/opaque owner runtime.
+- UI/docs: ScriptEditorHelp, script-programmability, script-pitch-helper-design
+  examples, reference and source-analysis diagnostics/highlighting.
+- Existing script fixtures to migrate: ScriptVirtualChannelTests,
+  ScriptVirtualControlTests, ScriptVirtualPlaybackTests,
+  ScriptVirtualControlPlaybackTests, ScriptPitchMathTests,
+  EditorPatternCallsiteTests, EditorPatternPlaybackTraceTests,
+  ScriptInstrumentPlaybackTests, PlaybackExportPcmParityTests.
+- Renderer/Core fixtures using numeric ChannelTarget.Virtual for internal
+  behavior should remain valid or migrate only where explicitly testing the
+  generation-qualified form. ChannelFilterNnaForkTests and
+  FmSynthNnaVirtualLifecycleTests assert displaced origin identity.
+- Diagnostics: SequencingDiagnosticLog presently reserves HRSEQ001–010;
+  use a dedicated bounded ownership-warning category, not the out-of-order
+  or filter-error counters.
+
+## Implementation gates
+
+1. **Design/inventory (this slice):** baseline and public mapping above;
+   verify readonly using-local operator semantics and choose retirement
+   sideband at the relevant implementation gate.
+2. **Internal identity and allocator:** generation-qualified value carried
+   through all Core/Render/Playback boundaries, legacy preview parity,
+   explicit overflow and bounded allocator tests. Before changing script API,
+   prove old delayed commands, sibling scopes, same-slot overlap, NNA,
+   private mixdown and filter retirement isolation with renderer tests.
+3. **Single handle:** exclusive lease ownership, NoteVirtual returns
+   handle, retrigger and controls, disposal/cleanup, warnings, strict
+   initializer lowering, relaxed callbacks. Migrate numeric script fixtures.
+4. **Owning group:** transactional transfer/aliases, per-member fanout and
+   strict suspension, disposal, invalid ownership diagnostics and group
+   Note rejection.
+5. **F6 and integration:** full original span propagation, manual editor
+   audition, reference migration, randomized/stress and nested/repeated/
+   export PCM parity, exact-head CI and explicit owner merge approval.
+
+Keep one draft feature PR until the entire redesign is accepted. A
+production identity migration, API switch, or unverified retirement
+mechanism is not implied by this design-only first commit.
