@@ -214,7 +214,7 @@ public abstract class PatternScriptProgram
 	// rejects all three helpers, even when relaxed ordering is enabled.
 	// Preserve the exact delegate type at the original invocation boundary;
 	// the adapter body executes only after receiver and arguments are evaluated.
-	protected static TDelegate __HeresyWrapDelegate<TDelegate>(
+	protected TDelegate __HeresyWrapDelegate<TDelegate>(
 		TDelegate target, Func<TDelegate, TDelegate> createAdapter)
 		where TDelegate : Delegate
 		=> createAdapter(target);
