@@ -188,14 +188,14 @@ public sealed class PreparedIncrementalPlaybackFactory
 	private sealed class TrackedMixdown(
 		PreparedRecursiveMixdownSound sound, long startFrame,
 		int physicalChannel, long physicalPlaybackOwner,
-		uint? virtualChannelId, long? virtualOwner,
+		VirtualChannelIdentity? virtualChannelId, long? virtualOwner,
 		IReadOnlyList<long>? enclosingSourceScopes)
 	{
 		public PreparedRecursiveMixdownSound Sound { get; } = sound;
 		public long StartFrame { get; } = startFrame;
 		public int PhysicalChannel { get; } = physicalChannel;
 		public long PhysicalPlaybackOwner { get; } = physicalPlaybackOwner;
-		public uint? VirtualChannelId { get; } = virtualChannelId;
+		public VirtualChannelIdentity? VirtualIdentity { get; } = virtualChannelId;
 		public long? VirtualOwner { get; } = virtualOwner;
 		// An indirect Instrument leaf remains a child of every flattened
 		// instigator, even when its independent renderer has a private clock.
@@ -382,7 +382,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		List<PreparedRecursiveMixdownSound> privateVoices = [];
 		Dictionary<ObjectId, ISound> registeredVoices = [];
 		Dictionary<(long Owner, int Host), TrackedMixdown> physicalVoices = [];
-		Dictionary<(long Owner, uint Id), TrackedMixdown> scopedVoices = [];
+		Dictionary<(long Owner, VirtualChannelIdentity Id), TrackedMixdown> scopedVoices = [];
 		List<TrackedMixdown> displacedVoices = [];
 		disposePrivateMixdowns = () =>
 		{
@@ -458,7 +458,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				displacedVoices.Add(old);
 		}
 
-		void ReplaceVirtual(long owner, uint id, long frame)
+		void ReplaceVirtual(long owner, VirtualChannelIdentity id, long frame)
 		{
 			if (!scopedVoices.Remove((owner, id), out TrackedMixdown? old))
 				return;
@@ -520,7 +520,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 					for (int p = displacedVoices.Count - 1; p >= 0; p--)
 					{
 						TrackedMixdown prior = displacedVoices[p];
-						if (prior.VirtualChannelId.HasValue
+						if (prior.VirtualIdentity.HasValue
 							|| prior.PhysicalChannel != channel
 							|| prior.PhysicalPlaybackOwner != playbackOwner)
 							continue;
@@ -558,7 +558,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 
 			if (target.Kind == ChannelTargetKind.Virtual)
 			{
-				var key = (owner, target.VirtualChannelId);
+				var key = (owner, target.VirtualIdentity);
 				if (command is ApplyPastNoteActionCommand past)
 				{
 					NoteDisplacementAction action = past.Action switch
@@ -572,7 +572,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 					for (int p = displacedVoices.Count - 1; p >= 0; p--)
 					{
 						TrackedMixdown prior = displacedVoices[p];
-						if (prior.VirtualChannelId != target.VirtualChannelId
+						if (prior.VirtualIdentity != target.VirtualIdentity
 							|| prior.VirtualOwner != owner)
 							continue;
 						Schedule(prior, frame, action);
@@ -622,7 +622,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 					for (int p = displacedVoices.Count - 1; p >= 0; p--)
 					{
 						TrackedMixdown previous = displacedVoices[p];
-						if (previous.VirtualChannelId is null
+						if (previous.VirtualIdentity is null
 							|| previous.StartFrame >= frame)
 							continue;
 						if (command is NoteOffCommand)
@@ -698,13 +698,13 @@ public sealed class PreparedIncrementalPlaybackFactory
 				target.Kind == ChannelTargetKind.Physical
 					? target.PhysicalChannel : -1, playbackOwner,
 				target.Kind == ChannelTargetKind.Virtual
-					? target.VirtualChannelId : null,
+					? target.VirtualIdentity : null,
 				target.Kind == ChannelTargetKind.Virtual ? owner : null,
 				enclosingSourceScopes);
 			if (target.Kind == ChannelTargetKind.Physical)
 				physicalVoices[(playbackOwner, target.PhysicalChannel)] = tracked;
 			else if (target.Kind == ChannelTargetKind.Virtual)
-				scopedVoices[(owner, target.VirtualChannelId)] = tracked;
+				scopedVoices[(owner, target.VirtualIdentity)] = tracked;
 		}
 
 		// Ordinary sample/FM Instruments keep the existing immutable cached
@@ -882,7 +882,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 							note.PhysicalPlaybackOwner, parentFrame);
 					else if (note.Target.Kind == ChannelTargetKind.Virtual)
 					{
-						ReplaceVirtual(owner, note.Target.VirtualChannelId,
+						ReplaceVirtual(owner, note.Target.VirtualIdentity,
 							parentFrame);
 					}
 					ISound instrument = ResolveTone(start.SourceId, ancestry,
@@ -925,7 +925,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 								note.PhysicalPlaybackOwner, parentFrame);
 						else if (note.Target.Kind == ChannelTargetKind.Virtual)
 						{
-							ReplaceVirtual(owner, note.Target.VirtualChannelId,
+							ReplaceVirtual(owner, note.Target.VirtualIdentity,
 								parentFrame);
 						}
 					}
@@ -939,7 +939,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 						note.PhysicalPlaybackOwner, parentFrame);
 				else if (note.Target.Kind == ChannelTargetKind.Virtual)
 				{
-					ReplaceVirtual(owner, note.Target.VirtualChannelId,
+					ReplaceVirtual(owner, note.Target.VirtualIdentity,
 						parentFrame);
 				}
  				PreparedRecursiveMixdownSound privateVoice =
