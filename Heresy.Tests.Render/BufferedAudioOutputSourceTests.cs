@@ -91,6 +91,53 @@ public sealed class BufferedAudioOutputSourceTests
 		Assert.That(source.ReceivedCommands, Is.EqualTo(1));
 	}
 
+	[Test]
+	public void DisposeRequestsCooperativeStopBeforeJoiningProducer()
+	{
+		using ManualResetEventSlim entered = new(false);
+		using ManualResetEventSlim stopped = new(false);
+		var source = new StoppableSource(entered, stopped);
+		using var ring = new BufferedAudioOutputSource(source, 8, 2);
+		try
+		{
+			Assert.That(entered.Wait(TimeSpan.FromSeconds(5)), Is.True);
+			ring.Dispose();
+			Assert.Multiple(() =>
+			{
+				Assert.That(source.StopRequests, Is.EqualTo(1));
+				Assert.That(source.ObservedStop, Is.True);
+				Assert.That(ring.RenderingFault, Is.Null,
+					"Expected stop cancellation must not surface as a rendering fault.");
+				Assert.That(ring.BufferedFrames, Is.Zero);
+			});
+		}
+		finally { stopped.Set(); }
+	}
+
+	private sealed class StoppableSource(ManualResetEventSlim entered,
+		ManualResetEventSlim stopped) : IAudioOutputSource, ICooperativeRenderStop
+	{
+		private int _requests;
+		public int StopRequests => Volatile.Read(ref _requests);
+		public bool ObservedStop { get; private set; }
+		public AudioOutputFormat Format { get; } = new(48000, 1);
+
+		public void RequestStop()
+		{
+			Interlocked.Increment(ref _requests);
+			stopped.Set();
+		}
+
+		public void Render(int frames, Span<float> destination)
+		{
+			entered.Set();
+			if (!stopped.Wait(TimeSpan.FromSeconds(5)))
+				throw new InvalidOperationException("Producer joined without requesting stop.");
+			ObservedStop = true;
+			throw new OperationCanceledException();
+		}
+	}
+
 	private sealed class TestSource : ILiveAudioOutputSource
 	{
 		private readonly ManualResetEventSlim? _entered;
