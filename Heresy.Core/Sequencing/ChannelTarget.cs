@@ -18,28 +18,33 @@ public enum ChannelTargetKind
 /// </summary>
 public readonly record struct ChannelTarget
 {
-	private ChannelTarget(ChannelTargetKind kind, int physicalChannel, uint virtualChannelId)
+	private ChannelTarget(ChannelTargetKind kind, int physicalChannel, VirtualChannelIdentity virtualIdentity)
 	{
 		Kind = kind;
 		PhysicalChannel = physicalChannel;
-		VirtualChannelId = virtualChannelId;
+		VirtualIdentity = virtualIdentity;
 	}
 
 	public ChannelTargetKind Kind { get; }
 	public int PhysicalChannel { get; }
-	public uint VirtualChannelId { get; }
+	public VirtualChannelIdentity VirtualIdentity { get; }
+	/// <summary>Legacy numeric slot; not a complete generation-qualified identity.</summary>
+	public uint VirtualChannelId => VirtualIdentity.Slot;
 
-	public static ChannelTarget Global => new(ChannelTargetKind.Global, -1, 0);
-	public static ChannelTarget AllVirtualInScope => new(ChannelTargetKind.AllVirtualInScope, -1, 0);
-	public static ChannelTarget AllVirtual => new(ChannelTargetKind.AllVirtual, -1, 0);
+	public static ChannelTarget Global => new(ChannelTargetKind.Global, -1, default);
+	public static ChannelTarget AllVirtualInScope => new(ChannelTargetKind.AllVirtualInScope, -1, default);
+	public static ChannelTarget AllVirtual => new(ChannelTargetKind.AllVirtual, -1, default);
 
 	public static ChannelTarget Physical(int channel)
 	{
 		if (channel < 0)
 			throw new ArgumentOutOfRangeException(nameof(channel));
-		return new ChannelTarget(ChannelTargetKind.Physical, channel, 0);
+		return new ChannelTarget(ChannelTargetKind.Physical, channel, default);
 	}
 
 	public static ChannelTarget Virtual(uint id)
-		=> new(ChannelTargetKind.Virtual, -1, id);
+		=> Virtual(VirtualChannelIdentity.Legacy(id));
+
+	public static ChannelTarget Virtual(VirtualChannelIdentity identity)
+		=> new(ChannelTargetKind.Virtual, -1, identity);
 }
