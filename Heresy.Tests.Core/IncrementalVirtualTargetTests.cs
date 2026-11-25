@@ -122,6 +122,33 @@ public sealed class IncrementalVirtualTargetTests
 	}
 
 	[Test]
+	public void RecycledSlotKeepsOldGenerationOnDeferredWallDeadline()
+	{
+		var oldTarget = ChannelTarget.Virtual(new VirtualChannelIdentity(7, 1));
+		var newTarget = ChannelTarget.Virtual(new VirtualChannelIdentity(7, 2));
+		var legacy = ChannelTarget.Virtual(7);
+		Assert.That(new[] { oldTarget, newTarget, legacy }.Distinct().Count(), Is.EqualTo(3));
+		RawSource source = new(
+			At(0, oldTarget, new StartNoteCommand((ObjectId)90U)),
+			new NoteEvent(new MusicalTime(TimeSpan.FromMilliseconds(85), 0),
+				oldTarget, [new NoteCutCommand()]),
+			At(0.5, newTarget, new StartNoteCommand((ObjectId)91U)));
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(source, 1, context);
+		var actual = Drain(timeline);
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual.Select(x => x.InvocationId), Is.All.EqualTo(owner));
+			Assert.That(actual.Select(x => x.Note.Target),
+				Is.EqualTo(new[] { oldTarget, newTarget, oldTarget }));
+			Assert.That(actual.Select(x => x.Note.Offset.TimeOffset),
+				Is.EqualTo(new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(60),
+					TimeSpan.FromMilliseconds(85) }));
+		});
+	}
+
+	[Test]
 	public void TrackerMemoryEffectsStillRequirePhysicalTargets()
 	{
 		SequencingContext root = new();
