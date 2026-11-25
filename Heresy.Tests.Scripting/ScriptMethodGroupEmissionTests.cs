@@ -152,14 +152,78 @@ public sealed class ScriptMethodGroupEmissionTests
     }
 
     [Test]
-    public void RelaxedDirectiveRecognizedButEmitterMethodGroupsStillRestricted()
+    public void RelaxedEmitterMethodGroupsAndDelegatesProduceSortedEventsInEveryCompilerPath()
     {
         const string source = """
             #order relaxed
-            Action<double, double> emit = Tempo;
+            Action<double, double> tempo = Tempo;
+            Action<double, int> speed = Speed;
+            Action<double, int, double> cut = Cut;
+            tempo(6, 125);
+            speed.Invoke(0, 3);
+            cut(5, 0, 0.02);
+            var callbacks = new List<Action<double, double>> { tempo };
+            foreach (var callback in callbacks)
+                callback(1, 250);
             """;
-        Errors(source).Should().Contain(d =>
-            d.Message.Contains("Pattern event generator method groups", StringComparison.Ordinal),
-            "callback emission is not implemented in this intermediate slice");
+        Errors(source).Should().BeEmpty();
+        var pattern = new ScriptPatternDefinition((ObjectId)1U, "Delegated emitters")
+        { Source = source, RowCount = 8, ChannelCount = 1 };
+        var eager = ScriptCompiler.CompilePattern(pattern);
+        var normal = ScriptCompiler.CompileIncrementalPattern(pattern);
+        var f6 = ScriptCompiler.CompileIncrementalPattern(pattern, instrumentActionCallsites: true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(eager.Success, Is.True, string.Join("; ", eager.Diagnostics.Select(d => d.Message)));
+            Assert.That(normal.Success, Is.True, string.Join("; ", normal.Diagnostics.Select(d => d.Message)));
+            Assert.That(f6.Success, Is.True, string.Join("; ", f6.Diagnostics.Select(d => d.Message)));
+        });
+
+        NoteScheduleBuilder receiver = new();
+        eager.Program!.GenerateRawNotes(new SequencingContext(), receiver, out _);
+        var expected = receiver.Freeze().ToArray();
+        Assert.That(expected.Select(n => n.Offset.RowOffset), Is.EqualTo(new[] { 0d, 1d, 5d, 6d }));
+        Assert.That(expected.Select(n => n.Commands.Single()),
+            Is.EqualTo(new NoteCommand[] { new SetSpeedCommand(3), new SetTempoCommand(250),
+                new NoteCutCommand(), new SetTempoCommand(125) }));
+        Assert.That(expected[2].Offset.TimeOffset, Is.EqualTo(TimeSpan.FromMilliseconds(20)));
+
+        foreach (var compiled in new[] { normal, f6 })
+        {
+            var actual = compiled.Program!.EnumerateRawSteps(new SequencingContext())
+                .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+            Assert.That(actual.Select(n => n.Offset), Is.EqualTo(expected.Select(n => n.Offset)));
+            Assert.That(actual.Select(n => n.Commands.Single()), Is.EqualTo(expected.Select(n => n.Commands.Single())));
+        }
+    }
+
+    [TestCase("Action<double, double> emit = Tempo; emit(0, 125);")]
+    [TestCase("Action emit = () => Note(0, 0, _O(17)); emit();")]
+    public void ExplicitStrictRetainsTheSameCallbackRestrictions(string source)
+    {
+        var pattern = new ScriptPatternDefinition((ObjectId)1U, "Strict callbacks")
+        { RowCount = 8, ChannelCount = 1, Source = "#order strict\n" + source };
+        Errors(pattern.Source).Should().Contain(d => d.Message.Contains("strict", StringComparison.Ordinal));
+        ScriptCompiler.CompilePattern(pattern).Success.Should().BeFalse();
+        ScriptCompiler.CompileIncrementalPattern(pattern).Success.Should().BeFalse();
+        ScriptCompiler.CompileIncrementalPattern(pattern, instrumentActionCallsites: true).Success.Should().BeFalse();
+    }
+
+    [TestCase("Func<string> create = System.IO.Path.GetTempFileName;")]
+    [TestCase("Action emit = () => System.IO.File.Delete(\"secret\");")]
+    [TestCase("Action emit = async () => Note(0, 0, _O(17));")]
+    [TestCase("Action emit = () => EmitPendingStep();")]
+    [TestCase("Action emit = () => Tempo(default(SequenceCallsite), 0, 125);")]
+    [TestCase("Action emit = () => Note(0, 0, _O(17)); System.Threading.Tasks.Task.Run(emit);")]
+    [TestCase("Action emit = () => Note(0, 0, _O(17)); new System.Threading.CancellationToken().Register(emit);")]
+    [TestCase("Action emit = () => Note(0, 0, _O(17)); System.Linq.ParallelEnumerable.ForAll(Enumerable.Range(0, 4).AsParallel(), n => emit());")]
+    public void RelaxedCallbacksDoNotRelaxApiOrIsolationRules(string source)
+    {
+        var pattern = new ScriptPatternDefinition((ObjectId)1U, "Forbidden callbacks")
+        { RowCount = 8, ChannelCount = 1, Source = "#order relaxed\n" + source };
+        Errors(pattern.Source).Should().NotBeEmpty();
+        ScriptCompiler.CompilePattern(pattern).Success.Should().BeFalse();
+        ScriptCompiler.CompileIncrementalPattern(pattern).Success.Should().BeFalse();
+        ScriptCompiler.CompileIncrementalPattern(pattern, instrumentActionCallsites: true).Success.Should().BeFalse();
     }
 }
