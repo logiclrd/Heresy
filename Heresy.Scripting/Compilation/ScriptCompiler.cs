@@ -1317,7 +1317,9 @@ public static class ScriptCompiler
 	private static string TraceCallsite(ScriptSourceSpan span)
 		=> $"new global::Heresy.Core.Sequences.SequenceCallsite({span.Start}, {span.Length})";
 
-	private static (Dictionary<ScriptSourceSpan, IMethodSymbol> Delegates,
+	private sealed record DelegateTraceSite(IMethodSymbol Method, bool ExplicitInvoke);
+
+	private static (Dictionary<ScriptSourceSpan, DelegateTraceSite> Delegates,
 		Dictionary<IMethodSymbol, List<ScriptSourceSpan>> MethodGroups)
 		ResolveRelaxedTraceSites(string source)
 	{
@@ -1328,7 +1330,7 @@ public static class ScriptCompiler
 			[tree], MetadataReferences, new CSharpCompilationOptions(
 				OutputKind.DynamicallyLinkedLibrary, allowUnsafe: false, checkOverflow: true));
 		SemanticModel semantic = compilation.GetSemanticModel(tree);
-		Dictionary<ScriptSourceSpan, IMethodSymbol> delegates = [];
+		Dictionary<ScriptSourceSpan, DelegateTraceSite> delegates = [];
 		Dictionary<IMethodSymbol, List<ScriptSourceSpan>> groups =
 			new(SymbolEqualityComparer.Default);
 		var entry = tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>()
@@ -1343,8 +1345,14 @@ public static class ScriptCompiler
 			{
 				if (operation is IInvocationOperation invoke
 					&& invoke.TargetMethod.MethodKind == MethodKind.DelegateInvoke
-					&& invoke.Syntax is InvocationExpressionSyntax)
-					delegates[MapSpan(invoke.Syntax.GetLocation(), source)] = invoke.TargetMethod;
+					&& invoke.Syntax is InvocationExpressionSyntax invocation)
+				{
+					bool explicitInvoke = invocation.Expression is MemberAccessExpressionSyntax access
+						&& semantic.GetSymbolInfo(access).Symbol is IMethodSymbol
+							{ MethodKind: MethodKind.DelegateInvoke };
+					delegates[MapSpan(invocation.GetLocation(), source)] =
+						new(invoke.TargetMethod, explicitInvoke);
+				}
 				else if (operation is IMethodReferenceOperation reference
 					&& reference.Parent is IDelegateCreationOperation
 					&& reference.Syntax is IdentifierNameSyntax
@@ -1369,7 +1377,7 @@ public static class ScriptCompiler
 	// argument binding, short-circuit evaluation and by-ref arguments.
 	private sealed class RelaxedPatternEmitterCallsiteRewriter(
 		IReadOnlySet<int> emitterStarts,
-		IReadOnlyDictionary<ScriptSourceSpan, IMethodSymbol> delegates,
+		IReadOnlyDictionary<ScriptSourceSpan, DelegateTraceSite> delegates,
 		IReadOnlyDictionary<ScriptSourceSpan, string> methodGroups,
 		string prefix) : CSharpSyntaxRewriter
 	{
@@ -1385,12 +1393,12 @@ public static class ScriptCompiler
 		{
 			var rewritten = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 			ScriptSourceSpan span = Span(node);
-			if (delegates.TryGetValue(span, out IMethodSymbol? method))
+			if (delegates.TryGetValue(span, out DelegateTraceSite? site))
 			{
+				IMethodSymbol method = site.Method;
 				// Explicit .Invoke is semantically the same delegate call;
 				// its receiver is the expression left of .Invoke.
-				ExpressionSyntax receiver = node.Expression is MemberAccessExpressionSyntax access
-					&& access.Name.Identifier.ValueText == "Invoke"
+				ExpressionSyntax receiver = site.ExplicitInvoke
 					&& rewritten.Expression is MemberAccessExpressionSyntax rewrittenAccess
 					? rewrittenAccess.Expression : rewritten.Expression;
 				string target = prefix + "Target";
