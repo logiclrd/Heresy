@@ -198,6 +198,74 @@ public sealed class IncrementalDirectControlScriptTests
             Is.EqualTo(new SetPlaybackFrequencyCommand(440)));
     }
 
+    [Test]
+    public void RelaxedRawRowsPreserveWallDeadlineInversionAcrossTempoAndSpeedChanges()
+    {
+        var pattern = new ScriptPatternDefinition((ObjectId)1U, "Relaxed deadlines")
+        {
+            RowCount = 3, ChannelCount = 1,
+            Source = """
+                #order relaxed
+                Cut(2.5, 0);
+                Filter(1.5, 0, .25, .5);
+                Note(0.25, 0, _O(17), timeOffsetSeconds: .16);
+                Speed(2, 3);
+                Tempo(1, 250);
+                Note(0, 0, _O(17));
+                """,
+        };
+        var compiled = ScriptCompiler.CompileIncrementalPattern(pattern);
+        Assert.That(compiled.Success, Is.True,
+            string.Join("; ", compiled.Diagnostics.Select(x => x.Message)));
+        SequencingContext context = new();
+        using IncrementalPatternTimeline timeline = new(context);
+        timeline.Add(compiled.Program!, pattern.RowCount, context);
+        NoteEvent[] notes = Drain(timeline);
+        Assert.Multiple(() =>
+        {
+            Assert.That(notes.Select(n => n.Offset.TimeOffset.TotalSeconds),
+                Is.EqualTo(new[] { 0.0, 0.12, 0.15, 0.18, 0.19, 0.195 }).Within(1e-6));
+            Assert.That(notes.Select(n => n.Commands.Single().GetType()),
+                Is.EqualTo(new[] { typeof(StartNoteCommand), typeof(SetTempoCommand),
+                    typeof(SetResonantFilterCommand), typeof(SetSpeedCommand),
+                    typeof(StartNoteCommand), typeof(NoteCutCommand) }));
+            Assert.That(timeline.Elapsed.TotalSeconds, Is.EqualTo(.21).Within(1e-6));
+            Assert.That(context.Diagnostics.DroppedOutOfOrderNotes, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void RelaxedEventsUseSharedTempoFromAnotherCursorAtTheirMusicalOrigin()
+    {
+        var script = new ScriptPatternDefinition((ObjectId)1U, "Relaxed child")
+        {
+            RowCount = 2, ChannelCount = 1,
+            Source = "#order relaxed\nOff(1.5, 0); Note(0.5, 0, _O(17), timeOffsetSeconds: .025);",
+        };
+        var clock = new ScriptPatternDefinition((ObjectId)2U, "Strict clock")
+        {
+            RowCount = 2, ChannelCount = 1, Source = "Tempo(0, 250);",
+        };
+        var child = ScriptCompiler.CompileIncrementalPattern(script);
+        var parent = ScriptCompiler.CompileIncrementalPattern(clock);
+        Assert.That(child.Success && parent.Success, Is.True);
+        SequencingContext root = new();
+        using IncrementalPatternTimeline timeline = new(root);
+        timeline.Add(parent.Program!, 2, root);
+        timeline.AddFlattenedChild(child.Program!, 2, root, physicalChannelOffset: 2);
+        NoteEvent[] notes = Drain(timeline);
+        Assert.Multiple(() =>
+        {
+            Assert.That(notes.Select(n => n.Offset.TimeOffset.TotalSeconds),
+                Is.EqualTo(new[] { 0.0, 0.055, 0.09 }).Within(1e-6));
+            Assert.That(notes[1].Target, Is.EqualTo(ChannelTarget.Physical(2)));
+            Assert.That(notes[2].Target, Is.EqualTo(ChannelTarget.Physical(2)));
+            Assert.That(notes[1].Commands.Single(), Is.TypeOf<StartNoteCommand>());
+            Assert.That(notes[2].Commands.Single(), Is.TypeOf<NoteOffCommand>());
+            Assert.That(timeline.Elapsed.TotalSeconds, Is.EqualTo(.12).Within(1e-6));
+        });
+    }
+
     private static NoteEvent[] Drain(IncrementalPatternTimeline timeline)
     {
         List<NoteEvent> emitted = [];
