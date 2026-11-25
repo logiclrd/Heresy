@@ -8,6 +8,7 @@ using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
 using Heresy.Scripting.Compilation;
+using Heresy.Scripting.Runtime;
 
 using NUnit.Framework;
 
@@ -150,6 +151,40 @@ public sealed class RelaxedPatternGenerationTests
 		context.Random.NextDouble().Should().Be(new SequencingContext().Random.NextDouble());
 		context.FlattenedChild().Cancellation.Should().BeSameAs(context.Cancellation);
 		context.MixdownChild().Cancellation.Should().BeSameAs(context.Cancellation);
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void RelaxedRuntimeObservesStopAfterAnEmissionBeforeReturning(bool emitAgain)
+	{
+		SequencingContext context = new();
+		var receiver = new StopOnAppend(context.Cancellation);
+		var program = new StopProbe(context, receiver, emitAgain);
+		Action execute = () => program.ExecuteRelaxed();
+		execute.Should().Throw<OperationCanceledException>();
+		receiver.Count.Should().Be(1,
+			"the next checkpoint or the final collection boundary must observe the stop");
+	}
+
+	private sealed class StopOnAppend(SequencingCancellation cancellation) : INoteReceiver
+	{
+		public int Count { get; private set; }
+		public void Append(NoteEvent noteEvent)
+		{
+			Count++;
+			cancellation.RequestStop();
+		}
+	}
+
+	private sealed class StopProbe(SequencingContext context, INoteReceiver receiver, bool emitAgain)
+		: PatternScriptProgram(context, receiver, 4, 1)
+	{
+		protected override void ExecuteScript()
+		{
+			Note(0, 0, (ObjectId)17U);
+			if (emitAgain)
+				Note(1, 0, (ObjectId)17U);
+		}
 	}
 
 	[Test]
