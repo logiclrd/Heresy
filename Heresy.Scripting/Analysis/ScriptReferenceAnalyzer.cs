@@ -122,21 +122,30 @@ public static class ScriptReferenceAnalyzer
 				: previous.SyntaxTree.WithChangedText(
 					sourceText);
 
-		List<ScriptAnalysisDiagnostic> diagnostics = [];
-		foreach (Diagnostic diagnostic in syntaxTree.GetDiagnostics())
+		// Keep the original syntax tree for incremental editing and syntax
+		// highlighting. Only semantic reference analysis uses the masked
+		// view, whose UTF-16 coordinates match the visible source exactly.
+		// This is not execution authorization: the compiler decides which
+		// script kinds and ordering modes are permitted.
+		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(syntaxTree);
+		SyntaxTree referenceTree = order.CompilerSource == source
+			? syntaxTree
+			: CSharpSyntaxTree.ParseText(SourceText.From(order.CompilerSource), ParseOptions);
+		List<ScriptAnalysisDiagnostic> diagnostics = [.. order.Diagnostics];
+		foreach (Diagnostic diagnostic in referenceTree.GetDiagnostics())
 			diagnostics.Add(ProjectDiagnostic(diagnostic));
 
 		CSharpCompilation compilation =
 			CSharpCompilation.CreateScriptCompilation(
 				"Heresy.Script.ReferenceAnalysis",
-				syntaxTree,
+				referenceTree,
 				MetadataReferences,
 				new CSharpCompilationOptions(
 					OutputKind.DynamicallyLinkedLibrary),
 				globalsType: typeof(ScriptAnalysisGlobals));
 		SemanticModel semanticModel =
 			compilation.GetSemanticModel(
-				syntaxTree,
+				referenceTree,
 				ignoreAccessibility: true);
 		INamedTypeSymbol? globalsSymbol =
 			compilation.GetTypeByMetadataName(
@@ -146,7 +155,7 @@ public static class ScriptReferenceAnalyzer
 
 		List<ScriptObjectReference> references = [];
 		List<ScriptSourceSpan> dynamicReferences = [];
-		SyntaxNode root = syntaxTree.GetRoot();
+		SyntaxNode root = referenceTree.GetRoot();
 		foreach (InvocationExpressionSyntax invocation
 			in root.DescendantNodes()
 				.OfType<InvocationExpressionSyntax>())
