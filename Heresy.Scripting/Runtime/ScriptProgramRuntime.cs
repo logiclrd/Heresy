@@ -203,10 +203,31 @@ public abstract class PatternScriptProgram
 	private void EmitWithEditorCallsite(SequenceCallsite callsite, Action emit)
 	{
 		SequenceCallsite? previous = _editorActionCallsite;
-		_editorActionCallsite = callsite;
+		// An enclosing authored delegate invocation takes precedence over
+		// the direct emitter (or method-group fallback) inside its body.
+		_editorActionCallsite = previous ?? callsite;
 		try { emit(); }
 		finally { _editorActionCallsite = previous; }
 	}
+
+	// Generated F6 source only. The canonical authored-member allow-list
+	// rejects all three helpers, even when relaxed ordering is enabled.
+	// Preserve the exact delegate type at the original invocation boundary;
+	// the adapter body executes only after receiver and arguments are evaluated.
+	protected static TDelegate __HeresyWrapDelegate<TDelegate>(
+		TDelegate target, Func<TDelegate, TDelegate> createAdapter)
+		where TDelegate : Delegate
+		=> createAdapter(target);
+
+	protected SequenceCallsite? __HeresyPushDelegateCallsite(SequenceCallsite callsite)
+	{
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = callsite;
+		return previous;
+	}
+
+	protected void __HeresyRestoreDelegateCallsite(SequenceCallsite? previous)
+		=> _editorActionCallsite = previous;
 
 	protected void Note(SequenceCallsite callsite, double row, int channel, ObjectId sourceId,
 		double pitchMultiplier = 1.0,
