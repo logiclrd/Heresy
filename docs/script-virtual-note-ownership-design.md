@@ -1,6 +1,6 @@
 # Script Pattern virtual-note ownership redesign (#54)
 
-Status: approved owner contract, implementation planning / migration inventory.
+Status: approved owner contract; internal identity and allocator implementation in progress.
 Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
 [Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
 this document records the implementation choices and boundaries. No public
@@ -100,6 +100,53 @@ choose/validate the sideband representation before broad implementation.
 No per-frame scan over historical released leases, no indefinitely growing
 identity-to-retirement journal, and no change to legacy non-script filter
 semantics.
+
+### Internal foundation and final-use barrier (slice 2a)
+
+The internal value is now `VirtualChannelIdentity(uint Slot, ulong Generation)`.
+Generation zero remains the legacy numeric engine target. `ChannelTarget`
+carries the full value; its compatibility numeric accessor is not a key.
+Core eager comparison, renderer current/scoped channels, NNA origin,
+filter completion keys and buses, and private mixdown tracking use the
+full identity. `VirtualChannelLeaseAllocator` owns a sparse live-slot
+map, free stack, next-slot counter and invocation-wide generation counter.
+It rejects stale releases and checks slot/generation exhaustion before
+mutation. No historical generation map is needed. The scripting runtime
+does not allocate these leases yet; cross-invocation wrapper/allocator
+ownership must be checked at transfer, not inferred from equal local IDs.
+
+The renderer now has a non-musical `RetireScopedVirtualChannel` final-use
+endpoint for nonzero generations. Only materialized output filters with
+a confirmed final-use signal enter retirement bookkeeping; reclaim them
+after their current channel, displaced origin voices and filter tails
+finish. An unmaterialized or already reclaimed generation leaves no
+tombstone. The endpoint does not change the existing generation-zero
+filter policy, cut sound, or imply that a lease release is itself enough
+to retire a filter.
+
+**Outstanding before the script API switch (slice 2b):** connect the
+producer and scheduler final-use proof. Candidate protocol: a trusted
+non-musical release sideband, ordered after the last raw event emitted
+for that lease, plus outstanding-event accounting at the cursor /
+renderer hand-off. Count only references that can actually still be
+delivered: lookahead, row buffering, delayed-wall events, and the one
+prefetched output event; rejected/consumed/canceled references must not
+remain counted. The retirement signal must cross the hand-off only
+after the final event is applied, never at scheduler prefetch. In strict
+mode the sideband must work with disposal/finally and no later musical
+emissions. In relaxed mode release can be ordered after the last sorted
+raw event for a generation, but a delayed wall deadline still prevents
+retirement until it resolves. Starting-row skips, pattern restarts,
+eager paths, end-of-invocation cleanup, subtree cancellation and private
+rewind must be addressed. This is a proposed protocol, not an implemented
+or proven scheduler feature. No public VirtualNote / NoteGroup API until
+the complete lifecycle works.
+
+Tests in this foundation exercise one million allocations at peak eight
+leases, old-generation deferred Cut/Past with a new generation and
+sibling sounding, separate same-slot filter/NNA identities, and explicit
+final-use retirement with PCM tail parity and no retained tombstones.
+Actual CI status is tracked on the PR.
 
 ## Compiler integration after #58 and #69
 
