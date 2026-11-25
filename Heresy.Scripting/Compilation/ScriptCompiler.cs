@@ -16,6 +16,7 @@ using Heresy.Scripting.Runtime;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 using Microsoft.CodeAnalysis.Text;
 
 namespace Heresy.Scripting.Compilation;
@@ -165,8 +166,7 @@ public static class ScriptCompiler
 		if (order.Order == ScriptPatternOrder.Relaxed)
 		{
 			string relaxedClass = "__HeresyRelaxedPattern_" + Guid.NewGuid().ToString("N");
-			// Direct emitter F6 spans include calls inside callbacks. Delegate
-			// invocation overrides and method-group provenance are separate.
+			// Only F6 builds the delegate provenance adapters and scopes.
 			string instrumented = instrumentActionCallsites
 				? InstrumentRelaxedPatternCallsites(source, emitterStarts)
 				: InstrumentLoops(source);
@@ -1268,29 +1268,168 @@ public static class ScriptCompiler
 		IReadOnlySet<int> emitterStarts)
 	{
 		SyntaxNode root = CSharpSyntaxTree.ParseText(source, ScriptParseOptions).GetRoot();
-		root = new RelaxedPatternEmitterCallsiteRewriter(emitterStarts).Visit(root) ?? root;
+		string prefix = "__heresyTrace";
+		var identifiers = root.DescendantTokens()
+			.Where(t => t.IsKind(SyntaxKind.IdentifierToken))
+			.Select(t => t.ValueText).ToArray();
+		while (identifiers.Any(id => id.StartsWith(prefix, StringComparison.Ordinal)))
+			prefix += "_";
+
+		var (delegates, methodGroups) = ResolveRelaxedTraceSites(source);
+		Dictionary<ScriptSourceSpan, string> replacements = [];
+		List<string> localAdapters = [];
+		// A single reference site for a bound emitter has exact fallback
+		// provenance. If multiple sites reference the same method, do not
+		// substitute different delegate targets: that would change delegate
+		// equality, combination and removal in F6. The authored invocation
+		// scope still supplies exact provenance in that case.
+		foreach (var (method, sites) in methodGroups)
+		{
+			if (sites.Count != 1)
+				continue;
+			ScriptSourceSpan span = sites[0];
+			string name = prefix + "Group" + localAdapters.Count;
+			replacements.Add(span, name);
+			string parameters = string.Join(", ", method.Parameters.Select(p =>
+				p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+				+ " @" + p.Name + DefaultParameterSyntax(p)));
+			string arguments = string.Join(", ", method.Parameters.Select(p => "@" + p.Name));
+			localAdapters.Add($"void {name}({parameters}) {{ base.{method.Name}({TraceCallsite(span)}, {arguments}); }}");
+		}
+
+		root = new RelaxedPatternEmitterCallsiteRewriter(emitterStarts, delegates,
+			replacements, prefix).Visit(root) ?? root;
 		root = new LoopCheckpointRewriter().Visit(root) ?? root;
-		return root.ToFullString();
+		// Local adapter declarations are compiler-owned, after the original
+		// authored source, and never included in the canonical API audit.
+		return root.ToFullString() + "\n" + string.Join("\n", localAdapters);
 	}
 
-	// Relaxed emission is synchronous even in expression-bodied lambdas,
-	// for clauses and nested expressions. Instrument the actual invocation,
-	// not its enclosing statement, without inserting any yields.
-	private sealed class RelaxedPatternEmitterCallsiteRewriter(
-		IReadOnlySet<int> emitterStarts) : CSharpSyntaxRewriter
+	private static string DefaultParameterSyntax(IParameterSymbol parameter)
+		=> !parameter.HasExplicitDefaultValue ? ""
+			: " = " + (parameter.ExplicitDefaultValue switch
+			{
+				null => "default",
+				bool b => b ? "true" : "false",
+				object value => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture),
+			});
+
+	private static string TraceCallsite(ScriptSourceSpan span)
+		=> $"new global::Heresy.Core.Sequences.SequenceCallsite({span.Start}, {span.Length})";
+
+	private static (Dictionary<ScriptSourceSpan, IMethodSymbol> Delegates,
+		Dictionary<IMethodSymbol, List<ScriptSourceSpan>> MethodGroups)
+		ResolveRelaxedTraceSites(string source)
 	{
+		SyntaxTree tree = CSharpSyntaxTree.ParseText(
+			BuildPatternWrapper("__HeresyRelaxedTraceResolution", source), WrapperParseOptions);
+		CSharpCompilation compilation = CSharpCompilation.Create(
+			"Heresy.RelaxedTraceResolution." + Guid.NewGuid().ToString("N"),
+			[tree], MetadataReferences, new CSharpCompilationOptions(
+				OutputKind.DynamicallyLinkedLibrary, allowUnsafe: false, checkOverflow: true));
+		SemanticModel semantic = compilation.GetSemanticModel(tree);
+		Dictionary<ScriptSourceSpan, IMethodSymbol> delegates = [];
+		Dictionary<IMethodSymbol, List<ScriptSourceSpan>> groups =
+			new(SymbolEqualityComparer.Default);
+		var entry = tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>()
+			.Single(m => m.Identifier.ValueText == "ExecuteScript");
+		IOperation body = semantic.GetOperation(entry.Body!)
+			?? throw new InvalidOperationException("Relaxed trace source did not bind.");
+		Stack<IOperation> pending = new();
+		pending.Push(body);
+		while (pending.TryPop(out IOperation? operation))
+		{
+			if (IsScriptLocation(operation.Syntax.GetLocation()))
+			{
+				if (operation is IInvocationOperation invoke
+					&& invoke.TargetMethod.MethodKind == MethodKind.DelegateInvoke
+					&& invoke.Syntax is InvocationExpressionSyntax)
+					delegates[MapSpan(invoke.Syntax.GetLocation(), source)] = invoke.TargetMethod;
+				else if (operation is IMethodReferenceOperation reference
+					&& reference.Parent is IDelegateCreationOperation
+					&& reference.Syntax is IdentifierNameSyntax
+					&& ScriptPatternEmissionPolicy.IsEmitterMethod(reference.Method, compilation))
+				{
+					if (!groups.TryGetValue(reference.Method, out var sites))
+						groups.Add(reference.Method, sites = []);
+					var span = MapSpan(reference.Syntax.GetLocation(), source);
+					if (!sites.Contains(span))
+						sites.Add(span);
+				}
+			}
+			foreach (IOperation child in operation.ChildOperations)
+				pending.Push(child);
+		}
+		return (delegates, groups);
+	}
+
+	// Rewrite only original bound nodes, before any trusted code changes
+	// their spans. Wrapping the receiver rather than moving the original
+	// arguments into a lambda preserves evaluation order, named/optional
+	// argument binding, short-circuit evaluation and by-ref arguments.
+	private sealed class RelaxedPatternEmitterCallsiteRewriter(
+		IReadOnlySet<int> emitterStarts,
+		IReadOnlyDictionary<ScriptSourceSpan, IMethodSymbol> delegates,
+		IReadOnlyDictionary<ScriptSourceSpan, string> methodGroups,
+		string prefix) : CSharpSyntaxRewriter
+	{
+		private static ScriptSourceSpan Span(SyntaxNode node)
+			=> new(node.SpanStart, node.Span.Length);
+
+		public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
+			=> methodGroups.TryGetValue(Span(node), out string? name)
+				? SyntaxFactory.IdentifierName(name).WithTriviaFrom(node)
+				: base.VisitIdentifierName(node);
+
 		public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node)
 		{
 			var rewritten = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
+			ScriptSourceSpan span = Span(node);
+			if (delegates.TryGetValue(span, out IMethodSymbol? method))
+			{
+				// Explicit .Invoke is semantically the same delegate call;
+				// its receiver is the expression left of .Invoke.
+				ExpressionSyntax receiver = node.Expression is MemberAccessExpressionSyntax access
+					&& access.Name.Identifier.ValueText == "Invoke"
+					&& rewritten.Expression is MemberAccessExpressionSyntax rewrittenAccess
+					? rewrittenAccess.Expression : rewritten.Expression;
+				string target = prefix + "Target";
+				string previous = prefix + "Previous";
+				string parameters = string.Join(", ", method.Parameters.Select((p, i) =>
+					ParameterModifier(p.RefKind, declaration: true)
+					+ p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+					+ " " + prefix + "Arg" + i));
+				string arguments = string.Join(", ", method.Parameters.Select((p, i) =>
+					ParameterModifier(p.RefKind, declaration: false) + prefix + "Arg" + i));
+				string returnPrefix = method.ReturnsVoid ? ""
+					: method.ReturnsByRef || method.ReturnsByRefReadonly ? "return ref " : "return ";
+				string adapter =
+					$"base.__HeresyWrapDelegate({receiver.WithoutTrivia().ToFullString()}, "
+					+ $"{target} => ({parameters}) => {{ "
+					+ $"var {previous} = base.__HeresyPushDelegateCallsite({TraceCallsite(span)}); "
+					+ $"try {{ {returnPrefix}{target}({arguments}); }} "
+					+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }} }})";
+				return rewritten.WithExpression(SyntaxFactory.ParseExpression(adapter)
+					.WithTriviaFrom(rewritten.Expression));
+			}
 			if (!emitterStarts.Contains(node.SpanStart))
 				return rewritten;
 
 			ArgumentSyntax callsite = SyntaxFactory.Argument(
-				SyntaxFactory.ParseExpression(
-					$"new SequenceCallsite({node.SpanStart}, {node.Span.Length})"));
+				SyntaxFactory.ParseExpression(TraceCallsite(span)));
 			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
 				rewritten.ArgumentList.Arguments.Insert(0, callsite)));
 		}
+
+		private static string ParameterModifier(RefKind kind, bool declaration)
+			=> kind switch
+			{
+				RefKind.Ref => "ref ",
+				RefKind.Out => "out ",
+				RefKind.In => "in ",
+				RefKind.RefReadOnlyParameter => declaration ? "ref readonly " : "in ",
+				_ => "",
+			};
 	}
 
 	private sealed class StrictPatternEmitterRewriter(
