@@ -44,7 +44,7 @@ public sealed class SongExportService
 		// Capture the authoring document synchronously on the caller/UI thread.
 		// Everything below this point consumes only the immutable snapshot.
 		OfflineSongRenderPlan plan =
-			_planFactory.Create(document);
+			_planFactory.Create(document, cancellationToken);
 		string fullPath =
 			Path.GetFullPath(path);
 
