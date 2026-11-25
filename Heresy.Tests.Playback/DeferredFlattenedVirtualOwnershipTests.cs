@@ -206,6 +206,39 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
             "the sibling's mapped physical, virtual and host notes survive.");
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void DeferredOldGenerationControlsNeverReachReusedSlotOrSibling(bool chunked)
+    {
+        var old = ChannelTarget.Virtual(new VirtualChannelIdentity(7, 1));
+        var replacement = ChannelTarget.Virtual(new VirtualChannelIdentity(7, 2));
+        TestPattern firstChild = Pattern(3, 2,
+            At(0, old, new StartNoteCommand(SampleId)),
+            At(0, TimeSpan.FromMilliseconds(100), old, new NoteCutCommand()),
+            At(0, TimeSpan.FromMilliseconds(110), old,
+                new ApplyPastNoteActionCommand(TrackerPastNoteAction.Cut)),
+            At(0.1, old, new SetCurrentVoiceDisplacementActionCommand(
+                NoteDisplacementAction.Continue), new StartNoteCommand(SampleId)),
+            At(0.5, replacement, new StartNoteCommand(SampleId)));
+        TestPattern secondChild = Pattern(4, 1,
+            At(0, replacement, new StartNoteCommand(SampleId)));
+        using Scenario scenario = Create(firstChild, secondChild);
+        using PreparedIncrementalAudioSource pcm =
+            new(scenario.Timeline, Session());
+        float[] samples = Render(pcm, 180, chunked ? [1, 7, 13, 19, 5] : [180]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(samples[5], Is.EqualTo(3f).Within(1e-6f));
+            Assert.That(samples[30], Is.EqualTo(4f).Within(1e-6f),
+                "The old generation's displaced voice still sounds.");
+            Assert.That(samples[70], Is.EqualTo(5f).Within(1e-6f),
+                "The replacement starts independently of the old generation.");
+            Assert.That(samples[150], Is.EqualTo(3f).Within(1e-6f),
+                "Old-generation Cut/Past affect only old voices, not the reused slot or sibling.");
+            Assert.That(pcm.Session.VirtualVoices, Is.Empty);
+        });
+    }
+
     private static Scenario Create(TestPattern firstChild, TestPattern secondChild)
     {
         TestPattern first = Pattern(1, 1,
