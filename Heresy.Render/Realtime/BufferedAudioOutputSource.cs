@@ -208,6 +208,10 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
                     && _source is IFirPreparationAudioSource controls)
                     controls.QueuePendingFirControls(worker);
 			}
+			catch (OperationCanceledException) when (Volatile.Read(ref _disposed) != 0)
+			{
+				return;
+			}
 			catch (Exception error)
 			{
 				Volatile.Write(ref _fault, error);
@@ -225,6 +229,8 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 		if (Thread.CurrentThread == _worker)
 			throw new InvalidOperationException(
 				"A PCM rendering worker cannot dispose itself.");
+		if (_source is ICooperativeRenderStop stop)
+			stop.RequestStop();
 		_worker.Join();
         _firScheduler?.Dispose();
 		_wake.Dispose();
