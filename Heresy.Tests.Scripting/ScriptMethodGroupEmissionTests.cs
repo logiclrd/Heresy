@@ -152,14 +152,14 @@ public sealed class ScriptMethodGroupEmissionTests
     }
 
     [Test]
-    public void UnimplementedRelaxedOrderDirectiveRemainsRejected()
+    public void RelaxedDirectiveRecognizedButEmitterMethodGroupsStillRestricted()
     {
         const string source = """
             #order relaxed
             Action<double, double> emit = Tempo;
             """;
         Errors(source).Should().Contain(d =>
-            d.Message.Contains("directive", StringComparison.OrdinalIgnoreCase),
-            "the proposed #order relaxed directive is not yet supported");
+            d.Message.Contains("Pattern event generator method groups", StringComparison.Ordinal),
+            "callback emission is not implemented in this intermediate slice");
     }
 }
