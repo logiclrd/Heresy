@@ -95,8 +95,10 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 		if (_disposed)
 			return;
 		_disposed = true;
-		SequencingContext.Cancellation.RequestStop();
+		// The buffered owner marks itself disposed before signaling the source,
+		// so expected stop cancellation is not published as a worker fault.
 		_renderingWorker?.Dispose();
+		SequencingContext.Cancellation.RequestStop();
 		Source.Dispose();
 		Timeline.Dispose();
 		_disposePrivateMixdowns();
