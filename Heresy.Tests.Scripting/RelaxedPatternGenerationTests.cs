@@ -3,6 +3,7 @@ using System.Linq;
 
 using AwesomeAssertions;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
