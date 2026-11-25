@@ -115,6 +115,65 @@ public sealed class RelaxedPatternGenerationTests
 		First(new()).Commands.Single().Should().Be(first.Commands.Single());
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void RunawayRelaxedLoopAbortsBeforeAnyPublication(bool trace)
+	{
+		var pattern = Pattern("#order relaxed\nNote(0, 0, _O(17)); while (true) { }");
+		var compiled = ScriptCompiler.CompileIncrementalPattern(pattern, trace);
+		compiled.Success.Should().BeTrue();
+		using var iterator = compiled.Program!.EnumerateRawSteps(new()).GetEnumerator();
+		Action move = () => iterator.MoveNext();
+		move.Should().Throw<SequencingResourceLimitException>();
+	}
+
+	[Test]
+	public void CanceledRelaxedInvocationDoesNotPublishOrConsumeRandomValues()
+	{
+		var pattern = Pattern("#order relaxed\nNote(0, 0, _O(17), pitchMultiplier: 1 + Random());");
+		var eager = ScriptCompiler.CompilePattern(pattern);
+		var normal = ScriptCompiler.CompileIncrementalPattern(pattern);
+		var traced = ScriptCompiler.CompileIncrementalPattern(pattern, true);
+		Assert.That(eager.Success && normal.Success && traced.Success, Is.True);
+		SequencingContext context = new();
+		context.Cancellation.RequestStop();
+		NoteScheduleBuilder output = new();
+		Action generate = () => eager.Program!.GenerateRawNotes(context, output, out _);
+		generate.Should().Throw<OperationCanceledException>();
+		output.Count.Should().Be(0);
+		foreach (var result in new[] { normal, traced })
+		{
+			using var iterator = result.Program!.EnumerateRawSteps(context).GetEnumerator();
+			Action first = () => iterator.MoveNext();
+			first.Should().Throw<OperationCanceledException>();
+		}
+		context.Random.NextDouble().Should().Be(new SequencingContext().Random.NextDouble());
+		context.FlattenedChild().Cancellation.Should().BeSameAs(context.Cancellation);
+		context.MixdownChild().Cancellation.Should().BeSameAs(context.Cancellation);
+	}
+
+	[Test]
+	public void LargeFiniteCallbackCollectionIsRepeatableAndDoesNotCooperate()
+	{
+		var pattern = Pattern("""
+			#order relaxed
+			Enumerable.Range(0, 12000).ToList().ForEach(n =>
+				Note(7 - n % 8, 0, _O(17), pitchMultiplier: 1 + Random()));
+			""");
+		var ordinary = Stream(pattern, new());
+		var traced = Stream(pattern, new(), trace: true);
+		var events = ordinary.OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+		var traceEvents = traced.OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+		events.Length.Should().Be(12000);
+		events.Select(e => e.Offset.RowOffset).Should().BeInAscendingOrder();
+		ordinary.OfType<RawPatternStep.Cooperate>().Should().BeEmpty();
+		traceEvents.Select(e => e.Offset).Should().Equal(events.Select(e => e.Offset));
+		traceEvents.Select(e => ((StartNoteCommand)e.Commands.Single()).PitchMultiplier)
+			.Should().Equal(events.Select(e => ((StartNoteCommand)e.Commands.Single()).PitchMultiplier));
+		foreach (var group in events.GroupBy(e => e.Offset.RowOffset))
+			group.Select(e => e.EmissionOrder).Should().BeInAscendingOrder();
+	}
+
 	[Test]
 	public void DirectF6CallsitesSurviveSortingAndDirectiveMasking()
 	{
