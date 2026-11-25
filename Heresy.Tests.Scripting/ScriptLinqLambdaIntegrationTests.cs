@@ -257,6 +257,31 @@ public sealed class ScriptLinqLambdaIntegrationTests
     }
 
     [Test]
+    public void RelaxedForClauseCanEmitWithoutAStandaloneStatement()
+    {
+        const string source = """
+            #order relaxed
+            for (int row = 3; row >= 0; Note(row, 0, _O(17)), row--) { }
+            """;
+        var pattern = new ScriptPatternDefinition((ObjectId)1U, "For clause")
+        { Source = source, RowCount = 4, ChannelCount = 1 };
+        var normal = ScriptCompiler.CompileIncrementalPattern(pattern);
+        var f6 = ScriptCompiler.CompileIncrementalPattern(pattern, instrumentActionCallsites: true);
+        Assert.That(normal.Success && f6.Success, Is.True,
+            string.Join("; ", normal.Diagnostics.Concat(f6.Diagnostics).Select(d => d.Message)));
+        var expected = normal.Program!.EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+        var traced = f6.Program!.EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+        Assert.That(expected.Select(n => n.Offset.RowOffset), Is.EqualTo(new[] { 0d, 1d, 2d, 3d }));
+        Assert.That(traced.Select(n => n.Offset), Is.EqualTo(expected.Select(n => n.Offset)));
+        Assert.That(traced.Select(n => source.Substring(n.EditorCallsite!.Value.Start,
+            n.EditorCallsite.Value.Length)), Is.All.EqualTo("Note(row, 0, _O(17))"));
+        pattern.Source = source.Replace("#order relaxed", "#order strict", StringComparison.Ordinal);
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(pattern).Success, Is.False);
+    }
+
+    [Test]
     public void RelaxedCallbackExceptionDiscardsPreviouslyCollectedEvents()
     {
         var pattern = new ScriptPatternDefinition((ObjectId)1U, "Callback failure")
