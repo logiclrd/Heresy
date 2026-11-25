@@ -83,7 +83,29 @@ Heresy-specific calls remain limited to approved script helpers.
     public const string PatternReference = """
 SCRIPT PATTERN — NOTE, CONTROL AND VOICE HELPERS
 A script runs once per Pattern invocation. Helpers emit row-timed commands.
-In streaming playback, every emitting call must be a direct statement.
+
+EVENT ORDER
+  #order strict       default if omitted; stream events in musical-row order.
+  #order relaxed      collect the invocation, then sort events before playback.
+Place at most one #order directive before the first C# statement.
+Strict: emitting helpers must be direct statements, not callbacks or method
+groups. Earlier rows emitted after later ones are dropped with a diagnostic.
+Relaxed: calls may be out of order, inside synchronous lambdas or through
+approved method-group delegates. Equal rows retain original emission order
+for the scheduler; tempo, speed and wall-time offsets are resolved at playback.
+Generation must complete successfully before any collected event is played.
+Relaxed collection uses additional memory and may delay the Pattern's start.
+The existing work budget and cooperative cancellation still apply.
+
+Example (Pattern length >= 8, two channels; replace 35 with a Source ID):
+  #order relaxed
+  for (int channel = 0; channel < 2; channel++)
+      Enumerable.Range(0, 4).ToList().ForEach(row =>
+          Note(row * 2, channel, _O(35), Semitone(channel * 7)));
+
+F6 highlights an active authored delegate invocation, otherwise its musical
+helper call. An unambiguous emitter method-group reference can also highlight.
+
 Rows are doubles (including fractional rows) in [0, RowCount].
 Physical channels are ints in [0, ChannelCount - 1]. Virtual IDs are
 uints scoped to this Pattern invocation, independent of ChannelCount.
@@ -222,17 +244,17 @@ LINQ-to-Objects and inline lambdas support filtering and data transforms:
   var even = rows.Where(row => row % 2 == 0).ToArray();
   foreach (int row in even) Note(row, 0, _O(35));
 Only System.Linq.dll is approved, not PLINQ, Queryable or expression trees.
-Lambdas may compute data but cannot call musical note/control helpers.
-Approved non-emitting methods may be method-group delegate targets:
+In either mode, lambdas may compute data and approved non-emitting methods
+may be method-group delegate targets:
   Func<string, bool> empty = string.IsNullOrEmpty;
   var results = rows.Select(row => row.ToString()).ToList();
-Strict streaming requires Note/Off/Cut/Tempo/etc. as direct statements:
-event generator method groups and calls inside lambdas are not allowed.
-Relaxed pre-collection is a future design (#52), not implemented.
+Only relaxed mode also permits musical event generation inside synchronous
+callbacks and through approved emitter method groups.
 No arbitrary Heresy host-object access, filesystem capabilities, unsafe,
-async, reflection or exception control yet.
-Emission is streaming; out-of-order events may be dropped. For each note
-pitchMultiplier/playbackSpeedMultiplier must be positive finite numbers.
+async, reflection or exception control yet. Deferred LINQ executes only
+when enumerated; callbacks cannot outlive the invocation.
+For each note pitchMultiplier/playbackSpeedMultiplier must be positive
+finite numbers.
 """;
 
     public const string EnvelopeIntroduction =
