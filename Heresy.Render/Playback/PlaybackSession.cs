@@ -139,9 +139,9 @@ public sealed class PlaybackSession
 	// use the (owner, virtual ID) pair to avoid cross-cursor aliasing.
 	private readonly SortedDictionary<int, ChannelOutputFilterState>
 		_physicalOutputFilters = [];
-	private readonly SortedDictionary<uint, ChannelOutputFilterState>
+	private readonly SortedDictionary<VirtualChannelIdentity, ChannelOutputFilterState>
 		_targetedVirtualOutputFilters = [];
-	private readonly SortedDictionary<(long Owner, uint Id), ChannelOutputFilterState>
+	private readonly SortedDictionary<(long Owner, VirtualChannelIdentity Id), ChannelOutputFilterState>
 		_scopedVirtualOutputFilters = [];
 	private readonly NoteSchedule _schedule;
 	private readonly ISoundResolver _soundResolver;
@@ -162,7 +162,7 @@ public sealed class PlaybackSession
 	// The *numeric* channel Envelope belongs to its host. Only a THEN
 	// action captures a specific logical note at its assignment frame.
 	private readonly record struct HostCompletionKey(
-		int? Physical, uint? VirtualId, long? ScopedOwner,
+		int? Physical, VirtualChannelIdentity? VirtualId, long? ScopedOwner,
 		int Stage, string Parameter);
 	private sealed record HostCompletionBinding(
 		EnvelopePlaybackState Follower, long StartFrame,
@@ -175,11 +175,11 @@ public sealed class PlaybackSession
 	/// Existing descendant voice tails are controlled locally.</summary>
 	public Action<long, long>? FlattenedCompletionStoppedProducer { get; set; }
 
-	private readonly SortedDictionary<uint, PlaybackChannelState> _targetedVirtualChannels = [];
+	private readonly SortedDictionary<VirtualChannelIdentity, PlaybackChannelState> _targetedVirtualChannels = [];
 	// A Pattern's virtual ID is local to its invocation, not a global
 	// playback channel. The legacy live-preview dictionary above remains
 	// unchanged for tracker-key audition.
-	private readonly SortedDictionary<(long Owner, uint Id), PlaybackChannelState>
+	private readonly SortedDictionary<(long Owner, VirtualChannelIdentity Id), PlaybackChannelState>
 		_scopedVirtualChannels = [];
 	private readonly List<PlaybackVoice> _virtualVoices = [];
 
@@ -318,6 +318,10 @@ public sealed class PlaybackSession
 	/// invocation owner. Null owner is the unscoped targeted virtual host.</summary>
 	public void ConfigureVirtualChannelOutputFilter(
 		uint virtualId, FilterInstance? use, long? scopedOwner = null)
+		=> ConfigureVirtualChannelOutputFilter(VirtualChannelIdentity.Legacy(virtualId), use, scopedOwner);
+
+	public void ConfigureVirtualChannelOutputFilter(
+		VirtualChannelIdentity virtualId, FilterInstance? use, long? scopedOwner = null)
 	{
 		if (scopedOwner is < 0)
 			throw new ArgumentOutOfRangeException(nameof(scopedOwner));
@@ -884,7 +888,7 @@ public sealed class PlaybackSession
 		return state;
 	}
 
-	private PlaybackChannelState GetVirtualChannelState(uint channelId)
+	private PlaybackChannelState GetVirtualChannelState(VirtualChannelIdentity channelId)
 	{
 		if (!_targetedVirtualChannels.TryGetValue(
 			channelId,
@@ -893,7 +897,7 @@ public sealed class PlaybackSession
 			ulong panbrelloSeed = unchecked(
 				0x5649525455414C00UL
 					+ 0x9E3779B97F4A7C15UL
-						* ((ulong)channelId + 1UL));
+						* ((ulong)channelId.Slot + 1UL));
 
 			state = new PlaybackChannelState(
 				_context.Configuration.OutputChannelCount,
@@ -1065,9 +1069,9 @@ public sealed class PlaybackSession
 		{
 			case ChannelTargetKind.Virtual:
 				ApplyVirtualCommands(GetScopedChannel(
-					invocationId, target.VirtualChannelId),
+					invocationId, target.VirtualIdentity),
 					commands, _nextFrame, cutIndefiniteAfterNoteOff: false,
-					virtualChannelId: target.VirtualChannelId,
+					virtualChannelId: target.VirtualIdentity,
 					scopedOwner: invocationId);
 				return;
 			case ChannelTargetKind.AllVirtualInScope:
@@ -1160,7 +1164,7 @@ public sealed class PlaybackSession
 			if (voice.OriginScopedVirtualOwner == invocationId)
 			{
 				voice.AddCutTo(GetScopedChannel(
-					invocationId, voice.OriginVirtualChannelId!.Value).AntiClickTail);
+					invocationId, voice.OriginVirtualIdentity!.Value).AntiClickTail);
 				RetireDisplacedVoiceAt(i);
 			}
 			else if (voice.OriginPatternCursorId == invocationId)
@@ -1173,7 +1177,7 @@ public sealed class PlaybackSession
 		}
 	}
 
-	private PlaybackChannelState GetScopedChannel(long owner, uint id)
+	private PlaybackChannelState GetScopedChannel(long owner, VirtualChannelIdentity id)
 	{
 		if (_scopedVirtualChannels.TryGetValue(
 			(owner, id), out PlaybackChannelState? channel))
@@ -1182,7 +1186,8 @@ public sealed class PlaybackSession
 			_context.Configuration.OutputChannelCount,
 			_context.Configuration.SampleRate, _tickClock,
 			unchecked(0x5649525455414C00UL
-				+ (ulong)id * 0x9E3779B97F4A7C15UL
+				+ (ulong)id.Slot * 0x9E3779B97F4A7C15UL
+				+ id.Generation * 0xD1B54A32D192ED03UL
 				+ (ulong)owner));
 		_scopedVirtualChannels.Add((owner, id), channel);
 		return channel;
@@ -1279,7 +1284,7 @@ public sealed class PlaybackSession
 		if (target.Kind == ChannelTargetKind.Virtual)
 		{
 			ApplyVirtualEvent(
-				target.VirtualChannelId,
+				target.VirtualIdentity,
 				commands,
 				_nextFrame,
 				cutIndefiniteAfterNoteOff: true);
@@ -1606,7 +1611,7 @@ public sealed class PlaybackSession
 	}
 
 	private void ClearHostCompletionActions(
-		int? physical, uint? virtualId, long? scopedOwner)
+		int? physical, VirtualChannelIdentity? virtualId, long? scopedOwner)
 	{
 		foreach (HostCompletionKey key in _hostCompletionActions.Keys
 			.Where(k => k.Physical == physical && k.VirtualId == virtualId
@@ -1654,7 +1659,7 @@ public sealed class PlaybackSession
 		if (noteEvent.Target.Kind == ChannelTargetKind.Virtual)
 		{
 			ApplyVirtualEvent(
-				noteEvent.Target.VirtualChannelId,
+				noteEvent.Target.VirtualIdentity,
 				noteEvent.Commands,
 				eventFrame,
 				cutIndefiniteAfterNoteOff: false);
@@ -1684,7 +1689,7 @@ public sealed class PlaybackSession
 	}
 
 	private void ApplyVirtualEvent(
-		uint channelId,
+		VirtualChannelIdentity channelId,
 		IReadOnlyList<NoteCommand> commands,
 		long eventFrame,
 		bool cutIndefiniteAfterNoteOff)
@@ -1697,7 +1702,7 @@ public sealed class PlaybackSession
 		IReadOnlyList<NoteCommand> commands,
 		long eventFrame,
 		bool cutIndefiniteAfterNoteOff,
-		uint? virtualChannelId = null,
+		VirtualChannelIdentity? virtualChannelId = null,
 		long? scopedOwner = null)
 	{
 		foreach (NoteCommand command in commands)
@@ -1824,13 +1829,13 @@ public sealed class PlaybackSession
 	}
 
 	private void ApplyPastVirtualNoteAction(
-		PlaybackChannelState channel, uint virtualChannelId,
+		PlaybackChannelState channel, VirtualChannelIdentity virtualChannelId,
 		long? scopedOwner, TrackerPastNoteAction action, long frame)
 	{
 		for (int i = _virtualVoices.Count - 1; i >= 0; i--)
 		{
 			PlaybackVoice voice = _virtualVoices[i];
-			if (voice.OriginVirtualChannelId != virtualChannelId
+			if (voice.OriginVirtualIdentity != virtualChannelId
 				|| voice.OriginScopedVirtualOwner != scopedOwner)
 				continue;
 			switch (action)
@@ -1856,7 +1861,7 @@ public sealed class PlaybackSession
 		PlaybackChannelState channel,
 		StartNoteCommand start,
 		long eventFrame,
-		uint? virtualChannelId,
+		VirtualChannelIdentity? virtualChannelId,
 		long? scopedOwner)
 	{
 		// Virtual channels have the same per-note NNA displacement as
@@ -1923,7 +1928,7 @@ public sealed class PlaybackSession
 			eventFilter: start.EventFilterConfiguration,
 			enclosingEventFilters: BuildEnclosingEventFilters(ancestors))
 		{
-			OriginVirtualChannelId = virtualChannelId,
+			OriginVirtualIdentity = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
 			OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId,
 			EditorOriginCallsite = start.EditorOriginCallsite,
@@ -2481,7 +2486,7 @@ public sealed class PlaybackSession
 	/// actual output host. The per-owner playback-channel memory is *not*
 	/// the channel Filter identity; child cancellation has no rollback.</summary>
 	private void ApplyHostFilterCommand(NoteCommand command,
-		int? physicalHost, uint? virtualId, long? scopedOwner,
+		int? physicalHost, VirtualChannelIdentity? virtualId, long? scopedOwner,
 		long eventFrame, PlaybackChannelState logicalChannel)
 	{
 		try
@@ -2578,7 +2583,7 @@ public sealed class PlaybackSession
     /// note starts, note releases, and flattened-child completion.</summary>
     private void ApplyHostFilterEnvelopeCommand(
         SetChannelFilterParameterEnvelopeCommand command,
-        int? physicalHost, uint? virtualId, long? scopedOwner, long frame,
+        int? physicalHost, VirtualChannelIdentity? virtualId, long? scopedOwner, long frame,
         PlaybackChannelState logicalChannel,
         FilterEnvelopeCompletionAction completionAction = FilterEnvelopeCompletionAction.None)
     {
@@ -2590,7 +2595,7 @@ public sealed class PlaybackSession
             else if (scopedOwner is long scope)
                 _scopedVirtualOutputFilters.TryGetValue(
                     (scope, virtualId!.Value), out previous);
-            else if (virtualId is uint id)
+            else if (virtualId is VirtualChannelIdentity id)
                 _targetedVirtualOutputFilters.TryGetValue(id, out previous);
             else
                 throw new ArgumentException("No host for channel Filter Envelope.");
@@ -3134,7 +3139,7 @@ public sealed class PlaybackSession
 		for (int index = _virtualVoices.Count - 1; index >= 0; index--)
 		{
 			PlaybackVoice voice = _virtualVoices[index];
-			if (voice.OriginVirtualChannelId.HasValue
+			if (voice.OriginVirtualIdentity.HasValue
 				|| voice.OriginPhysicalChannel != physicalChannel
 				|| voice.OriginPhysicalPlaybackOwner != channelOwner)
 				continue;
@@ -3176,7 +3181,7 @@ public sealed class PlaybackSession
 
 	private ChannelOutputFilterState? ForkHostFilter(PlaybackVoice voice)
 	{
-		if (voice.OriginVirtualChannelId is uint virtualId)
+		if (voice.OriginVirtualIdentity is VirtualChannelIdentity virtualId)
 		{
 			if (voice.OriginScopedVirtualOwner is long owner)
 				return _scopedVirtualOutputFilters.TryGetValue(
@@ -3333,9 +3338,9 @@ public sealed class PlaybackSession
 		float[] rented = ArrayPool<float>.Shared.Rent(sampleCount);
 		Dictionary<int, float[]>? physicalBuses =
 			_physicalOutputFilters.Count == 0 ? null : [];
-		Dictionary<uint, float[]>? virtualBuses =
+		Dictionary<VirtualChannelIdentity, float[]>? virtualBuses =
 			_targetedVirtualOutputFilters.Count == 0 ? null : [];
-		Dictionary<(long Owner, uint Id), float[]>? scopedBuses =
+		Dictionary<(long Owner, VirtualChannelIdentity Id), float[]>? scopedBuses =
 			_scopedVirtualOutputFilters.Count == 0 ? null : [];
 
 		try
@@ -3420,8 +3425,8 @@ public sealed class PlaybackSession
 					_physicalOutputFilters, physicalBuses, sampleCount);
 			}
 
-			List<uint>? emptyVirtualChannels = null;
-			foreach (KeyValuePair<uint, PlaybackChannelState> pair
+			List<VirtualChannelIdentity>? emptyVirtualChannels = null;
+			foreach (KeyValuePair<VirtualChannelIdentity, PlaybackChannelState> pair
 				in _targetedVirtualChannels)
 			{
 				PlaybackChannelState channel = pair.Value;
@@ -3462,14 +3467,14 @@ public sealed class PlaybackSession
 
 			if (emptyVirtualChannels is not null)
 			{
-				foreach (uint channelId in emptyVirtualChannels)
+				foreach (VirtualChannelIdentity channelId in emptyVirtualChannels)
 					_targetedVirtualChannels.Remove(channelId);
 			}
 
 			// Invocation-scoped virtual channels are mixed exactly as
 			// ordinary targeted virtual voices, preserving every output
 			// speaker feed. Scope is an identity key, not an audio bus.
-			List<(long Owner, uint Id)>? emptyScoped = null;
+			List<(long Owner, VirtualChannelIdentity Id)>? emptyScoped = null;
 			foreach (var pair in _scopedVirtualChannels)
 			{
 				PlaybackChannelState channel = pair.Value;
