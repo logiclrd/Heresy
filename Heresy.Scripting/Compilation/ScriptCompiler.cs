@@ -69,6 +69,11 @@ public static class ScriptCompiler
 	{
 		ArgumentNullException.ThrowIfNull(source);
 
+		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(source);
+		if (HasErrors(order.Diagnostics))
+			return order.Diagnostics;
+		source = order.CompilerSource;
+
 		const string className = "__HeresyPattern_Analysis";
 		return PrepareCompilation(
 			source,
@@ -99,15 +104,20 @@ public static class ScriptCompiler
 	{
 		ArgumentNullException.ThrowIfNull(definition);
 
+		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(definition.Source);
+		if (HasErrors(order.Diagnostics))
+			return new(null, order.Diagnostics);
+		string source = order.CompilerSource;
+
 		string className =
 			"__HeresyPattern_" + Guid.NewGuid().ToString("N");
 		ScriptCompilationResult<Type> compiled =
 			CompileType(
-				definition.Source,
+				source,
 				className,
 				BuildPatternWrapper(
 					className,
-					InstrumentLoops(definition.Source)),
+					InstrumentLoops(source)),
 				typeof(PatternScriptProgram));
 
 		if (!compiled.Success || compiled.Program is null)
@@ -117,20 +127,18 @@ public static class ScriptCompiler
 				compiled.Diagnostics);
 		}
 
-		return new(
-			new CompiledPatternGenerator(
-				compiled.Program,
-				definition.RowCount,
-				definition.ChannelCount),
-			compiled.Diagnostics);
+		IRawPatternNoteGenerator generator = order.Order == ScriptPatternOrder.Relaxed
+			? new CompiledRelaxedPatternGenerator(compiled.Program,
+				definition.RowCount, definition.ChannelCount)
+			: new CompiledPatternGenerator(compiled.Program,
+				definition.RowCount, definition.ChannelCount);
+		return new(generator, compiled.Diagnostics);
 	}
 
 	/// <summary>
-	/// Compile a separate, invocation-local streaming Roslyn Pattern program.
-	/// Raw note positions are nondecreasing among accepted events. Earlier
-	/// emissions are silently discarded; equal-row emissions remain in order.
-	/// This API is not used by production song compilation or the recursive
-	/// timeline until CPU checkpoint scheduling and full parity are ready.
+	/// Compile the invocation-local raw Pattern producer for the scheduler.
+	/// Strict mode streams and drops backward raw positions; relaxed mode
+	/// completes synchronous collection before replaying sorted raw events.
 	/// </summary>
 	public static ScriptCompilationResult<IIncrementalRawPatternNoteGenerator>
 		CompileIncrementalPattern(ScriptPatternDefinition definition,
@@ -138,29 +146,52 @@ public static class ScriptCompiler
 	{
 		ArgumentNullException.ThrowIfNull(definition);
 
+		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(definition.Source);
+		if (HasErrors(order.Diagnostics))
+			return new(null, order.Diagnostics);
+		string source = order.CompilerSource;
+
 		// Establish exact helper symbols on the unrewritten source before
 		// inserting either trusted F6 callsites or streaming yields. A local
 		// delegate called Note/Tempo is not a musical event generator.
 		IReadOnlyList<ScriptAnalysisDiagnostic> authored =
-			AnalyzePatternSource(definition.Source);
+			AnalyzePatternSource(source);
 		if (HasErrors(authored))
 			return new(null, authored);
 		HashSet<int> emitterStarts = ResolveAuthoredCallStarts(
-			definition.Source, ScriptWrapperKind.Pattern);
+			source, ScriptWrapperKind.Pattern);
 
 		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
-			ValidateIncrementalPatternStatements(definition.Source, emitterStarts);
+			ValidateIncrementalPatternStatements(source, emitterStarts);
 		if (restrictions.Count != 0)
 			return new(null, restrictions);
+
+		if (order.Order == ScriptPatternOrder.Relaxed)
+		{
+			string relaxedClass = "__HeresyRelaxedPattern_" + Guid.NewGuid().ToString("N");
+			// Direct emitter F6 spans are preserved now; callback and delegate
+			// provenance is a separate extension of this path.
+			string instrumented = instrumentActionCallsites
+				? InstrumentRelaxedPatternCallsites(source, emitterStarts)
+				: InstrumentLoops(source);
+			var relaxed = CompileType(source, relaxedClass,
+				BuildPatternWrapper(relaxedClass, instrumented),
+				typeof(PatternScriptProgram),
+				allowInjectedPlayCallsites: instrumentActionCallsites);
+			if (!relaxed.Success || relaxed.Program is null)
+				return new(null, relaxed.Diagnostics);
+			return new(new CompiledRelaxedPatternGenerator(relaxed.Program,
+				definition.RowCount, definition.ChannelCount), relaxed.Diagnostics);
+		}
 
 		string className =
 			"__HeresyIncrementalPattern_" + Guid.NewGuid().ToString("N");
 		ScriptCompilationResult<Type> compiled = CompileType(
-			definition.Source,
+			source,
 			className,
 			BuildIncrementalPatternWrapper(
 				className,
-				InstrumentIncrementalPattern(definition.Source,
+				InstrumentIncrementalPattern(source,
 					emitterStarts, instrumentActionCallsites)),
 			typeof(PatternScriptProgram),
 			allowInjectedPlayCallsites: instrumentActionCallsites,
@@ -1226,8 +1257,19 @@ public static class ScriptCompiler
 		return root.ToFullString();
 	}
 
+	private static string InstrumentRelaxedPatternCallsites(string source,
+		IReadOnlySet<int> emitterStarts)
+	{
+		SyntaxNode root = CSharpSyntaxTree.ParseText(source, ScriptParseOptions).GetRoot();
+		root = new StrictPatternEmitterRewriter(emitterStarts,
+			instrumentActionCallsites: true, yieldAfterEmission: false).Visit(root) ?? root;
+		root = new LoopCheckpointRewriter().Visit(root) ?? root;
+		return root.ToFullString();
+	}
+
 	private sealed class StrictPatternEmitterRewriter(
-		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites)
+		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites,
+		bool yieldAfterEmission = true)
 		: CSharpSyntaxRewriter
 	{
 		public override SyntaxNode? VisitExpressionStatement(
@@ -1252,6 +1294,9 @@ public static class ScriptCompiler
 						rewritten.ArgumentList.WithArguments(
 							rewritten.ArgumentList.Arguments.Insert(0, callsite))));
 			}
+
+			if (!yieldAfterEmission)
+				return visited;
 
 			// Every approved event generator executes exactly once, followed
 			// by an outer-iterator yield. Local methods/delegates with the
@@ -1761,6 +1806,55 @@ public static class ScriptCompiler
 				yield return step;
 			}
 			yield return new RawPatternStep.Advance(_rowCount);
+		}
+	}
+
+	/// <summary>
+	/// A synchronous authored invocation, with no publication until it has
+	/// completed successfully. Both raw consumer contracts replay the same
+	/// stable musical-row ordering; wall deadlines remain scheduler-owned.
+	/// </summary>
+	private sealed class CompiledRelaxedPatternGenerator(
+		Type programType, int rowCount, int channelCount)
+		: IRawPatternNoteGenerator, IIncrementalRawPatternNoteGenerator
+	{
+		private NoteEvent[] Collect(SequencingContext context)
+		{
+			NoteScheduleBuilder receiver = new();
+			PatternScriptProgram program =
+				Activator.CreateInstance(programType, context, receiver,
+					(double)rowCount, channelCount) as PatternScriptProgram
+				?? throw new InvalidOperationException(
+					"Could not construct the relaxed pattern script.");
+
+			// A late emission may belong to row zero. Do not yield or
+			// publish anything from the authored invocation before it returns.
+			program.Execute();
+			NoteEvent[] events = receiver.Freeze().ToArray();
+			Array.Sort(events, static (a, b) =>
+			{
+				int byRow = a.Offset.RowOffset.CompareTo(b.Offset.RowOffset);
+				return byRow != 0 ? byRow : a.EmissionOrder.CompareTo(b.EmissionOrder);
+			});
+			return events;
+		}
+
+		public void GenerateRawNotes(SequencingContext context, INoteReceiver output,
+			out double generatedRowCount)
+		{
+			ArgumentNullException.ThrowIfNull(context);
+			ArgumentNullException.ThrowIfNull(output);
+			generatedRowCount = rowCount;
+			foreach (NoteEvent note in Collect(context))
+				output.Append(note);
+		}
+
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			ArgumentNullException.ThrowIfNull(context);
+			foreach (NoteEvent note in Collect(context))
+				yield return new RawPatternStep.Emit(note);
+			yield return new RawPatternStep.Advance(rowCount);
 		}
 	}
 
