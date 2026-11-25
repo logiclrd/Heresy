@@ -78,6 +78,7 @@ public abstract class PatternScriptProgram
 	private readonly ScriptExecutionBudget _budget = new();
 	private int _cooperationIterations;
 	private double _lastRawRow;
+	private bool _collectingRelaxed;
 	private SequenceCallsite? _editorActionCallsite;
 
 	protected PatternScriptProgram(
@@ -104,6 +105,18 @@ public abstract class PatternScriptProgram
 	}
 
 	internal void Execute() => ExecuteScript();
+
+	internal void ExecuteRelaxed()
+	{
+		_context.Cancellation.ThrowIfCancellationRequested();
+		_collectingRelaxed = true;
+		try
+		{
+			ExecuteScript();
+			_context.Cancellation.ThrowIfCancellationRequested();
+		}
+		finally { _collectingRelaxed = false; }
+	}
 
 	// The eager and resumable wrappers are deliberately separate. Eager
 	// callers cannot accidentally enumerate a streaming program, or vice versa.
@@ -156,7 +169,12 @@ public abstract class PatternScriptProgram
 		return _context.Random.NextDouble();
 	}
 
-	protected void Checkpoint() => _budget.Checkpoint();
+	protected void Checkpoint()
+	{
+		if (_collectingRelaxed)
+			_context.Cancellation.ThrowIfCancellationRequested();
+		_budget.Checkpoint();
+	}
 
 	protected void Note(
 		double row,
