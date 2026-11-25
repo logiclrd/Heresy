@@ -1,6 +1,6 @@
 # Script programmability — original-design completion
 
-**Status (October 10, 2026):** current contract for implemented
+**Status (November 24, 2026):** current contract for implemented
 Pattern-script virtual channels and script-defined Envelopes, alongside
 implemented script Instruments and native parametric effects. This is a **current design and
 acceptance contract**, not a historical implementation log. Track
@@ -92,11 +92,12 @@ predicates and selectors may run on deferred *synchronous* enumeration;
 they do not schedule background callbacks themselves. The runtime
 verifier audits lambda bodies and signatures, rejecting forbidden APIs
 even when the LINQ iterator is never enumerated. Musical note/control
-helpers inside lambdas are not supported in the **current strict streaming
-mode**, preserving the direct-statement and incremental-yield contract.
-Method-group delegate conversions of **approved non-emitting methods**
-are supported, while any Pattern event generator remains ineligible as a
-delegate target. Async lambdas and expression trees remain restricted.
+helpers inside lambdas are not supported in **strict streaming mode**,
+preserving the direct-statement and incremental-yield contract.
+Method-group delegate conversions of approved non-emitting methods
+are supported in both modes; relaxed Patterns also permit musical
+emitters as delegate targets. Async lambdas and expression trees remain
+restricted.
 Lambda-local loops receive synchronous work checkpoints, even in
 streaming Pattern execution.
 
@@ -110,39 +111,88 @@ these two contexts, preserving Heresy's narrow musical helper API and
 opaque song-object boundary. A `foreach` is checkpointed to retain the
 existing execution-work protections.
 
-### Strict event emission and proposed relaxed ordering
+### Script Pattern ordering modes (issue #52, PR #69)
 
-**Strict streaming is the current/default Script Pattern mode.** Pattern
-event-generator helpers such as `Note`, `Off`, `Cut` and control/filter
-emission must be direct statements, because the incremental compiler
-yields immediately after each emitter call. Consequently, even though
-those helpers are allowed as direct calls, they are **not allowed as
-lambda-body calls or method-group delegate targets in strict mode**.
-This is a streaming delivery/ordering restriction, not a claim that LINQ
-callbacks run on a separate thread. Ordinary inline LINQ predicates
-that compute data remain supported.
+A Script Pattern can declare its event-generation mode in its own Source:
 
-[Issue #52](https://github.com/logiclrd/Heresy/issues/52) proposes an
-**opt-in relaxed preprocessing mode**, tentatively written
-`#order relaxed`. When implemented, the Pattern would first run to
-completion, gather all of its note/control events, and sort them by
-musical row and the applicable time semantics, with stable tie ordering,
-before passing them to normal playback. Because the collection phase
-does not stream each event as it is generated, **event-generator calls
-would be allowed inside lambdas and as method-group delegate targets**
-in that mode, and **no per-emitter `yield return EmitPendingStep()`**
-would be injected. Any yields used later to replay sorted events belong
-to the playback implementation, not author callbacks. The directive,
-event gathering/sorting, resource limits, and relaxed-mode exception
-have **not** been implemented or approved for compilation yet.
+- `#order strict` (default if omitted): stream raw events in nondecreasing
+  musical-row order. Earlier rows emitted after later ones are dropped
+  with a bounded diagnostic. Emitters are direct statements; each call
+  suspends the incremental iterator immediately. Lambda bodies and
+  method-group targets may compute data but must not emit musical events.
+- `#order relaxed`: run the invocation synchronously to completion in a
+  private raw-event collector, then sort and replay through the same
+  scheduler. Emitters may appear inside synchronous lambdas, method-group
+  delegates, and other approved expression positions.
 
-**Other features not yet enabled:** author-defined classes/functions,
-Pattern emitter method-group conversions and lambda-body emission in
-strict mode, unsafe code, asynchronous execution, reflection,
-exception-control constructs, and other unreviewed language forms. The Script Instrument, Envelope and parametric
-**scalar expression** contexts retain their more restrictive policies.
-The managed-data feature is tracked in [issue #58](https://github.com/logiclrd/Heresy/issues/58);
-the full planned scope is not yet finished.
+The directive is visible source, saved with the Pattern, highlighted as
+a preprocessor directive, and recognized before the first C# statement.
+Only one directive is accepted; invalid, duplicate, or late directives
+produce diagnostics. Other script types do not accept it. Roslyn sees a
+space-masked version retaining original UTF-16 offsets, so object-reference
+tokens, diagnostics and F6 metadata still refer to the authored source.
+
+```csharp
+#order relaxed
+for (int channel = 0; channel < 2; channel++)
+    Enumerable.Range(0, 8).ToList().ForEach(row =>
+        Note(row, channel, _O(35), Semitone(channel * 7)));
+```
+
+For this example, use at least eight rows and two channels, and substitute a
+valid Source object ID. In relaxed mode, the second channel's early rows
+are retained even though the first channel's later rows were generated
+first. Deferred LINQ selectors only execute when enumerated. No additional
+worker, asynchronous callback permission or per-emitter yield is introduced.
+
+**Scheduling:** sort by raw musical row and original emission ordinal, not
+by resolved wall deadline. Same-row emission order is stable within the
+collector; existing scheduler arbitration (global timing, channel order,
+fixed offsets, concurrent cursors, and source ownership) still applies.
+Fractional rows and offsets retain their original values. A note at a
+smaller raw row can sound after a later row due to its wall-time offset.
+Tempo/speed are applied by the scheduler, not by precomputation. Starting
+at a later row uses normal cursor semantics, and repeated visits generate
+fresh events. Flattened and private mixdown invocations select their own
+ordering modes; ordinary playback and export use the same scheduler.
+
+**Failure and cost:** no raw events are published until generation and
+sorting succeed. A thrown exception, runaway guard or observed cancellation
+during collection discards that collection, not other already-committed
+invocations. This is not a rollback of random draws or all diagnostic
+state, nor of errors during subsequent scheduling. Relaxed mode costs
+memory proportional to collected events and can delay playback startup;
+strict mode retains streaming. The existing 1,000,000-event/expansion-unit
+limits, periodic elapsed-time checks and scheduler per-row guards apply.
+There are no new arbitrary managed-allocation quotas. Cancellation is
+cooperative at execution checkpoints and the collection/sort boundary;
+a library operation that does not reach a checkpoint must return first.
+The same root stop signal is shared by flattened and private descendants,
+and export cancellation reaches the collector. This is application-level
+isolation, not an OS sandbox or universal CLR resource bound.
+
+**Randomness:** authored execution order determines Random() draws;
+fresh invocations and identical seeded inputs remain repeatable within a
+mode. Moving random draws ahead of nested source creation may change their
+interleaving compared with strict streaming, so cross-mode equivalence is
+not promised for arbitrary scripts using Random() and nested sources.
+
+**F6 provenance:** use the innermost active authored delegate invocation's
+full source span. Restore the enclosing span in finally, including after
+exceptions. Without an active invocation, use the direct emitter span
+inside a callback, or an unambiguous emitter method-group reference.
+Multiple references to the same bound emitter retain original delegate
+identity rather than changing equality to manufacture fallback provenance.
+Ordinary playback receives no delegate tracing instrumentation. A future
+opt-in generation diagnostic trace is tracked separately in
+[#68](https://github.com/logiclrd/Heresy/issues/68).
+
+**Restrictions unchanged:** the exact bound-symbol API policy applies to
+both modes. User-defined functions/types, async or outliving callbacks,
+unsafe code, reflection and exception-control constructs remain
+unavailable. Instrument, Envelope and parametric scalar expression
+contexts remain restricted. The managed-data feature (#58) was merged
+separately in PR #67.
 
 ## Shared restricted-script pitch conversion helpers (November 2026)
 
@@ -168,7 +218,7 @@ and absolute tuning frequencies are unrelated to these 12-TET ratios.
 For Script Patterns (physical and virtual), a note may use
 `pitchMultiplier: Semitone(7)`, `Cent(-25)` or
 `Octave(-1) * Semitone(4)`; emitting `Note` itself must still be a
-direct statement under incremental compilation. For Script Instrument
+direct statement in strict incremental compilation. For Script Instrument
 selectors, the incoming `pitchMultiplier` is a relative C4 frequency
 ratio, so `SemitoneOffset(pitchMultiplier) >= 12 ? 1 : 0` compares
 against the octave boundary. The Script Instrument `PitchExpression`
@@ -220,13 +270,12 @@ fixed-wall offset. Invalid helpers fail before emitting.
 Each call creates exactly one raw `NoteEvent` with the corresponding
 target and existing `StartNoteCommand`, `NoteOffCommand` or
 `NoteCutCommand`. The eager generator and incremental iterator
-must match. In the incremental compiler all emission helpers
+must match. In strict incremental compilation emission helpers
 **must yield exactly one event** before executing the next
-statement. Helper calls in expressions or nested invocations are
-rejected rather than secretly bypassing suspension.
+statement. Relaxed compilation instead collects all events before playback.
 
 In the current incremental engine, events may be chronological and
-carry positive fixed-wall deadlines. Out-of-order script emissions
+carry positive fixed-wall deadlines. Out-of-order strict script emissions
 remain subject to the existing silent-drop, rate-capped diagnostic
 contract. No changes to renderer virtual ownership, NNA or
 broadcast eligibility are implied by exposing these helpers.
