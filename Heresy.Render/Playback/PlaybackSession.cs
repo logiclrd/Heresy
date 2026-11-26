@@ -146,6 +146,7 @@ public sealed class PlaybackSession
 	// Only materialized filters with a confirmed final-use barrier enter
 	// this set; no tombstone is kept for unmaterialized or reclaimed IDs.
 	private readonly HashSet<(long Owner, VirtualChannelIdentity Id)> _retiringVirtualFilters = [];
+	internal int RetainedScopedVirtualChannelCount => _scopedVirtualChannels.Count;
 	internal int RetainedScopedVirtualFilterCount => _scopedVirtualOutputFilters.Count;
 	internal int RetiringVirtualFilterCount => _retiringVirtualFilters.Count;
 	private readonly NoteSchedule _schedule;
