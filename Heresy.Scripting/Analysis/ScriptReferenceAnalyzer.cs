@@ -131,9 +131,24 @@ public static class ScriptReferenceAnalyzer
 		SyntaxTree referenceTree = order.CompilerSource == source
 			? syntaxTree
 			: CSharpSyntaxTree.ParseText(SourceText.From(order.CompilerSource), ParseOptions);
+		// At submission scope Roslyn can parse "using var" as an
+		// import directive. Heresy executes method-body statements instead.
+		// Prefer the block interpretation only when the original syntax
+		// has errors and the complete block parses successfully.
+		int sourceOffset = 0;
+		if (referenceTree.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error))
+		{
+			SyntaxTree blockTree = CSharpSyntaxTree.ParseText(
+				"{\n" + order.CompilerSource + "\n}", ParseOptions);
+			if (!blockTree.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error))
+			{
+				referenceTree = blockTree;
+				sourceOffset = 2;
+			}
+		}
 		List<ScriptAnalysisDiagnostic> diagnostics = [.. order.Diagnostics];
 		foreach (Diagnostic diagnostic in referenceTree.GetDiagnostics())
-			diagnostics.Add(ProjectDiagnostic(diagnostic));
+			diagnostics.Add(ProjectDiagnostic(diagnostic, sourceOffset));
 
 		CSharpCompilation compilation =
 			CSharpCompilation.CreateScriptCompilation(
@@ -193,7 +208,7 @@ public static class ScriptReferenceAnalyzer
 						is not LiteralExpressionSyntax)
 				{
 					dynamicReferences.Add(new ScriptSourceSpan(
-						invocation.SpanStart, invocation.Span.Length));
+						invocation.SpanStart - sourceOffset, invocation.Span.Length));
 					continue;
 				}
 				diagnostics.Add(
@@ -202,7 +217,7 @@ public static class ScriptReferenceAnalyzer
 						ScriptDiagnosticSeverity.Error,
 						"An object lookup needs one argument. Literal IDs must be non-zero 32-bit integers, for example _O(137); computed int and uint expressions are also allowed.",
 						new ScriptSourceSpan(
-							invocation.SpanStart,
+							invocation.SpanStart - sourceOffset,
 							invocation.Span.Length)));
 				continue;
 			}
@@ -289,7 +304,7 @@ public static class ScriptReferenceAnalyzer
 	}
 
 	private static ScriptAnalysisDiagnostic ProjectDiagnostic(
-		Diagnostic diagnostic)
+		Diagnostic diagnostic, int sourceOffset = 0)
 	{
 		Microsoft.CodeAnalysis.Text.TextSpan sourceSpan =
 			diagnostic.Location.IsInSource
@@ -308,7 +323,7 @@ public static class ScriptReferenceAnalyzer
 			},
 			diagnostic.GetMessage(),
 			new ScriptSourceSpan(
-				sourceSpan.Start,
+				Math.Max(0, sourceSpan.Start - sourceOffset),
 				sourceSpan.Length));
 	}
 }
