@@ -233,11 +233,12 @@ author-facing signatures. See [the approved numerical API design](script-pitch-h
 
 ## 1. Pattern script access to virtual voices
 
-`ChannelTarget` already supports `Virtual(uint id)`,
-`AllVirtualInScope` and `AllVirtual`. The production
-`PlaybackSession` scopes a virtual ID by the active Pattern cursor
-invocation. Repeated numerical IDs in different flattened siblings
-remain distinct. Broadcasts act only on voices already started at a
+The internal `ChannelTarget` supports generated `VirtualChannelIdentity`
+(slot and generation), legacy generation-zero `Virtual(uint id)`,
+`AllVirtualInScope` and `AllVirtual`. The production `PlaybackSession`
+scopes the full virtual identity by the active Pattern cursor invocation.
+Recycled slots in the same invocation and matching local identities in
+flattened siblings or independent private renderers remain distinct. Broadcasts act only on voices already started at a
 **strictly earlier** resolved note-start time; same-frame starts are
 not retroactively targeted. Scoped broadcast excludes unrelated
 invocations; global virtual broadcast may reach all scopes.
@@ -267,6 +268,40 @@ ownership termination produces a compiler warning; invocation-end
 cleanup is a safeguard. Nested Pattern/Sequence sources require
 `mixdown: true` on each virtual start/retrigger.
 
+### Owning note groups
+
+`NewNoteGroup()` creates an empty disposable `NoteGroup`. Transfer a
+handle using `+=`, including a direct `NoteVirtual` initializer:
+
+```csharp
+using var chord = NewNoteGroup();
+var lead = NoteVirtual(0, _O(17));
+chord += lead;
+chord += NoteVirtual(0, _O(17), Semitone(4));
+chord += NoteVirtual(0, _O(17), Semitone(7));
+chord.Volume(4, 0.5);
+chord.Off(8);
+```
+
+The original handle and every alias become permanently unusable after
+transfer; disposing the old wrapper is harmless. The underlying lease
+and already scheduled events remain unchanged. Heresy permits the exact
+`NoteGroup += VirtualNote` transfer on a using local, including a using
+block, without permitting reassignment or ref/out writes to that local.
+Invalid transfers warn without revoking valid ownership. A start evaluated
+on the right-hand side before an invalid transfer remains scheduled.
+
+A group forwards `Volume`, `Off`, `Cut`, `SourceFrame`, `Displacement`,
+`Past`, `NoteFilter` and `ChannelFilter` to its own members with the same
+arguments as the handle. There is no group `Note` method and no broadcast
+or separate engine channel behind the group. Dispose releases all leases
+without stopping music. Strict streaming yields once per member before
+resuming authored statements; relaxed mode collects the same fanout.
+The compiler warns conservatively (`HRS2101`) about unproven ownership
+termination; invalid ownership operations are suppressed with bounded
+`HRSEQ011`/`HRSEQ012` diagnostics. Invocation cleanup covers abandoned
+leases, including failure or iterator disposal.
+
 Scope-wide and global broadcasts remain distinct helpers:
 
 ```csharp
@@ -278,8 +313,10 @@ CutAllVirtual(row, timeOffsetSeconds: 0.0);
 
 Successful calls emit the same Core note commands as before, targeting
 the full invocation/slot/generation identity. Strict compilation
-suspends after each direct musical statement or single direct local
-initializer; a suppressed invalid-handle action emits nothing.
+suspends after each direct musical statement, single direct local
+initializer or direct `group += NoteVirtual(...)` start, and after each
+member emission of a group control; suppressed invalid-handle actions
+emit nothing.
 Relaxed compilation collects and sorts events before playback.
 Row bounds and representable fixed-wall offsets are validated; earlier
 strict-mode emissions continue to be dropped with bounded diagnostics.
@@ -357,6 +394,17 @@ Regression coverage:
   sounds, direct and replay-required cost hints and zero-offset behavior.
   Existing physical source-frame seek tests remain unchanged.
 
+`note.NoteFilter(row, definitionId = null, timeOffsetSeconds: 0.0)`
+selects or clears the current note's event Filter; `note.ChannelFilter`
+with the same arguments selects or clears the persistent logical-channel
+output Filter. Pass a Filter object ID with `_O(id)`, or null to clear.
+These are distinct controls, not the physical resonant `Filter` helper.
+
+A generation's output Filter can outlive its lease: final-use retirement
+waits for queued events, current/displaced voices and DSP/anti-click tails.
+Private mixdown rewind reconstructs the timeline and renderer together;
+no event history or PCM cache is retained to emulate the seek.
+
 ### Acceptance and regression matrix
 
 - Restricted-C# analysis/compilation for eager and incremental sources.
@@ -366,6 +414,12 @@ Regression coverage:
   `AllVirtualInScope` versus `AllVirtual` isolation.
 - Production `PreparedIncrementalPlaybackFactory` PCM, cancel,
   Note Off/Cut and realtime/offline parity in unequal block sizes.
+- Exclusive transfer, using-local lowering, strict group suspension,
+  bounded misuse diagnostics, full F6 spans and traced/ordinary PCM.
+- Long-running lease recycling and bounded renderer state; nested private
+  rewind/cancellation with a non-recycled PCM reference, repeated
+  invocations and actual realtime/F6/export PCM parity. See the
+  [ownership design and acceptance record](script-virtual-note-ownership-design.md).
 - No altered physical `Note/Off/Cut` or Sequence script semantics.
 
 ## 2. Script-defined Envelopes — implemented
@@ -677,8 +731,8 @@ and no work is added to SDL's callback.
 
 ## Recommended sequence
 
-1. Pattern virtual note lifecycle helpers (bounded first slice).
-2. Pattern virtual voice-local controls.
+1. Pattern virtual note lifecycle helpers (complete; owned handles in #54).
+2. Pattern virtual voice-local controls (complete; owning groups in #54).
 3. Script Envelope model/compiler and runtime integration (complete).
 4. Script Instrument model/compiler and source binding (complete).
 5. Authorable parametric effect expressions (complete).
