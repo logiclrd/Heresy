@@ -564,7 +564,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							}
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new NotSupportedException(
-									"Flattened child requires a physical parent channel.");
+									"Flattened Pattern/Sequence sources require a physical parent channel. For a virtual note, specify mixdown: true.");
 							// Starting a flattened source is a *real start*
 							// for the caller's remembered volume, but does not
 							// create or control one individual playback voice.
