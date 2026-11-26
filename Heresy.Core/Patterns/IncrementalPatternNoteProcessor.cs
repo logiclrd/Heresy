@@ -150,6 +150,17 @@ public sealed class IncrementalPatternNoteProcessor : IDisposable
 			RawPatternStep next = _source.Current
 				?? throw new InvalidOperationException(
 					"A raw Pattern iterator yielded null.");
+			// This legacy row-only consumer returns note schedules, not a
+			// scoped renderer hand-off. Release markers have no row/time
+			// meaning and cannot move its raw position backwards.
+			if (next is RawPatternStep.ReleaseVirtualChannel release)
+			{
+				if (release.Identity.Generation == 0)
+					throw new InvalidOperationException("Cannot release a legacy virtual channel.");
+				if (++discarded > 8192)
+					throw new InvalidOperationException("A raw Pattern iterator exceeded its no-progress budget.");
+				continue;
+			}
 			if (!double.IsFinite(next.Row) || next.Row < 0)
 				throw new InvalidOperationException(
 					"A raw Pattern iterator must have finite nonnegative positions.");
