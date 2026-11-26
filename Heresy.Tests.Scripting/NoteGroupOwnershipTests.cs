@@ -216,6 +216,75 @@ public sealed class NoteGroupOwnershipTests
         Assert.That(context.Diagnostics.VirtualOwnershipWarnings, Is.EqualTo(1));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void UsingScopeLoweringPreservesNestedScopesCollisionAvoidanceAndOriginalF6Spans(bool relaxed)
+    {
+        // Deliberately occupy the compiler's initial candidate prefix and
+        // put several calls on the same CRLF line as a lowered declaration.
+        string source = """
+            int __heresyUsingScope0 = 0;
+            using var outer = NewNoteGroup(); outer += NoteVirtual(0, _O(17));
+            using (var inner = NewNoteGroup())
+            {
+                inner += NoteVirtual(1, _O(18));
+                inner.Cut(2);
+            }
+            using (var single = NewNoteGroup()) single += NoteVirtual(3, _O(19));
+            outer.Volume(4, 0.5 + __heresyUsingScope0);
+            outer.Off(5);
+            """.Replace("\r\n", "\n").Replace("\n", "\r\n");
+        if (relaxed) source = "#order relaxed\r\n" + source;
+
+        var pattern = Pattern(source);
+        var analysis = ScriptCompiler.AnalyzePatternSource(source);
+        Assert.That(analysis.Any(d => d.Severity == ScriptDiagnosticSeverity.Error || d.Code == "HRS2101"),
+            Is.False, string.Join("; ", analysis.Select(d => d.Message)));
+        var eager = ScriptCompiler.CompilePattern(pattern);
+        var incremental = ScriptCompiler.CompileIncrementalPattern(pattern, instrumentActionCallsites: true);
+        Assert.That(eager.Success, Is.True, string.Join("; ", eager.Diagnostics.Select(d => d.Message)));
+        Assert.That(incremental.Success, Is.True, string.Join("; ", incremental.Diagnostics.Select(d => d.Message)));
+        var context = new SequencingContext();
+        var events = incremental.Program!.EnumerateRawSteps(context)
+            .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+        string[] spans = [
+            "NoteVirtual(0, _O(17))", "NoteVirtual(1, _O(18))", "inner.Cut(2)",
+            "NoteVirtual(3, _O(19))", "outer.Volume(4, 0.5 + __heresyUsingScope0)", "outer.Off(5)",
+        ];
+        Assert.That(events.Length, Is.EqualTo(spans.Length));
+        for (int i = 0; i < spans.Length; i++)
+            Assert.That(events[i].EditorCallsite, Is.EqualTo(new SequenceCallsite(
+                source.IndexOf(spans[i], StringComparison.Ordinal), spans[i].Length)));
+        Assert.That(events[3].Target.VirtualIdentity.Slot, Is.EqualTo(events[1].Target.VirtualIdentity.Slot));
+        Assert.That(events[3].Target, Is.Not.EqualTo(events[1].Target));
+        Assert.That(events[4].Target, Is.EqualTo(events[0].Target));
+        Assert.That(context.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+    }
+
+    [TestCase("using var chord = NewNoteGroup(); chord += NoteVirtual(0, _O(17)); chord = NewNoteGroup();")]
+    [TestCase("using (var chord = NewNoteGroup()) { chord += NoteVirtual(0, _O(17)); chord = NewNoteGroup(); }")]
+    [TestCase("using var chord = NewNoteGroup(); chord += NoteVirtual(0, _O(17)); System.Threading.Interlocked.Exchange(ref chord, NewNoteGroup());")]
+    public void UsingGroupLoweringDoesNotPermitOtherWritesToReadonlyLocal(string source)
+    {
+        var diagnostics = ScriptCompiler.AnalyzePatternSource(source);
+        Assert.That(diagnostics.Any(d => d.Severity == ScriptDiagnosticSeverity.Error
+            && d.Code is "CS1656" or "CS1657"), Is.True,
+            string.Join("; ", diagnostics.Select(d => d.Code + ": " + d.Message)));
+        Assert.That(ScriptCompiler.CompilePattern(Pattern(source)).Success, Is.False);
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(Pattern(source)).Success, Is.False);
+    }
+
+    [Test]
+    public void LoweredScopeDoesNotLeakAfterUsingBlock()
+    {
+        const string source = """
+            using (var chord = NewNoteGroup()) { chord += NoteVirtual(0, _O(17)); }
+            chord.Off(4);
+            """;
+        Assert.That(ScriptCompiler.AnalyzePatternSource(source).Any(d =>
+            d.Severity == ScriptDiagnosticSeverity.Error && d.Code == "CS0103"), Is.True);
+    }
+
     [TestCase("using var chord = NewNoteGroup(); chord.Note(0, _O(17));")]
     [TestCase("using var chord = NewNoteGroup(); chord.Volume(default(SequenceCallsite), 0, .5);")]
     [TestCase("var chord = new NoteGroup(null);")]
