@@ -1954,6 +1954,7 @@ public static class ScriptCompiler
 			double lastRow = 0;
 			foreach (RawPatternStep step in program.Enumerate())
 			{
+				bool publish = true;
 				if (step is RawPatternStep.Emit emission)
 				{
 					// A script may accidentally emit an already-passed
@@ -1963,17 +1964,28 @@ public static class ScriptCompiler
 					{
 						context.Diagnostics.ReportDroppedOutOfOrderNote(
 							emission.Row, lastRow);
-						continue;
+						publish = false;
 					}
-					lastRow = emission.Row;
+					else
+						lastRow = emission.Row;
 				}
 				else if (step is RawPatternStep.Advance advance
 					&& advance.Row > lastRow)
 				{
 					lastRow = advance.Row;
 				}
-				yield return step;
+				if (publish)
+					yield return step;
+				// Dispose cannot yield in an authored finally/using
+				// block. Publish trusted releases at the next boundary,
+				// after that boundary's event (if any) has left the program.
+				while (program.TryTakeVirtualChannelRelease(out var identity))
+					yield return new RawPatternStep.ReleaseVirtualChannel(identity);
 			}
+			// Normal iterator completion may execute the last using/finally
+			// without another authored musical or cooperation step.
+			while (program.TryTakeVirtualChannelRelease(out var identity))
+				yield return new RawPatternStep.ReleaseVirtualChannel(identity);
 			yield return new RawPatternStep.Advance(_rowCount);
 		}
 	}
@@ -2022,8 +2034,8 @@ public static class ScriptCompiler
 		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
 		{
 			ArgumentNullException.ThrowIfNull(context);
-			foreach (NoteEvent note in Collect(context))
-				yield return new RawPatternStep.Emit(note);
+			foreach (RawPatternStep step in RelaxedVirtualChannelReplay.Enumerate(Collect(context)))
+				yield return step;
 			yield return new RawPatternStep.Advance(rowCount);
 		}
 	}
