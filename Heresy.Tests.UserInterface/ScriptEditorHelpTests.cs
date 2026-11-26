@@ -19,9 +19,9 @@ public sealed class ScriptEditorHelpTests
         string[] methods =
         [
             "_O", "Random", "Checkpoint", "Note", "NoteVirtual",
-            "NoteFilter", "NoteFilterVirtual", "ChannelFilter",
-            "ChannelFilterVirtual", "VolumeVirtual", "SourceFrameVirtual",
-            "DisplacementVirtual", "PastVirtual", "OffVirtual", "CutVirtual",
+            "NoteFilter", "ChannelFilter", "note.Note", "note.NoteFilter", "note.ChannelFilter",
+            "note.Volume", "note.SourceFrame", "note.Displacement", "note.Past",
+            "note.Off", "note.Cut", "Dispose",
             "OffVirtualInScope", "CutVirtualInScope", "OffAllVirtual",
             "CutAllVirtual", "Off", "Cut", "Tempo", "Speed", "Seek",
             "Pan", "Surround", "Filter", "FilterCutoff", "FilterResonance",
