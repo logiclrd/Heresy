@@ -440,7 +440,7 @@ public sealed class EditorPatternPlaybackTraceTests
         const string second =
             "Note(0, 0, _O(21), timeOffsetSeconds: 0.002)";
         const string cut = "Cut(0, 0, timeOffsetSeconds: 0.003)";
-        string source = "using var note = " + first + "; " + second + "; " + cut + ";";
+        string source = first + "; " + second + "; " + cut + ";";
         ScriptPatternDefinition script = new((ObjectId)5U, "Fading NNA")
         {
             RowCount = 16, ChannelCount = 1, Source = source,
@@ -1454,7 +1454,7 @@ public sealed class EditorPatternPlaybackTraceTests
             "Long sustained", "sustained.wav", LongMonoWave()));
         const string first = "NoteVirtual(0, _O(20))";
         const string replacement = "note.Note(4, _O(20))";
-        string source = first + "; " +
+        string source = "using var note = " + first + "; " +
             "note.Displacement(2, NoteDisplacementAction.Continue); " +
             replacement + "; note.Cut(8); " +
             "note.Past(12, TrackerPastNoteAction.Cut);";
