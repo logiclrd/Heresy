@@ -1,10 +1,9 @@
 # Script Pattern virtual-note ownership redesign (#54)
 
-Status: single-handle API and numeric script API removal committed, awaiting combined CI.
+Status: single-handle and initial owning-group implementation committed, awaiting exact-head CI and final acceptance.
 Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
 [Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
-this document records the implementation choices and boundaries. The single-handle
-API has been implemented; group ownership and final acceptance remain.
+this document records the implementation choices and boundaries. The single-handle and initial group APIs have been implemented; final acceptance remains.
 
 ## Public scripting surface
 
@@ -249,6 +248,52 @@ brace-token spans rather than fixed-length suffix trimming. Combined
 exact-head CI must validate the fix and migrated fixtures before
 starting group transfer. No full generation-qualified private rewind
 or all final stress/F6 cases have been claimed yet.
+
+### Owning NoteGroup (slice 4)
+
+A sealed NoteGroup owns a list of underlying invocation-local lease
+identities, never the VirtualNote wrapper. The C# 14 instance `operator +=`
+mutates the same reference-type group in place. Transfer validates both
+destination and wrapper ownership (including invocation reference equality),
+adds the identity to destination storage, then permanently invalidates
+the source wrapper. No slot is released or reacquired. Dispose on the
+transferred wrapper is harmless. Invalid transfer and group-control use
+share bounded HRSEQ011/012 warnings. Disposal of the group releases its
+leases without cancelling any already scheduled audio.
+
+The group exposes Volume, Off, Cut, SourceFrame, Displacement, Past,
+NoteFilter and ChannelFilter, but no Note operation. It does not produce
+scope/global broadcast targets. In eager/relaxed mode forwarding is
+synchronous in membership order. Strict mode retains one fanout cursor
+over the group list, command and callsite, and drains through the existing
+single-event receiver; the next authored statement does not execute until
+all member events have yielded. The generated drain loop is annotated so
+it does not count as an authored CPU cooperation loop. Cancellation of a
+suspended iterator executes lexical using cleanup and abandons the
+unemitted suffix. The scheduler retains any accepted earlier events and
+applies normal generation-qualified retirement accounting.
+
+Compiler authorization is exact-symbol based for NewNoteGroup, the
+instance compound operator, approved group controls and Dispose. The
+strict statement validator accepts a direct NoteVirtual RHS only when
+the bound compound assignment is the approved group operator. F6
+instrumentation injects the original complete invocation span into
+the group method, reused on all forwarded events; the initial inline
+NoteVirtual retains its own span. Conservative source warnings recognize
+direct transfer to a lexical using group or simple explicit disposal.
+Complex flow and aliases can still warn; runtime checks remain essential.
+
+Tests cover using declarations and blocks, transfer of existing and inline
+handles, group-only controls, invalid and cross-invocation transfers,
+alias invalidation, group disposal and slot reuse, cancellation halfway
+through a group operation, ordinary/traced strict/relaxed command parity,
+source spans and explicit-handle PCM parity including delayed cuts.
+Editor help includes the group contract. No group test execution is
+claimed yet. The previous migration head's CI passed all 4,602 tests and
+ARM64 validation, but its final build was canceled by subsequent pushes.
+Exact-head CI and manual group audition are required; final F6 timeline,
+bound-instance delegate fallback, stress, private rewind and export
+acceptance remain.
 
 ## Compiler integration after #58 and #69
 
