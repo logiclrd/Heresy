@@ -242,50 +242,47 @@ remain distinct. Broadcasts act only on voices already started at a
 not retroactively targeted. Scoped broadcast excludes unrelated
 invocations; global virtual broadcast may reach all scopes.
 
-### First slice: note lifecycle — implemented
+### Owned virtual note lifecycle
 
-These are *direct statement helpers*, matching existing
-`Note/Off/Cut` syntax and defaults:
+Script callers no longer select numeric IDs. `NoteVirtual` creates an
+invocation-local exclusive logical channel, starts its first note, and
+returns a disposable `VirtualNote`:
 
 ```csharp
-NoteVirtual(row, virtualId, sourceId,
+using var note = NoteVirtual(0, _O(17),
     pitchMultiplier: 1.0, playbackSpeedMultiplier: 1.0,
     mixdown: false, volume: null, timeOffsetSeconds: 0.0);
-OffVirtual(row, virtualId, timeOffsetSeconds: 0.0);
-CutVirtual(row, virtualId, timeOffsetSeconds: 0.0);
+note.Note(4, _O(17), Semitone(7));
+note.Off(8);
+note.Cut(12);
+```
+
+A handle is independent of Pattern.ChannelCount. `Note` on the handle
+retriggers the same logical channel, not a new lease. Dispose immediately
+releases ownership without emitting commands or cancelling already
+scheduled events. A recycled slot gets a distinct generation. Aliases
+of a disposed handle cannot emit commands, and misuse is warned.
+Use a using declaration or block to guarantee cleanup. Unproven
+ownership termination produces a compiler warning; invocation-end
+cleanup is a safeguard. Nested Pattern/Sequence sources require
+`mixdown: true` on each virtual start/retrigger.
+
+Scope-wide and global broadcasts remain distinct helpers:
+
+```csharp
 OffVirtualInScope(row, timeOffsetSeconds: 0.0);
 CutVirtualInScope(row, timeOffsetSeconds: 0.0);
 OffAllVirtual(row, timeOffsetSeconds: 0.0);
 CutAllVirtual(row, timeOffsetSeconds: 0.0);
 ```
 
-The ID is a `uint`, **independent of Pattern.ChannelCount**.
-A valid ID of zero is not `ObjectId.None`; it is simply a local
-virtual-channel key. Values beyond the 32-bit unsigned domain are
-compile-time invalid. Start validates the same source, positive
-pitch/speed, and optional [0,1] volume as physical `Note`;
-every helper validates inclusive row bounds and a representable
-fixed-wall offset. Invalid helpers fail before emitting.
-
-Each call creates exactly one raw `NoteEvent` with the corresponding
-target and existing `StartNoteCommand`, `NoteOffCommand` or
-`NoteCutCommand`. The eager generator and incremental iterator
-must match. In strict incremental compilation emission helpers
-**must yield exactly one event** before executing the next
-statement. Relaxed compilation instead collects all events before playback.
-
-In the current incremental engine, events may be chronological and
-carry positive fixed-wall deadlines. Out-of-order strict script emissions
-remain subject to the existing silent-drop, rate-capped diagnostic
-contract. No changes to renderer virtual ownership, NNA or
-broadcast eligibility are implied by exposing these helpers.
-
-The `PatternScriptProgram` virtual note-lifecycle helpers are now
-implemented, sharing physical `Note` start validation and emitting
-the existing Core commands. The incremental restricted-C# compiler
-recognizes their direct statements as mandatory yield points and
-rejects nested/statement-expression misuse. No changes to the
-`PlaybackSession` target/ownership implementation were needed.
+Successful calls emit the same Core note commands as before, targeting
+the full invocation/slot/generation identity. Strict compilation
+suspends after each direct musical statement or single direct local
+initializer; a suppressed invalid-handle action emits nothing.
+Relaxed compilation collects and sorts events before playback.
+Row bounds and representable fixed-wall offsets are validated; earlier
+strict-mode emissions continue to be dropped with bounded diagnostics.
 
 Automated coverage: `ScriptVirtualChannelTests` (eager/incremental
 equivalence, validation, laziness, Tempo/wall deadlines),
@@ -294,26 +291,24 @@ broadcast, ID reuse, cancellation, chunk invariance) and
 `PlaybackExportPcmParityTests` (production realtime/offline mono
 and 5.1 PCM equivalence).
 
-### Second slice: virtual controls — implemented
+### Virtual handle controls
 
-Pattern scripts may now invoke the following **typed, direct-statement**
-helpers, with one raw `NoteEvent` per call and mandatory yielding from
-incremental Roslyn iterators:
+The owned handle exposes typed instance controls; successful calls emit one raw event in strict or relaxed mode:
 
 ```csharp
-VolumeVirtual(row, virtualId, volume, timeOffsetSeconds: 0.0);
-SourceFrameVirtual(row, virtualId, sourceFrameOffset, timeOffsetSeconds: 0.0);
-DisplacementVirtual(row, virtualId, NoteDisplacementAction.Continue,
+note.Volume(row, volume, timeOffsetSeconds: 0.0);
+note.SourceFrame(row, sourceFrameOffset, timeOffsetSeconds: 0.0);
+note.Displacement(row, NoteDisplacementAction.Continue,
     timeOffsetSeconds: 0.0);
-PastVirtual(row, virtualId, TrackerPastNoteAction.Cut,
+note.Past(row, TrackerPastNoteAction.Cut,
     timeOffsetSeconds: 0.0);
 ```
 
 - **Volume:** Normalized finite [0,1] value via `SetNoteVolumeCommand`.
   It modifies the current voice and is remembered on **that scoped
   virtual channel** for a later note; it does not modify another
-  invocation's same-numbered virtual ID.
-- **Native offset:** `SourceFrameVirtual` takes a nonnegative `long`
+  invocation's channel or a later generation of a recycled slot.
+- **Native offset:** `note.SourceFrame` takes a nonnegative `long`
   in **source frames**, not the wall seconds used by the existing
   physical-script `Seek` helper. At the actual event deadline it seeks
   the voice then current *only when that bound sound implements*
@@ -326,10 +321,10 @@ PastVirtual(row, virtualId, TrackerPastNoteAction.Cut,
 - **Displacement:** The strongly typed `NoteDisplacementAction`
   accepts `Cut`, `Continue`, `Off`, or `Fade`. It overrides
   the **current** voice's behavior on the next start for the same
-  scoped ID; it does not set a permanent policy for replacements.
+  logical channel; it does not set a permanent policy for replacements.
 - **Past voices:** `TrackerPastNoteAction` accepts `Cut`, `Off`,
   or `Fade`. It acts only on displaced NNA voices that originated
-  from the same (Pattern-cursor, virtual-ID) pair, never the current
+  from the same (Pattern-cursor, slot, generation) identity, never the current
   replacement or a sibling cursor's voices. Release/fade semantics
   remain owned by each displaced voice.
 
@@ -341,7 +336,7 @@ rows outside the Pattern, and unrepresentable wall offsets **before**
 emission. Positive fixed-wall offsets execute on the voice present
 at the actual deadline, not when the script merely yields the event.
 
-These controls target `Virtual(id)` only. The existing playback
+These controls target the handle's generated identity only. The existing playback
 broadcast surface supports Note Off/Cut and note volume on eligible
 earlier-started voices. **It does not support** native offsets,
 displacement policy, past-note actions, tracker channel memory, or
