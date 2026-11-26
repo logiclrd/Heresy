@@ -3,6 +3,7 @@ using System.IO;
 using System.Numerics;
 using System.Text;
 
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Samples;
@@ -181,6 +182,75 @@ public sealed class ScriptVirtualControlPlaybackTests
                 "The old group's deferred cuts leave the new generation and unrelated voice alive.");
             Assert.That(actual[320], Is.EqualTo(16000f / 32768f).Within(1e-5f));
             Assert.That(group.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void OverlappingRecycledGroupsReclaimRenderStateDuringLongRunningPattern(bool relaxed)
+    {
+        const int cycles = 1024, framesPerRow = 120;
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: false);
+        ObjectId filter = document.AllocateObjectId();
+        document.Add(new FilterDefinition(filter, "Finite echo", [
+            new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+        ]));
+        string source = $$"""
+            for (int row = 0; row < {{cycles}}; row++)
+            {
+                using var group = NewNoteGroup();
+                using var lead = NoteVirtual(row, _O({{sample.Value}}));
+                lead.Displacement(row, NoteDisplacementAction.Continue);
+                group += NoteVirtual(row, _O({{sample.Value}}));
+                lead.Note(row + 0.25, _O({{sample.Value}}));
+                group += lead;
+                group.ChannelFilter(row + 0.25, _O({{filter.Value}}));
+                group.Volume(row + 0.5, 0.25);
+                group.Past(row + 0.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.06);
+                group.Cut(row + 0.75, timeOffsetSeconds: 0.06);
+            }
+            """;
+        if (relaxed) source = "#order relaxed\n" + source;
+        ObjectId patternId = document.AllocateObjectId();
+        document.Add(new ScriptPatternDefinition(patternId, "Long ownership stress")
+        {
+            RowCount = cycles + 3, ChannelCount = 1, Source = source,
+        });
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var reference = factory.Create(document, patternId);
+        using var stream = factory.Create(document, patternId);
+        int totalFrames = (cycles + 3) * framesPerRow;
+        float[] expected = new float[totalFrames], actual = new float[totalFrames];
+        reference.Source.Render(totalFrames, expected);
+        int peakChannels = 0, peakFilters = 0, peakRetiring = 0, peakDisplaced = 0;
+        int[] chunks = [1, 37, 83, 19, 113];
+        for (int pos = 0, index = 0; pos < actual.Length;)
+        {
+            int count = Math.Min(chunks[index++ % chunks.Length], actual.Length - pos);
+            stream.Source.Render(count, actual.AsSpan(pos, count));
+            pos += count;
+            peakChannels = Math.Max(peakChannels, stream.Session.RetainedScopedVirtualChannelCount);
+            peakFilters = Math.Max(peakFilters, stream.Session.RetainedScopedVirtualFilterCount);
+            peakRetiring = Math.Max(peakRetiring, stream.Session.RetiringVirtualFilterCount);
+            peakDisplaced = Math.Max(peakDisplaced, stream.Session.VirtualVoices.Count);
+        }
+        TestContext.WriteLine($"Peak retained channels={peakChannels}, filters={peakFilters}, retiring={peakRetiring}, displaced={peakDisplaced}");
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(actual[50], Is.GreaterThan(0.5f), "The stress test must actually render voices.");
+            Assert.That(peakChannels, Is.InRange(3, 12));
+            Assert.That(peakFilters, Is.InRange(2, 12));
+            Assert.That(peakRetiring, Is.LessThanOrEqualTo(12));
+            Assert.That(peakDisplaced, Is.InRange(1, 6));
+            Assert.That(stream.Session.RetainedScopedVirtualChannelCount, Is.Zero);
+            Assert.That(stream.Session.RetainedScopedVirtualFilterCount, Is.Zero);
+            Assert.That(stream.Session.RetiringVirtualFilterCount, Is.Zero);
+            Assert.That(stream.Session.VirtualVoices, Is.Empty);
+            Assert.That(stream.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+            Assert.That(stream.SequencingContext.Diagnostics.RejectedChannelFilterCommands, Is.Zero);
+            Assert.That(actual[^1], Is.Zero.Within(1e-6f));
         });
     }
 
