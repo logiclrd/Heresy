@@ -35,7 +35,7 @@ Approved signatures, implemented in the separate implementation branch as unqual
 ```csharp
 // Script Pattern: same ratios for physical and virtual channels.
 Note(0, 0, _O(35), pitchMultiplier: Semitone(7));
-NoteVirtual(1, 3U, _O(35), pitchMultiplier: Cent(-25));
+using var note = NoteVirtual(1, _O(35), pitchMultiplier: Cent(-25));
 Note(2, 0, _O(35), pitchMultiplier: Octave(-1) * Semitone(4));
 
 // Script Instrument Source: choose among declared tone indices.
