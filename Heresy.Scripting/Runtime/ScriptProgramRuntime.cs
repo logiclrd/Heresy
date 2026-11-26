@@ -396,6 +396,34 @@ public abstract class PatternScriptProgram
 		where TDelegate : Delegate
 		=> createAdapter(target);
 
+	// Only F6 method-group references use this cache. The weak receiver key
+	// prevents short-lived notes/groups accumulating for the entire Pattern.
+	// Repeated conversion of the same bound method retains delegate equality
+	// (including multicast combination/removal), without re-evaluating its receiver.
+	private System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<Delegate, Delegate>>?
+		_boundTraceAdapters;
+
+	protected TDelegate __HeresyBindTrace<TDelegate>(
+		TDelegate target, Func<TDelegate, TDelegate> createAdapter)
+		where TDelegate : Delegate
+	{
+		object receiver = target.Target ?? throw new InvalidOperationException(
+			"Bound trace requires an instance method.");
+		var cache = (_boundTraceAdapters ??= new()).GetOrCreateValue(receiver);
+		if (cache.TryGetValue(target, out Delegate? existing))
+			return (TDelegate)existing;
+		TDelegate adapter = createAdapter(target);
+		cache.Add(target, adapter);
+		return adapter;
+	}
+
+	protected SequenceCallsite? __HeresyPushFallbackCallsite(SequenceCallsite callsite)
+	{
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = previous ?? callsite;
+		return previous;
+	}
+
 	protected SequenceCallsite? __HeresyPushDelegateCallsite(SequenceCallsite callsite)
 	{
 		SequenceCallsite? previous = _editorActionCallsite;
