@@ -42,6 +42,8 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	// The renderer must apply the event's Begin command *before* retiring
 	// its controller, rather than losing retirement and leaking the lookup.
 	private readonly List<long> _pendingRetiredScopes = [];
+	private List<(long Owner, VirtualChannelIdentity Identity)>? _pendingVirtualFinalUses;
+	private bool _applyingEvent;
 	private IncrementalPatternTimelineStep? _deferredStep;
 	private PendingEvent? _pendingEvent;
 	private long _lastEventFrame = -1;
@@ -67,6 +69,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_afterRender = afterRender;
 		_cancellation = cancellation;
 		_timeline.ScopeRetired += OnScopeRetired;
+		_timeline.VirtualChannelFinalUse += OnVirtualChannelFinalUse;
 		_timeline.ScopeCanceled += OnScopeCanceled;
 		_timeline.RootPatternRowsEnded += OnRootPatternRowsEnded;
 		_session.FlattenedCompletionStoppedProducer += OnFlattenedCompletionStoppedProducer;
@@ -122,6 +125,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_inputStopped = true;
 		_pendingEvent = null;
 		_deferredStep = null;
+		_timeline.StopAllProducing();
 		// One prefetched event may already have retired a source scope.
 		// Discarding that event must still complete its retirement.
 		FlushRetiredScopes();
@@ -176,11 +180,35 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			_pendingEvent = null;
 			_lastEventFrame = Math.Min(_lastEventFrame, frame);
 		}
-		if (_deferredStep is IncrementalPatternTimelineStep.Cooperate cooperation
-			&& stoppedCursors.Contains(cooperation.InvocationId)
-			|| _deferredStep is IncrementalPatternTimelineStep.Flow flow
-				&& stoppedCursors.Contains(flow.InvocationId))
+		if (StepOwnedBy(_deferredStep, stoppedCursors))
 			_deferredStep = null;
+	}
+
+	private static bool StepOwnedBy(IncrementalPatternTimelineStep? step,
+		List<long> cursors)
+		=> step switch
+		{
+			IncrementalPatternTimelineStep.Emit emit => cursors.Contains(emit.InvocationId),
+			IncrementalPatternTimelineStep.Cooperate cooperation => cursors.Contains(cooperation.InvocationId),
+			IncrementalPatternTimelineStep.Flow flow => cursors.Contains(flow.InvocationId),
+			_ => false,
+		};
+
+	private void OnVirtualChannelFinalUse(long owner, VirtualChannelIdentity identity)
+		=> (_pendingVirtualFinalUses ??= []).Add((owner, identity));
+
+	private void FlushVirtualFinalUses()
+	{
+		// The timeline can relinquish its last reference while handing
+		// the Emit to this source. Its renderer command must run first.
+		// Editor backpressure may hold an Emit in _deferredStep instead.
+		if (_applyingEvent || _pendingEvent is not null
+			|| _deferredStep is IncrementalPatternTimelineStep.Emit
+			|| _pendingVirtualFinalUses is not { Count: > 0 } pending)
+			return;
+		foreach (var item in pending)
+			_session.RetireScopedVirtualChannel(item.Owner, item.Identity);
+		pending.Clear();
 	}
 
 	private void OnScopeCanceled(long scopeId)
@@ -195,6 +223,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		foreach (long scopeId in _pendingRetiredScopes)
 			_session.RetirePhysicalScope(scopeId);
 		_pendingRetiredScopes.Clear();
+		FlushVirtualFinalUses();
 	}
 
 	public bool Cancel(long invocationId)
@@ -213,11 +242,11 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		// be delivered, even when other roots remain active at that frame.
 		if (_pendingEvent is { } pending
 			&& canceledCursors.Contains(pending.Owner))
+		{
 			_pendingEvent = null;
-		if (_deferredStep is IncrementalPatternTimelineStep.Cooperate cooperation
-			&& canceledCursors.Contains(cooperation.InvocationId)
-			|| _deferredStep is IncrementalPatternTimelineStep.Flow flow
-				&& canceledCursors.Contains(flow.InvocationId))
+			_lastEventFrame = Math.Min(_lastEventFrame, _session.NextFrame);
+		}
+		if (StepOwnedBy(_deferredStep, canceledCursors))
 			_deferredStep = null;
 		FlushRetiredScopes();
 		return true;
@@ -328,6 +357,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			if (_pendingEvent is { } next && next.Frame == now)
 			{
 				_pendingEvent = null;
+				_applyingEvent = true;
 				try
 				{
 					_validateNote?.Invoke(next.Note);
@@ -339,6 +369,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 				}
 				finally
 				{
+					_applyingEvent = false;
 					FlushRetiredScopes();
 				}
 				// This event can start or end a voice before the next PCM
@@ -381,6 +412,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			_session.Render(now, count,
 				destination.Slice(written * channels, count * channels));
 			written += count;
+			FlushVirtualFinalUses();
 			// Detect natural voice retirement, completion of a flattened
 			// producer, and release/fade, not just explicit Note commands.
 			_editorTraceBoundary?.Invoke(_session.NextFrame);
@@ -396,6 +428,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			return;
 		_disposed = true;
 		_timeline.ScopeRetired -= OnScopeRetired;
+		_timeline.VirtualChannelFinalUse -= OnVirtualChannelFinalUse;
 		_timeline.ScopeCanceled -= OnScopeCanceled;
 		_timeline.RootPatternRowsEnded -= OnRootPatternRowsEnded;
 		_session.FlattenedCompletionStoppedProducer -= OnFlattenedCompletionStoppedProducer;
