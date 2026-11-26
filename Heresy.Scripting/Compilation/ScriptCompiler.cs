@@ -65,6 +65,151 @@ public static class ScriptCompiler
 	private static readonly MetadataReference[] MetadataReferences =
 		CreateMetadataReferences();
 
+	// C# refuses compound assignment on a using local even for a void
+	// instance operator. For exact NoteGroup transfers only, retain the
+	// original object in a compiler-owned disposal alias and keep the
+	// original variable available to the instance operator. Bind the
+	// original wrapper first: no other write/ref/readonly errors are waived.
+	private sealed record PatternUsingLowering(string Source,
+		int[]? OriginalBoundaries, IReadOnlySet<string>? ScopeNames,
+		IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics)
+	{
+		public ScriptSourceSpan Original(ScriptSourceSpan span)
+		{
+			if (OriginalBoundaries is not { } map) return span;
+			int start = map[Math.Clamp(span.Start, 0, map.Length - 1)];
+			int end = map[Math.Clamp(span.End, 0, map.Length - 1)];
+			return new(start, Math.Max(0, end - start));
+		}
+
+		public IReadOnlyList<ScriptAnalysisDiagnostic> Project(
+			IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics)
+			=> OriginalBoundaries is null ? diagnostics
+				: diagnostics.Select(d => d with { Span = Original(d.Span) }).ToArray();
+	}
+
+	private static PatternUsingLowering LowerGroupUsingScopes(string source)
+	{
+		PatternUsingLowering unchanged = new(source, null, null, []);
+		if (!source.Contains("using", StringComparison.Ordinal)
+			|| !source.Contains("+=", StringComparison.Ordinal))
+			return unchanged;
+		// The original syntax and wrapper boundary remain mandatory.
+		if (HasErrors(ValidateRestrictedSyntax(source, permitManagedData: true)))
+			return unchanged;
+		SyntaxTree tree = CSharpSyntaxTree.ParseText(
+			BuildPatternWrapper("__HeresyGroupUsingBinding", source), WrapperParseOptions);
+		if (ScriptAuthoredWrapperBoundary.Validate(tree, ScriptWrapperKind.Pattern).Count != 0)
+			return unchanged;
+		CSharpCompilation compilation = CSharpCompilation.Create(
+			"Heresy.GroupUsingBinding." + Guid.NewGuid().ToString("N"), [tree],
+			MetadataReferences, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
+				allowUnsafe: false, checkOverflow: true));
+		SemanticModel model = compilation.GetSemanticModel(tree);
+		var groupType = compilation.GetTypeByMetadataName(typeof(NoteGroup).FullName!);
+		var noteType = compilation.GetTypeByMetadataName(typeof(VirtualNote).FullName!);
+		var root = tree.GetRoot();
+		List<TextSpan> approvedLefts = [];
+		Dictionary<ScriptSourceSpan, VariableDeclarationSyntax> declarations = [];
+		foreach (AssignmentExpressionSyntax assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+		{
+			if (!assignment.IsKind(SyntaxKind.AddAssignmentExpression)
+				|| assignment.Parent is not ExpressionStatementSyntax
+				|| assignment.Left is not IdentifierNameSyntax
+				|| !IsScriptLocation(assignment.GetLocation())
+				|| model.GetSymbolInfo(assignment.Left).Symbol is not ILocalSymbol local
+				|| !SymbolEqualityComparer.Default.Equals(local.Type, groupType)
+				|| noteType is null
+				|| !model.ClassifyConversion(assignment.Right, noteType).IsImplicit
+				|| local.DeclaringSyntaxReferences.Length != 1
+				|| local.DeclaringSyntaxReferences[0].GetSyntax() is not VariableDeclaratorSyntax variable
+				|| variable.Parent is not VariableDeclarationSyntax declaration
+				|| declaration.Variables.Count != 1)
+				continue;
+			if (declaration.Parent is not UsingStatementSyntax
+				&& declaration.Parent is not LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 })
+				continue;
+			approvedLefts.Add(assignment.Left.Span);
+			declarations.TryAdd(MapSpan(declaration.GetLocation(), source), declaration);
+		}
+		if (declarations.Count == 0) return unchanged;
+
+		// Ignore exactly CS1656 on the approved left operand. Reassigning a
+		// using variable, passing it by ref/out, or any other error keeps
+		// its original diagnostic. The lowered canonical pass still binds
+		// and authorizes the real compound operator and all other members.
+		var errors = compilation.GetDiagnostics().Where(d =>
+			d.Severity == DiagnosticSeverity.Error
+			&& !(d.Id == "CS1656" && d.Location.SourceTree == tree
+				&& approvedLefts.Any(span => span.Contains(d.Location.SourceSpan))))
+			.Select(d => ProjectDiagnostic(d, source)).ToArray();
+		if (errors.Length != 0) return unchanged with { Diagnostics = errors };
+
+		string prefix = "__heresyUsingScope";
+		var identifiers = root.DescendantTokens()
+			.Where(t => t.IsKind(SyntaxKind.IdentifierToken))
+			.Select(t => t.ValueText).ToArray();
+		while (identifiers.Any(id => id.StartsWith(prefix, StringComparison.Ordinal)))
+			prefix += "_";
+		HashSet<string> names = [];
+		List<(int Start, int Length, string Replacement)> edits = [];
+		void Replace(SyntaxToken token, string replacement)
+		{
+			var span = MapSpan(token.GetLocation(), source);
+			edits.Add((span.Start, span.Length, replacement));
+		}
+		foreach (VariableDeclarationSyntax declaration in declarations.Values
+			.OrderBy(d => d.SpanStart))
+		{
+			string alias = prefix + names.Count;
+			names.Add(alias);
+			string identifier = declaration.Variables[0].Identifier.Text;
+			string capture = $" using var {alias} = {identifier}; ";
+			if (declaration.Parent is LocalDeclarationStatementSyntax local)
+			{
+				Replace(local.UsingKeyword, new string(' ', local.UsingKeyword.Span.Length));
+				edits.Add((MapSpan(local.SemicolonToken.GetLocation(), source).End, 0, capture));
+			}
+			else if (declaration.Parent is UsingStatementSyntax statement)
+			{
+				// Keep the original body (and its nested lexical scope)
+				// inside a new outer block containing the captured alias.
+				Replace(statement.UsingKeyword, "{");
+				Replace(statement.OpenParenToken, " ");
+				Replace(statement.CloseParenToken, ";" + capture);
+				edits.Add((MapSpan(statement.GetLocation(), source).End, 0, " }"));
+			}
+		}
+
+		// Boundary map is needed only for the exceptional lowering. It
+		// preserves exact authored F6 spans and diagnostics even when a
+		// declaration and subsequent calls share a line or CRLF source.
+		var builder = new System.Text.StringBuilder(source.Length);
+		List<int> boundaries = [0];
+		int cursor = 0;
+		void CopyTo(int end)
+		{
+			while (cursor < end)
+			{
+				builder.Append(source[cursor++]);
+				boundaries.Add(cursor);
+			}
+		}
+		foreach (var edit in edits.OrderBy(e => e.Start).ThenBy(e => e.Length))
+		{
+			CopyTo(edit.Start);
+			for (int i = 0; i < edit.Replacement.Length; i++)
+			{
+				builder.Append(edit.Replacement[i]);
+				boundaries.Add(edit.Start);
+			}
+			cursor = edit.Start + edit.Length;
+			boundaries[^1] = cursor;
+		}
+		CopyTo(source.Length);
+		return new(builder.ToString(), boundaries.ToArray(), names, []);
+	}
+
 	public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzePatternSource(
 		string source)
 	{
@@ -73,17 +218,20 @@ public static class ScriptCompiler
 		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(source);
 		if (HasErrors(order.Diagnostics))
 			return order.Diagnostics;
-		source = order.CompilerSource;
+		PatternUsingLowering lowering = LowerGroupUsingScopes(order.CompilerSource);
+		if (HasErrors(lowering.Diagnostics)) return lowering.Diagnostics;
+		source = lowering.Source;
 
 		const string className = "__HeresyPattern_Analysis";
-		return PrepareCompilation(
+		return lowering.Project(PrepareCompilation(
 			source,
 			BuildPatternWrapper(
 				className,
 				InstrumentLoops(source)),
 			wrapperKind: ScriptWrapperKind.Pattern,
-			patternOrder: order.Order)
-			.Diagnostics;
+			patternOrder: order.Order,
+			generatedUsingScopes: lowering.ScopeNames)
+			.Diagnostics);
 	}
 
 	public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzeSequenceSource(
@@ -109,7 +257,9 @@ public static class ScriptCompiler
 		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(definition.Source);
 		if (HasErrors(order.Diagnostics))
 			return new(null, order.Diagnostics);
-		string source = order.CompilerSource;
+		PatternUsingLowering lowering = LowerGroupUsingScopes(order.CompilerSource);
+		if (HasErrors(lowering.Diagnostics)) return new(null, lowering.Diagnostics);
+		string source = lowering.Source;
 
 		string className =
 			"__HeresyPattern_" + Guid.NewGuid().ToString("N");
@@ -120,13 +270,14 @@ public static class ScriptCompiler
 				BuildPatternWrapper(
 					className,
 					InstrumentLoops(source)),
-				typeof(PatternScriptProgram), patternOrder: order.Order);
+				typeof(PatternScriptProgram), patternOrder: order.Order,
+				generatedUsingScopes: lowering.ScopeNames);
 
 		if (!compiled.Success || compiled.Program is null)
 		{
 			return new ScriptCompilationResult<IRawPatternNoteGenerator>(
 				null,
-				compiled.Diagnostics);
+				lowering.Project(compiled.Diagnostics));
 		}
 
 		IRawPatternNoteGenerator generator = order.Order == ScriptPatternOrder.Relaxed
@@ -134,7 +285,7 @@ public static class ScriptCompiler
 				definition.RowCount, definition.ChannelCount)
 			: new CompiledPatternGenerator(compiled.Program,
 				definition.RowCount, definition.ChannelCount);
-		return new(generator, compiled.Diagnostics);
+		return new(generator, lowering.Project(compiled.Diagnostics));
 	}
 
 	/// <summary>
@@ -151,7 +302,9 @@ public static class ScriptCompiler
 		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(definition.Source);
 		if (HasErrors(order.Diagnostics))
 			return new(null, order.Diagnostics);
-		string source = order.CompilerSource;
+		PatternUsingLowering lowering = LowerGroupUsingScopes(order.CompilerSource);
+		if (HasErrors(lowering.Diagnostics)) return new(null, lowering.Diagnostics);
+		string source = lowering.Source;
 
 		// Establish exact helper symbols on the unrewritten source before
 		// inserting either trusted F6 callsites or streaming yields. A local
@@ -169,23 +322,23 @@ public static class ScriptCompiler
 			string relaxedClass = "__HeresyRelaxedPattern_" + Guid.NewGuid().ToString("N");
 			// Only F6 builds the delegate provenance adapters and scopes.
 			string instrumented = instrumentActionCallsites
-				? InstrumentRelaxedPatternCallsites(source, emitterStarts)
+				? InstrumentRelaxedPatternCallsites(source, emitterStarts, lowering)
 				: InstrumentLoops(source);
 			var relaxed = CompileType(source, relaxedClass,
 				BuildPatternWrapper(relaxedClass, instrumented),
 				typeof(PatternScriptProgram),
 				allowInjectedPlayCallsites: instrumentActionCallsites,
-				patternOrder: order.Order);
+				patternOrder: order.Order, generatedUsingScopes: lowering.ScopeNames);
 			if (!relaxed.Success || relaxed.Program is null)
-				return new(null, relaxed.Diagnostics);
+				return new(null, lowering.Project(relaxed.Diagnostics));
 			return new(new CompiledRelaxedPatternGenerator(relaxed.Program,
-				definition.RowCount, definition.ChannelCount), relaxed.Diagnostics);
+				definition.RowCount, definition.ChannelCount), lowering.Project(relaxed.Diagnostics));
 		}
 
 		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
 			ValidateIncrementalPatternStatements(source, emitterStarts, transferEmitterStarts);
 		if (restrictions.Count != 0)
-			return new(null, restrictions);
+			return new(null, lowering.Project(restrictions));
 
 		string className =
 			"__HeresyIncrementalPattern_" + Guid.NewGuid().ToString("N");
@@ -195,20 +348,20 @@ public static class ScriptCompiler
 			BuildIncrementalPatternWrapper(
 				className,
 				InstrumentIncrementalPattern(source,
-					emitterStarts, instrumentActionCallsites)),
+					emitterStarts, instrumentActionCallsites, lowering)),
 			typeof(PatternScriptProgram),
 			allowInjectedPlayCallsites: instrumentActionCallsites,
-			incrementalPattern: true);
+			incrementalPattern: true, generatedUsingScopes: lowering.ScopeNames);
 
 		if (!compiled.Success || compiled.Program is null)
-			return new(null, compiled.Diagnostics);
+			return new(null, lowering.Project(compiled.Diagnostics));
 
 		return new(
 			new CompiledIncrementalPatternGenerator(
 				compiled.Program,
 				definition.RowCount,
 				definition.ChannelCount),
-			compiled.Diagnostics);
+			lowering.Project(compiled.Diagnostics));
 	}
 
 	/// <summary>
@@ -514,7 +667,8 @@ public static class ScriptCompiler
 		Type requiredBaseType,
 		bool allowInjectedPlayCallsites = false,
 		bool incrementalPattern = false,
-		ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict)
+		ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict,
+		IReadOnlySet<string>? generatedUsingScopes = null)
 	{
 		ScriptWrapperKind wrapperKind = requiredBaseType == typeof(PatternScriptProgram)
 			? incrementalPattern ? ScriptWrapperKind.IncrementalPattern
@@ -527,7 +681,7 @@ public static class ScriptCompiler
 				source,
 				wrapperSource,
 				allowInjectedPlayCallsites,
-				wrapperKind, patternOrder);
+				wrapperKind, patternOrder, generatedUsingScopes);
 		List<ScriptAnalysisDiagnostic> diagnostics =
 			[.. prepared.Diagnostics];
 
@@ -585,7 +739,8 @@ public static class ScriptCompiler
 		string wrapperSource,
 		bool allowInjectedPlayCallsites = false,
 		ScriptWrapperKind wrapperKind = ScriptWrapperKind.None,
-		ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict)
+		ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict,
+		IReadOnlySet<string>? generatedUsingScopes = null)
 	{
 		ScriptReferenceAnalysis referenceAnalysis =
 			ScriptReferenceAnalyzer.Analyze(source);
@@ -608,7 +763,7 @@ public static class ScriptCompiler
 		if (wrapperKind != ScriptWrapperKind.None)
 		{
 			diagnostics.AddRange(ValidateCanonicalAuthoredOperations(
-				source, wrapperKind, patternOrder));
+				source, wrapperKind, patternOrder, generatedUsingScopes));
 			if (HasErrors(diagnostics))
 				return new(null, diagnostics);
 		}
@@ -696,7 +851,8 @@ public static class ScriptCompiler
 	internal static IReadOnlyList<ScriptAnalysisDiagnostic>
 		ValidateCanonicalAuthoredOperations(
 			string source, ScriptWrapperKind wrapperKind,
-			ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict)
+			ScriptPatternOrder patternOrder = ScriptPatternOrder.Strict,
+			IReadOnlySet<string>? generatedUsingScopes = null)
 	{
 		ScriptWrapperKind canonicalKind =
 			wrapperKind == ScriptWrapperKind.Sequence
@@ -832,23 +988,44 @@ public static class ScriptCompiler
 		}
 
 		if (canonicalKind == ScriptWrapperKind.Pattern && !HasErrors(diagnostics))
-			WarnUnprovenVirtualOwnership(entry.Body, model, canonical, source, diagnostics);
+			WarnUnprovenVirtualOwnership(entry.Body, model, canonical, source, diagnostics, generatedUsingScopes);
 
 		return diagnostics;
 	}
 
 	private static void WarnUnprovenVirtualOwnership(BlockSyntax body,
 		SemanticModel model, CSharpCompilation compilation, string source,
-		List<ScriptAnalysisDiagnostic> diagnostics)
+		List<ScriptAnalysisDiagnostic> diagnostics, IReadOnlySet<string>? generatedUsingScopes)
 	{
 		var handleType = compilation.GetTypeByMetadataName(typeof(VirtualNote).FullName!);
 		var groupType = compilation.GetTypeByMetadataName(typeof(NoteGroup).FullName!);
 		var patternType = compilation.GetTypeByMetadataName(typeof(PatternScriptProgram).FullName!);
 
 		bool IsUsing(VariableDeclarationSyntax declaration)
-			=> declaration.Parent is UsingStatementSyntax
-				|| declaration.Parent is LocalDeclarationStatementSyntax local
-					&& local.UsingKeyword.RawKind != 0;
+		{
+			if (declaration.Parent is UsingStatementSyntax
+				|| declaration.Parent is LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 })
+				return true;
+			if (generatedUsingScopes is null
+				|| declaration.Parent is not LocalDeclarationStatementSyntax local
+				|| declaration.Variables.Count != 1
+				|| model.GetDeclaredSymbol(declaration.Variables[0]) is not ILocalSymbol owned)
+				return false;
+			SyntaxList<StatementSyntax> statements = local.Parent switch
+			{
+				BlockSyntax block => block.Statements,
+				SwitchSectionSyntax section => section.Statements,
+				_ => default,
+			};
+			int next = statements.IndexOf(local) + 1;
+			return next > 0 && next < statements.Count
+				&& statements[next] is LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 } scope
+				&& scope.Declaration.Variables.Count == 1
+				&& scope.Declaration.Variables[0] is { } alias
+				&& generatedUsingScopes.Contains(alias.Identifier.ValueText)
+				&& alias.Initializer?.Value is { } captured
+				&& SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(captured).Symbol, owned);
+		}
 
 		bool IsGroupTransfer(AssignmentExpressionSyntax transfer)
 			=> transfer.Parent is ExpressionStatementSyntax
@@ -1432,20 +1609,21 @@ public static class ScriptCompiler
 	}
 
 	private static string InstrumentIncrementalPattern(string source,
-		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites = false)
+		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites,
+		PatternUsingLowering lowering)
 	{
 		// Parse the authored statements in their actual method-body shape,
 		// rather than treating top-level locals as script fields. The
 		// synthetic opening brace shifts original offsets by exactly one.
 		BlockSyntax body = ParseAuthoredBody(source);
 		body = (BlockSyntax)new StrictPatternEmitterRewriter(
-			emitterStarts, instrumentActionCallsites, AuthoredBodyOffset).Visit(body)!;
+			emitterStarts, instrumentActionCallsites, AuthoredBodyOffset, lowering).Visit(body)!;
 		body = (BlockSyntax)new LoopCheckpointRewriter(cooperative: true).Visit(body)!;
 		return AuthoredBodyText(body);
 	}
 
 	private static string InstrumentRelaxedPatternCallsites(string source,
-		IReadOnlySet<int> emitterStarts)
+		IReadOnlySet<int> emitterStarts, PatternUsingLowering lowering)
 	{
 		SyntaxNode root = ParseAuthoredBody(source);
 		string prefix = "__heresyTrace";
@@ -1477,11 +1655,11 @@ public static class ScriptCompiler
 			string returnType = method.ReturnsVoid ? "void"
 				: method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 			string returnPrefix = method.ReturnsVoid ? "" : "return ";
-			localAdapters.Add($"{returnType} {name}({parameters}) {{ {returnPrefix}base.{method.Name}({TraceCallsite(span)}, {arguments}); }}");
+			localAdapters.Add($"{returnType} {name}({parameters}) {{ {returnPrefix}base.{method.Name}({TraceCallsite(lowering.Original(span))}, {arguments}); }}");
 		}
 
 		root = new RelaxedPatternEmitterCallsiteRewriter(emitterStarts, delegates,
-			replacements, prefix).Visit(root) ?? root;
+			replacements, prefix, lowering).Visit(root) ?? root;
 		root = new LoopCheckpointRewriter().Visit(root) ?? root;
 		// Local adapter declarations are compiler-owned, after the original
 		// authored source, and never included in the canonical API audit.
@@ -1562,7 +1740,7 @@ public static class ScriptCompiler
 		IReadOnlySet<int> emitterStarts,
 		IReadOnlyDictionary<ScriptSourceSpan, DelegateTraceSite> delegates,
 		IReadOnlyDictionary<ScriptSourceSpan, string> methodGroups,
-		string prefix) : CSharpSyntaxRewriter
+		string prefix, PatternUsingLowering lowering) : CSharpSyntaxRewriter
 	{
 		private static ScriptSourceSpan Span(SyntaxNode node)
 			=> new(node.SpanStart - AuthoredBodyOffset, node.Span.Length);
@@ -1597,7 +1775,7 @@ public static class ScriptCompiler
 				string adapter =
 					$"base.__HeresyWrapDelegate({receiver.WithoutTrivia().ToFullString()}, "
 					+ $"{target} => ({parameters}) => {{ "
-					+ $"var {previous} = base.__HeresyPushDelegateCallsite({TraceCallsite(span)}); "
+					+ $"var {previous} = base.__HeresyPushDelegateCallsite({TraceCallsite(lowering.Original(span))}); "
 					+ $"try {{ {returnPrefix}{target}({arguments}); }} "
 					+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }} }})";
 				return rewritten.WithExpression(SyntaxFactory.ParseExpression(adapter)
@@ -1607,7 +1785,7 @@ public static class ScriptCompiler
 				return rewritten;
 
 			ArgumentSyntax callsite = SyntaxFactory.Argument(
-				SyntaxFactory.ParseExpression(TraceCallsite(span)));
+				SyntaxFactory.ParseExpression(TraceCallsite(lowering.Original(span))));
 			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
 				rewritten.ArgumentList.Arguments.Insert(0, callsite)));
 		}
@@ -1626,7 +1804,8 @@ public static class ScriptCompiler
 	private const string TrustedFanoutDrainAnnotation = "HeresyTrustedFanoutDrain";
 
 	private sealed class StrictPatternEmitterRewriter(
-		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites, int sourceOffset)
+		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites, int sourceOffset,
+		PatternUsingLowering lowering)
 		: CSharpSyntaxRewriter
 	{
 		private bool IsEmitter(InvocationExpressionSyntax invocation)
@@ -1646,8 +1825,8 @@ public static class ScriptCompiler
 			var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
 			if (!instrumentActionCallsites || !IsEmitter(node))
 				return visited;
-			var callsite = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(
-				$"new SequenceCallsite({node.SpanStart - sourceOffset}, {node.Span.Length})"));
+			var span = lowering.Original(new ScriptSourceSpan(node.SpanStart - sourceOffset, node.Span.Length));
+			var callsite = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(TraceCallsite(span)));
 			return visited.WithArgumentList(visited.ArgumentList.WithArguments(
 				visited.ArgumentList.Arguments.Insert(0, callsite)));
 		}
