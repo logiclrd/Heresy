@@ -182,6 +182,8 @@ VirtualNote instance methods (shown on a local named note):
 OWNING NOTE GROUPS
   NoteGroup NewNoteGroup()
     Create an empty group. Use using var, a using block or Dispose().
+    Heresy supports += directly on a using-group local, with a hidden
+    disposal scope. Other assignments to that using local remain forbidden.
   using var chord = NewNoteGroup();
   chord += NoteVirtual(0, _O(35));
   chord += NoteVirtual(0, _O(35), Semitone(4));
