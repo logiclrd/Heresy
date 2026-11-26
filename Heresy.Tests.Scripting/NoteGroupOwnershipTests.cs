@@ -193,6 +193,28 @@ public sealed class NoteGroupOwnershipTests
         public VirtualNote CreateNote() => NoteVirtual(0, (ObjectId)17U);
     }
 
+    [TestCase("using var chord = NewNoteGroup(); chord += NoteVirtual(0, _O(17)); chord.Off(4);")]
+    [TestCase("var chord = NewNoteGroup(); chord += NoteVirtual(0, _O(17)); chord.Dispose();")]
+    [TestCase("using (var chord = NewNoteGroup()) { var note = NoteVirtual(0, _O(17)); chord += note; }")]
+    public void DirectGroupOwnershipTerminationDoesNotWarn(string source)
+    {
+        var result = ScriptCompiler.CompileIncrementalPattern(Pattern(source));
+        Assert.That(result.Success, Is.True, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        Assert.That(result.Diagnostics.Any(d => d.Code == "HRS2101"), Is.False);
+    }
+
+    [Test]
+    public void AbandonedGroupOwnershipWarnsAndCleansUp()
+    {
+        var result = ScriptCompiler.CompileIncrementalPattern(Pattern(
+            "var chord = NewNoteGroup(); chord += NoteVirtual(0, _O(17));"));
+        Assert.That(result.Success, Is.True, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        Assert.That(result.Diagnostics.Any(d => d.Code == "HRS2101"), Is.True);
+        var context = new SequencingContext();
+        Assert.That(result.Program!.EnumerateRawSteps(context).OfType<RawPatternStep.Emit>().Count(), Is.EqualTo(1));
+        Assert.That(context.Diagnostics.VirtualOwnershipWarnings, Is.EqualTo(1));
+    }
+
     [TestCase("using var chord = NewNoteGroup(); chord.Note(0, _O(17));")]
     [TestCase("using var chord = NewNoteGroup(); chord.Volume(default(SequenceCallsite), 0, .5);")]
     [TestCase("var chord = new NoteGroup(null);")]
