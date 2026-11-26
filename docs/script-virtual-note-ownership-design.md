@@ -3,8 +3,8 @@
 Status: single-handle API and numeric script API removal committed, awaiting combined CI.
 Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
 [Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
-this document records the implementation choices and boundaries. No public
-API or saved-song migration has been implemented yet.
+this document records the implementation choices and boundaries. The single-handle
+API has been implemented; group ownership and final acceptance remain.
 
 ## Public scripting surface
 
