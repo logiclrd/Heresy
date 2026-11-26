@@ -107,6 +107,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 		private readonly IIncrementalRawPatternNoteGenerator _generator;
 		private IEnumerator<RawPatternStep> _source;
+		private readonly Action<long, VirtualChannelIdentity> _finalUse;
+		private VirtualChannelRetirementTracker? _virtualRetirement;
+		private bool _sourceDisposed;
 		private readonly Dictionary<int, PatternLoopState> _loopStates = [];
 		private readonly List<(int Channel, int Order, byte Count)> _rowLoopCommands = [];
 		private readonly List<(int Channel, int Order, NoteCommand Command)> _rowFlowCommands = [];
@@ -141,8 +144,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			int startRow,
 			double tick,
 			long sequence,
-			double timelineClockRate)
+			double timelineClockRate,
+			Action<long, VirtualChannelIdentity> finalUse)
 		{
+			_finalUse = finalUse;
 			Context = context;
 			_tickRate = context.PlaybackSpeedMultiplier / timelineClockRate;
 			if (!double.IsFinite(_tickRate) || !(_tickRate > 0.0))
@@ -572,6 +577,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					}
 					else
 					{
+						AcceptVirtualEvent(filtered);
 						preparation.Events.Add(filtered);
 					}
 				}
@@ -614,11 +620,21 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				if (!_source.MoveNext())
 				{
 					_ended = true;
+					_virtualRetirement?.CloseProducer();
 					break;
 				}
 
 				RawPatternStep step = _source.Current
 					?? throw new InvalidOperationException("Raw Pattern emitted null.");
+				if (step is RawPatternStep.ReleaseVirtualChannel release)
+				{
+					if (release.Identity.Generation == 0)
+						throw new InvalidOperationException("Cannot release a legacy virtual channel.");
+					_virtualRetirement?.Release(release.Identity);
+					if (++discarded > MaximumRawStepsPerRow)
+						throw new InvalidOperationException("Raw Pattern iterator exceeded its no-progress budget.");
+					continue;
+				}
 				if (!double.IsFinite(step.Row) || step.Row < 0)
 					throw new InvalidOperationException(
 						"Raw Pattern positions must be finite and nonnegative.");
@@ -794,7 +810,37 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				Math.Min(rawTick, Math.Min(repeatTick, commandTick))) / _tickRate;
 		}
 
-		public void Dispose() => _source.Dispose();
+		private void AcceptVirtualEvent(NoteEvent note)
+		{
+			if (note.Target.Kind != ChannelTargetKind.Virtual
+				|| note.Target.VirtualIdentity.Generation == 0)
+				return;
+			// Generated lease IDs are invocation-local, not replayable
+			// tracker-grid IDs. Re-executing their producer in the same
+			// cursor could reuse identities still held by old voices.
+			if (_generator is IReplayableRawPatternNoteGenerator)
+				throw new NotSupportedException("Generated virtual leases require a non-replayable producer.");
+			(_virtualRetirement ??= new(Sequence, _finalUse))
+				.Accept(note.Target.VirtualIdentity);
+		}
+
+		public void DepartVirtualEvent(NoteEvent note)
+		{
+			if (note.Target.Kind == ChannelTargetKind.Virtual
+				&& note.Target.VirtualIdentity.Generation != 0)
+				(_virtualRetirement ?? throw new InvalidOperationException("Missing virtual event accounting."))
+					.Depart(note.Target.VirtualIdentity);
+		}
+
+		public void AbandonVirtualEvents() => _virtualRetirement?.Abandon();
+
+		public void Dispose()
+		{
+			if (_sourceDisposed) return;
+			_sourceDisposed = true;
+			try { _source.Dispose(); }
+			finally { _virtualRetirement?.CloseProducer(); }
+		}
 
 		private static double DuePosition(NoteEvent note, int row, int rowCount)
 			=> IsTiming(note) && note.Offset.RowOffset < rowCount
@@ -1037,6 +1083,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	/// finishes its final row, independently of unfinished child sources,
 	/// deferred wall-time notes, and sounding playback voices.</summary>
 	public event Action<long, TimeSpan>? RowsEnded;
+	/// <summary>Producer closed and all scheduler-owned references departed.
+	/// A caller with a prefetched Emit must defer renderer retirement until
+	/// that event is applied or discarded.</summary>
+	public event Action<long, VirtualChannelIdentity>? VirtualChannelFinalUse;
+
+	private void ReportVirtualChannelFinalUse(long owner, VirtualChannelIdentity id)
+		=> VirtualChannelFinalUse?.Invoke(owner, id);
 	public bool IsComplete => _active.Count == 0
 		&& _delayed.Count == 0 && _queuedTempoEvents.Count == 0
 		&& _futureTempoRamps.Count == 0;
@@ -1125,7 +1178,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		context.ResolvePatternSourcesAtRowTime = true;
 		long id = _nextSequence++;
 		_active.Add(new Cursor(generator, context, rowCount,
-			startRow, _tick, id, _clockRate));
+			startRow, _tick, id, _clockRate, ReportVirtualChannelFinalUse));
 		return id;
 	}
 
@@ -1138,7 +1191,16 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		Cursor? cursor = _active.FirstOrDefault(c => c.Sequence == invocationId);
-		int removed = _delayed.RemoveAll(note => note.Owner.Sequence == invocationId);
+		// A naturally completed cursor can still own delayed events.
+		// Keep its accounting object until every deadline has departed.
+		Cursor? delayedOwner = null;
+		int removed = _delayed.RemoveAll(note =>
+		{
+			if (note.Owner.Sequence != invocationId) return false;
+			delayedOwner = note.Owner;
+			return true;
+		});
+		(cursor ?? delayedOwner)?.AbandonVirtualEvents();
 		if (_queuedTempoEvents.Count != 0)
 		{
 			int size = _queuedTempoEvents.Count;
@@ -1315,6 +1377,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				Elapsed = nextWall.Deadline;
 				CheckCooperationBudget();
 				_delayed.Remove(nextWall);
+				nextWall.Owner.DepartVirtualEvent(nextWall.Raw);
 				// SCx/SDx/Qxy synthetic tick results are bounded by the
 				// row's actual end, even if SEy extended that row.
 				// This check uses the live shared clock, not a wall-time
@@ -2183,6 +2246,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			if (immediate.Count > 1)
 				throw new NotSupportedException(
 					"One raw cursor event resolved into multiple immediate operations.");
+			// Supported virtual operations resolve to at most one event
+			// and never synthesize tracker repeats or row-end cleanup.
+			current.DepartVirtualEvent(raw);
 			if (immediate.Count == 0)
 				return false;
 			if (current.ExtraRowSpans > 0)
@@ -2371,8 +2437,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		if (_disposed)
 			return;
 		_disposed = true;
-		foreach (Cursor cursor in _active)
+		foreach (Cursor cursor in _active.Concat(_delayed.Select(n => n.Owner)).Distinct())
+		{
+			cursor.AbandonVirtualEvents();
 			cursor.Dispose();
+		}
 		_active.Clear();
 		_delayed.Clear();
 		_queuedTempoEvents.Clear();
