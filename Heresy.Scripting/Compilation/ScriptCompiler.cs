@@ -1096,15 +1096,13 @@ public static class ScriptCompiler
 		if (method.Parameters.Length > 0
 			&& method.Parameters[0].Type.Name == "SequenceCallsite"
 			&& (method.Name is "Play" or "Note" or "NoteVirtual"
-				or "NoteFilter" or "NoteFilterVirtual"
-				or "ChannelFilter" or "ChannelFilterVirtual"
-				or "Off" or "Cut" or "OffVirtual" or "CutVirtual"
+				or "NoteFilter"
+				or "ChannelFilter"
+				or "Off" or "Cut"
 				or "OffVirtualInScope" or "CutVirtualInScope"
 				or "OffAllVirtual" or "CutAllVirtual"
 				or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
-				or "Filter" or "FilterCutoff" or "FilterResonance"
-				or "VolumeVirtual" or "SourceFrameVirtual"
-				or "DisplacementVirtual" or "PastVirtual")
+				or "Filter" or "FilterCutoff" or "FilterResonance")
 			&& !allowInjectedPlayCallsites)
 			return false;
 
