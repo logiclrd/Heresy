@@ -163,6 +163,106 @@ public sealed class NoteGroupOwnershipTests
         Assert.That(context.Diagnostics.VirtualOwnershipWarnings, Is.EqualTo(5));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ThousandsOfGroupScopesReuseOnlyPeakSlotsAndRetireEveryGeneration(bool relaxed)
+    {
+        const int cycles = 4096, members = 4;
+        string source = """
+            for (int row = 0; row < 4096; row++)
+            {
+                using var group = NewNoteGroup();
+                for (int member = 0; member < 4; member++)
+                    group += NoteVirtual(row, _O(17));
+                group.Volume(row + 0.25, 0.5);
+                group.Cut(row + 0.5, timeOffsetSeconds: 0.08);
+            }
+            """;
+        if (relaxed) source = "#order relaxed\n" + source;
+        var pattern = Pattern(source);
+        pattern.RowCount = cycles;
+        var result = ScriptCompiler.CompileIncrementalPattern(pattern);
+        Assert.That(result.Success, Is.True, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        SequencingContext context = new();
+        // Keep only identities that still have raw references or a pending
+        // release marker. Do not collect the entire streamed schedule.
+        var outstanding = new System.Collections.Generic.Dictionary<VirtualChannelIdentity, int>();
+        int peakOutstanding = 0, starts = 0, releases = 0, controls = 0;
+        ulong previousGeneration = 0;
+        foreach (RawPatternStep step in result.Program!.EnumerateRawSteps(context))
+        {
+            if (step is RawPatternStep.Emit emission)
+            {
+                var id = emission.Note.Target.VirtualIdentity;
+                if (id.Slot >= members || id.Generation == 0)
+                    Assert.Fail("Lease exceeded peak ownership or lost generation.");
+                if (emission.Note.Commands.Single() is StartNoteCommand)
+                {
+                    if (id.Generation <= previousGeneration)
+                        Assert.Fail("Start generation was reused or reversed.");
+                    previousGeneration = id.Generation;
+                    outstanding.Add(id, 0);
+                    starts++;
+                }
+                else
+                {
+                    if (!outstanding.TryGetValue(id, out int count))
+                        Assert.Fail("Control arrived after identity retirement.");
+                    outstanding[id] = count + 1;
+                    controls++;
+                }
+                peakOutstanding = Math.Max(peakOutstanding, outstanding.Count);
+            }
+            else if (step is RawPatternStep.ReleaseVirtualChannel release)
+            {
+                if (!outstanding.Remove(release.Identity, out int count) || count != 2)
+                    Assert.Fail("Release did not follow exactly two controls.");
+                releases++;
+            }
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(starts, Is.EqualTo(cycles * members));
+            Assert.That(controls, Is.EqualTo(cycles * members * 2));
+            Assert.That(releases, Is.EqualTo(starts));
+            Assert.That(outstanding, Is.Empty);
+            // Strict release delivery can trail the next start by one yield.
+            Assert.That(peakOutstanding, Is.LessThanOrEqualTo(members + 1));
+            Assert.That(context.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+            Assert.That(context.Diagnostics.DroppedOutOfOrderNotes, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void RepeatedStaleAliasUseHasBoundedDiagnosticStorage()
+    {
+        var pattern = Pattern("""
+            var note = NoteVirtual(0, _O(17));
+            note.Dispose();
+            using var replacement = NoteVirtual(0, _O(18));
+            for (int i = 0; i < 10000; i++)
+            {
+                note.Cut(0);
+                note.Dispose();
+            }
+            replacement.Volume(1, 0.5);
+            """);
+        var result = ScriptCompiler.CompileIncrementalPattern(pattern);
+        Assert.That(result.Success, Is.True, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        SequencingContext context = new();
+        var events = result.Program!.EnumerateRawSteps(context)
+            .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+        Assert.That(events.Length, Is.EqualTo(3));
+        Assert.That(events[0].Target.VirtualIdentity.Slot, Is.EqualTo(events[1].Target.VirtualIdentity.Slot));
+        Assert.That(events[0].Target, Is.Not.EqualTo(events[1].Target));
+        Assert.That(events[2].Target, Is.EqualTo(events[1].Target));
+        Assert.That(context.Diagnostics.VirtualOwnershipWarnings, Is.EqualTo(10000));
+        var diagnostics = context.Diagnostics.Drain();
+        Assert.That(diagnostics.Length, Is.EqualTo(33));
+        Assert.That(diagnostics.Count(d => d.Code == "HRSEQ011"), Is.EqualTo(32));
+        Assert.That(diagnostics.Count(d => d.Code == "HRSEQ012"), Is.EqualTo(1));
+    }
+
     [Test]
     public void CrossInvocationTransferIsRejectedWithoutLosingEitherLease()
     {
