@@ -791,7 +791,13 @@ public static class ScriptCompiler
 		{
 			IMethodSymbol method => IsAllowedInvocation(
 				method, patternBase, sequenceBase, mathType, pitchMath,
-				allowInjectedPlayCallsites: false),
+				allowInjectedPlayCallsites: false)
+				|| (canonicalKind == ScriptWrapperKind.Pattern
+					&& SymbolEqualityComparer.Default.Equals(method.ContainingType,
+						canonical.GetTypeByMetadataName(typeof(VirtualNote).FullName!))
+					&& method.MethodKind == MethodKind.Ordinary
+					&& (method.Name == "Dispose" || ScriptPatternEmissionPolicy.IsVirtualNoteEmitterName(method.Name))
+					&& (method.Parameters.Length == 0 || method.Parameters[0].Type.Name != "SequenceCallsite")),
 			_ => IsAllowedActionEnumMember(
 				symbol, displacement, past, nna),
 		};
@@ -1202,9 +1208,15 @@ public static class ScriptCompiler
 			if (invocation.Parent is ExpressionStatementSyntax statement
 				&& ReferenceEquals(statement.Expression, invocation))
 				continue;
+			if (invocation.Parent is EqualsValueClauseSyntax initializer
+				&& initializer.Parent is VariableDeclaratorSyntax variable
+				&& variable.Parent is VariableDeclarationSyntax declaration
+				&& declaration.Variables.Count == 1
+				&& declaration.Parent is LocalDeclarationStatementSyntax or FieldDeclarationSyntax or UsingStatementSyntax)
+				continue;
 			diagnostics.Add(new ScriptAnalysisDiagnostic(
 				RestrictedFeatureCode, ScriptDiagnosticSeverity.Error,
-				"Streaming note helpers must be direct statements.",
+				"Streaming note helpers must be direct statements or a single local initializer.",
 				new ScriptSourceSpan(invocation.Span.Start, invocation.Span.Length)));
 		}
 		return diagnostics;
@@ -1252,16 +1264,16 @@ public static class ScriptCompiler
 	private static string InstrumentIncrementalPattern(string source,
 		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites = false)
 	{
-		SyntaxNode root = CSharpSyntaxTree.ParseText(
-			source, ScriptParseOptions).GetRoot();
-		// Rewrite direct approved emitters as a single operation, BEFORE loop
-		// checkpoints alter source positions. This also ensures F6 spans use
-		// the author's original invocation, not generated yields/guards.
-		root = new StrictPatternEmitterRewriter(
-			emitterStarts, instrumentActionCallsites).Visit(root) ?? root;
-		root = new LoopCheckpointRewriter(cooperative: true).Visit(root)
-			?? root;
-		return root.ToFullString();
+		// Parse the authored statements in their actual method-body shape,
+		// rather than treating top-level locals as script fields. The
+		// synthetic opening brace shifts original offsets by exactly one.
+		BlockSyntax body = (BlockSyntax)SyntaxFactory.ParseStatement(
+			"{" + source + "\n}", options: WrapperParseOptions);
+		body = (BlockSyntax)new StrictPatternEmitterRewriter(
+			emitterStarts, instrumentActionCallsites, 1).Visit(body)!;
+		body = (BlockSyntax)new LoopCheckpointRewriter(cooperative: true).Visit(body)!;
+		string rewritten = body.ToFullString();
+		return rewritten.Substring(1, rewritten.Length - 2);
 	}
 
 	private static string InstrumentRelaxedPatternCallsites(string source,
@@ -1294,7 +1306,10 @@ public static class ScriptCompiler
 				p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
 				+ " @" + p.Name + DefaultParameterSyntax(p)));
 			string arguments = string.Join(", ", method.Parameters.Select(p => "@" + p.Name));
-			localAdapters.Add($"void {name}({parameters}) {{ base.{method.Name}({TraceCallsite(span)}, {arguments}); }}");
+			string returnType = method.ReturnsVoid ? "void"
+				: method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+			string returnPrefix = method.ReturnsVoid ? "" : "return ";
+			localAdapters.Add($"{returnType} {name}({parameters}) {{ {returnPrefix}base.{method.Name}({TraceCallsite(span)}, {arguments}); }}");
 		}
 
 		root = new RelaxedPatternEmitterCallsiteRewriter(emitterStarts, delegates,
@@ -1441,38 +1456,74 @@ public static class ScriptCompiler
 	}
 
 	private sealed class StrictPatternEmitterRewriter(
-		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites)
+		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites, int sourceOffset)
 		: CSharpSyntaxRewriter
 	{
-		public override SyntaxNode? VisitExpressionStatement(
-			ExpressionStatementSyntax node)
+		private bool IsEmitter(InvocationExpressionSyntax invocation)
+			=> emitterStarts.Contains(invocation.SpanStart - sourceOffset);
+
+		private static StatementSyntax YieldPending()
+			=> SyntaxFactory.ParseStatement("if (base.HasPendingEvent()) yield return base.EmitPendingStep();\n");
+
+		private bool HasEmitterInitializer(VariableDeclarationSyntax declaration)
+			=> declaration.Variables.Count == 1
+				&& declaration.Variables[0].Initializer?.Value is InvocationExpressionSyntax invoke
+				&& IsEmitter(invoke);
+
+		public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node)
 		{
-			ExpressionStatementSyntax visited =
-				(ExpressionStatementSyntax)(base.VisitExpressionStatement(node) ?? node);
-			if (node.Expression is not InvocationExpressionSyntax invocation
-				|| !emitterStarts.Contains(invocation.SpanStart))
+			var visited = (InvocationExpressionSyntax)base.VisitInvocationExpression(node)!;
+			if (!instrumentActionCallsites || !IsEmitter(node))
 				return visited;
+			var callsite = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(
+				$"new SequenceCallsite({node.SpanStart - sourceOffset}, {node.Span.Length})"));
+			return visited.WithArgumentList(visited.ArgumentList.WithArguments(
+				visited.ArgumentList.Arguments.Insert(0, callsite)));
+		}
 
-			if (instrumentActionCallsites)
+		public override SyntaxNode? VisitBlock(BlockSyntax node)
+		{
+			List<StatementSyntax> statements = [];
+			foreach (StatementSyntax statement in node.Statements)
 			{
-				if (visited.Expression is not InvocationExpressionSyntax rewritten)
-					throw new InvalidOperationException(
-						"Bound Pattern emission lost its invocation during rewriting.");
-				ArgumentSyntax callsite = SyntaxFactory.Argument(
-					SyntaxFactory.ParseExpression(
-						$"new SequenceCallsite({invocation.SpanStart}, {invocation.Span.Length})"));
-				visited = visited.WithExpression(
-					rewritten.WithArgumentList(
-						rewritten.ArgumentList.WithArguments(
-							rewritten.ArgumentList.Arguments.Insert(0, callsite))));
+				statements.Add((StatementSyntax)Visit(statement)!);
+				if (statement is LocalDeclarationStatementSyntax local
+					&& HasEmitterInitializer(local.Declaration))
+					statements.Add(YieldPending());
 			}
+			return node.WithStatements(SyntaxFactory.List(statements));
+		}
 
-			// Every approved event generator executes exactly once, followed
-			// by an outer-iterator yield. Local methods/delegates with the
-			// same spelling cannot acquire a bogus yield or F6 argument.
-			return SyntaxFactory.Block(
-				visited.WithoutLeadingTrivia(),
-				SyntaxFactory.ParseStatement("yield return EmitPendingStep();"))
+		public override SyntaxNode? VisitSwitchSection(SwitchSectionSyntax node)
+		{
+			List<StatementSyntax> statements = [];
+			foreach (StatementSyntax statement in node.Statements)
+			{
+				statements.Add((StatementSyntax)Visit(statement)!);
+				if (statement is LocalDeclarationStatementSyntax local
+					&& HasEmitterInitializer(local.Declaration))
+					statements.Add(YieldPending());
+			}
+			return node.WithStatements(SyntaxFactory.List(statements));
+		}
+
+		public override SyntaxNode? VisitUsingStatement(UsingStatementSyntax node)
+		{
+			var visited = (UsingStatementSyntax)base.VisitUsingStatement(node)!;
+			if (node.Declaration is null || !HasEmitterInitializer(node.Declaration))
+				return visited;
+			// Keep the yield INSIDE the using scope so disposing the
+			// suspended enumerator always disposes the initialized lease.
+			return visited.WithStatement(SyntaxFactory.Block(
+				YieldPending(), visited.Statement));
+		}
+
+		public override SyntaxNode? VisitExpressionStatement(ExpressionStatementSyntax node)
+		{
+			var visited = (ExpressionStatementSyntax)base.VisitExpressionStatement(node)!;
+			if (node.Expression is not InvocationExpressionSyntax invocation || !IsEmitter(invocation))
+				return visited;
+			return SyntaxFactory.Block(visited.WithoutLeadingTrivia(), YieldPending())
 				.WithTriviaFrom(node);
 		}
 	}
