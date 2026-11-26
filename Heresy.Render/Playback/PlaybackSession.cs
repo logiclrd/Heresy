@@ -146,6 +146,13 @@ public sealed class PlaybackSession
 	// Only materialized filters with a confirmed final-use barrier enter
 	// this set; no tombstone is kept for unmaterialized or reclaimed IDs.
 	private readonly HashSet<(long Owner, VirtualChannelIdentity Id)> _retiringVirtualFilters = [];
+	// Generated identities retain scalar note memory until the scheduler's
+	// final-use barrier, independently of audible channels and DSP tails.
+	// Presence also distinguishes a still-referenceable identity from a
+	// retired one whose old voices may need a temporary anti-click host.
+	private readonly Dictionary<(long Owner, VirtualChannelIdentity Id), double>
+		_scopedVirtualRememberedVolumes = [];
+	internal int RetainedScopedVirtualMemoryCount => _scopedVirtualRememberedVolumes.Count;
 	internal int RetainedScopedVirtualChannelCount => _scopedVirtualChannels.Count;
 	internal int RetainedScopedVirtualFilterCount => _scopedVirtualOutputFilters.Count;
 	internal int RetiringVirtualFilterCount => _retiringVirtualFilters.Count;
@@ -1075,12 +1082,18 @@ public sealed class PlaybackSession
 		switch (target.Kind)
 		{
 			case ChannelTargetKind.Virtual:
-				ApplyVirtualCommands(GetScopedChannel(
-					invocationId, target.VirtualIdentity),
+			{
+				PlaybackChannelState channel = GetScopedChannel(
+					invocationId, target.VirtualIdentity);
+				ApplyVirtualCommands(channel,
 					commands, _nextFrame, cutIndefiniteAfterNoteOff: false,
 					virtualChannelId: target.VirtualIdentity,
 					scopedOwner: invocationId);
+				if (target.VirtualIdentity.Generation != 0)
+					_scopedVirtualRememberedVolumes[(invocationId, target.VirtualIdentity)] =
+						channel.NoteVolume;
 				return;
+			}
 			case ChannelTargetKind.AllVirtualInScope:
 			case ChannelTargetKind.AllVirtual:
 				ApplyVirtualBroadcast(invocationId,
@@ -1196,6 +1209,7 @@ public sealed class PlaybackSession
 		if (owner < 0 || id.Generation == 0)
 			throw new ArgumentOutOfRangeException(owner < 0 ? nameof(owner) : nameof(id));
 		var key = (owner, id);
+		_scopedVirtualRememberedVolumes.Remove(key);
 		if (_scopedVirtualOutputFilters.ContainsKey(key))
 		{
 			_retiringVirtualFilters.Add(key);
@@ -1248,6 +1262,8 @@ public sealed class PlaybackSession
 				+ (ulong)id.Slot * 0x9E3779B97F4A7C15UL
 				+ id.Generation * 0xD1B54A32D192ED03UL
 				+ (ulong)owner));
+		if (_scopedVirtualRememberedVolumes.TryGetValue((owner, id), out double volume))
+			channel.CaptureCurrentNoteVolume(volume);
 		_scopedVirtualChannels.Add((owner, id), channel);
 		return channel;
 	}
@@ -1259,18 +1275,18 @@ public sealed class PlaybackSession
 		// Snapshot the eligible channels before applying commands.
 		// Same-frame starts are not pre-existing voices, even if their
 		// start event was dequeued earlier in this callback.
-		List<PlaybackChannelState> eligible = [];
+		List<(PlaybackChannelState Channel, (long Owner, VirtualChannelIdentity Id)? Key)> eligible = [];
 		foreach (var pair in _scopedVirtualChannels)
 			if ((allOwners || pair.Key.Owner == owner)
 				&& pair.Value.CurrentVoice is PlaybackVoice voice
 				&& voice.StartFrame < frame)
-				eligible.Add(pair.Value);
+				eligible.Add((pair.Value, pair.Key));
 		if (allOwners)
 			foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
 				if (channel.CurrentVoice is PlaybackVoice voice
 					&& voice.StartFrame < frame)
-					eligible.Add(channel);
-		foreach (PlaybackChannelState channel in eligible)
+					eligible.Add((channel, null));
+		foreach (var (channel, key) in eligible)
 			foreach (NoteCommand command in commands)
 			{
 				// Broadcasts control existing voices, not the creation
@@ -1287,6 +1303,10 @@ public sealed class PlaybackSession
 						break;
 					case SetNoteVolumeCommand volume:
 						channel.SetNoteVolume(volume.Volume);
+						// A broadcast cannot materialize memory for a retired
+						// identity or for a channel that has never been targeted.
+						if (key.HasValue && _scopedVirtualRememberedVolumes.ContainsKey(key.Value))
+							_scopedVirtualRememberedVolumes[key.Value] = channel.NoteVolume;
 						break;
 					default:
 						throw new NotSupportedException(
