@@ -23,12 +23,12 @@ public sealed class ScriptVirtualControlPlaybackTests
         SongDocument document = new();
         ObjectId sample = AddSample(document, stepped: false);
         ObjectId patternId = AddPattern(document, $"""
-            NoteVirtual(0, 7U, _O({sample.Value}));
-            NoteVirtual(0, 8U, _O({sample.Value}));
-            VolumeVirtual(0.25, 7U, 0.25);
-            DisplacementVirtual(0.5, 7U, NoteDisplacementAction.Continue);
-            NoteVirtual(0.75, 7U, _O({sample.Value}));
-            PastVirtual(1, 7U, TrackerPastNoteAction.Cut);
+            using var v7 = NoteVirtual(0, _O({sample.Value}));
+            using var v8 = NoteVirtual(0, _O({sample.Value}));
+            v7.Volume(0.25, 0.25);
+            v7.Displacement(0.5, NoteDisplacementAction.Continue);
+            v7.Note(0.75, _O({sample.Value}));
+            v7.Past(1, TrackerPastNoteAction.Cut);
             """);
         PreparedIncrementalPlaybackFactory factory = new(Mono());
         using PreparedIncrementalPlaybackPlan one = factory.Create(document, patternId);
@@ -71,15 +71,15 @@ public sealed class ScriptVirtualControlPlaybackTests
         SongDocument document = new();
         ObjectId sample = AddSample(document, stepped: true);
         ObjectId withOffset = AddPattern(document, $"""
-            NoteVirtual(0, 7U, _O({sample.Value}));
-            SourceFrameVirtual(0.5, 7U, 300, timeOffsetSeconds: 0.04);
-            NoteVirtual(0.75, 7U, _O({sample.Value}));
-            NoteVirtual(0.75, 8U, _O({sample.Value}));
+            using var v7 = NoteVirtual(0, _O({sample.Value}));
+            v7.SourceFrame(0.5, 300, timeOffsetSeconds: 0.04);
+            v7.Note(0.75, _O({sample.Value}));
+            using var v8 = NoteVirtual(0.75, _O({sample.Value}));
             """);
         ObjectId noOffset = AddPattern(document, $"""
-            NoteVirtual(0, 7U, _O({sample.Value}));
-            NoteVirtual(0.75, 7U, _O({sample.Value}));
-            NoteVirtual(0.75, 8U, _O({sample.Value}));
+            using var v7 = NoteVirtual(0, _O({sample.Value}));
+            v7.Note(0.75, _O({sample.Value}));
+            using var v8 = NoteVirtual(0.75, _O({sample.Value}));
             """);
         PreparedIncrementalPlaybackFactory factory = new(Mono());
         using PreparedIncrementalPlaybackPlan seek = factory.Create(document, withOffset);
@@ -105,11 +105,11 @@ public sealed class ScriptVirtualControlPlaybackTests
         SongDocument document = new();
         ObjectId sample = AddSample(document, stepped: false);
         ObjectId first = AddPattern(document, $"""
-            NoteVirtual(0, 7U, _O({sample.Value}));
-            VolumeVirtual(0.5, 7U, 0.05, timeOffsetSeconds: 0.08);
+            using var v7 = NoteVirtual(0, _O({sample.Value}));
+            v7.Volume(0.5, 0.05, timeOffsetSeconds: 0.08);
             """);
         ObjectId second = AddPattern(document,
-            $"NoteVirtual(0, 7U, _O({sample.Value}));");
+            $"using var v7 = NoteVirtual(0, _O({sample.Value}));");
         PreparedIncrementalPlaybackFactory factory = new(Mono());
         using PreparedIncrementalPlaybackPlan plan = factory.Create(document, first);
         long sibling = plan.Timeline.AddRoot(second);
