@@ -261,6 +261,38 @@ transferred wrapper is harmless. Invalid transfer and group-control use
 share bounded HRSEQ011/012 warnings. Disposal of the group releases its
 leases without cancelling any already scheduled audio.
 
+#### Using-local compound assignment correction
+
+Native C# 14 rejects even the void instance compound assignment on
+readonly using/foreach variables (CS1656). Keep the authored Heresy
+syntax `using var chord = NewNoteGroup(); chord += note;` and
+`using (var chord = NewNoteGroup()) { chord += note; }`.
+
+Before canonical binding, inspect the original wrapper to identify a
+direct += statement on a single-variable using declaration of the exact
+NoteGroup type with a VirtualNote-compatible RHS. Only the CS1656 error
+on the matching left operand is waived. Other original C# errors,
+including reassignment or ref/out use of the using variable, still fail.
+Original restricted syntax and wrapper boundary checks remain mandatory.
+Lower the declaration to a mutable local plus an immediately adjacent
+compiler-owned using alias capturing the original instance; using
+statements become a new enclosing block retaining their original body.
+The alias name cannot collide with any authored identifier (including
+escaped identifier spellings). Do not change ordinary using locals or
+add a foreach extension. The canonical bound-operation audit still
+authorizes the actual instance operator and every authored member.
+Ownership analysis recognizes the exact generated using alias and its
+captured symbol as proof of disposal, including transfers to it. A
+boundary map projects canonical diagnostics and F6 spans back to
+unmodified authored text, including same-line and CRLF source.
+
+The host PCM regression uses double-dollar interpolated raw strings
+so embedded script blocks have ordinary braces. The native cross-
+invocation test uses a normal group local and a separate using alias.
+The owner verified the suggested chord audition with a workaround
+for native C#'s using restriction; direct Heresy using/+= and new
+scope/collision/readonly/source-span regressions await exact-head CI.
+
 The group exposes Volume, Off, Cut, SourceFrame, Displacement, Past,
 NoteFilter and ChannelFilter, but no Note operation. It does not produce
 scope/global broadcast targets. In eager/relaxed mode forwarding is
