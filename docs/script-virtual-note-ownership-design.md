@@ -1,6 +1,6 @@
 # Script Pattern virtual-note ownership redesign (#54)
 
-Status: approved owner contract; internal identity and retirement protocol committed, awaiting slice 2b CI.
+Status: approved owner contract; first single-handle implementation committed, awaiting combined slice 2b/3a CI.
 Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
 [Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
 this document records the implementation choices and boundaries. No public
@@ -171,6 +171,47 @@ leases, old-generation deferred Cut/Past with a new generation and
 sibling sounding, separate same-slot filter/NNA identities, and explicit
 final-use retirement with PCM tail parity and no retained tombstones.
 Actual CI status is tracked on the PR.
+
+### Single handle implementation (slice 3a)
+
+The draft branch now supports `NoteVirtual(row, sourceId, ...)` returning
+a sealed `VirtualNote`, with private owner and generation-qualified
+identity. The older numeric helpers remain temporarily callable to
+permit incremental migration of the existing regression fixtures; they
+are not part of the final API. The new handle offers Note, Volume, Off,
+Cut, SourceFrame, Displacement, Past, NoteFilter and ChannelFilter.
+No ambiguous Filter alias or virtual resonant-filter capability is added.
+
+A handle validates the live allocator lease before every musical
+operation. Dispose invalidates all aliases, releases immediately and
+never emits a musical event. Invocation cleanup invalidates and reclaims
+unreleased leases even on exception or suspended-iterator disposal.
+Ownership misuse reports bounded HRSEQ011/012 warnings and does not
+append a command; cleanup of unreleased ownership reports the same
+warning category. HRS2101 is a conservative source warning for an
+unproven ownership termination: using is accepted; simple direct
+local Dispose is recognized; aliasing and more complex control flow
+can warn conservatively. Group transfer analysis is not implemented yet.
+
+The canonical compiler authorizes only the exact VirtualNote methods
+and implicit Dispose implementation, not constructors, metadata or
+trusted runtime entrypoints. Strict emission permits a single direct
+local initializer (including using declarations and using statements)
+as well as direct action statements. Yields are inserted into the
+actual method-body shape, without wrapping a local declaration in a
+new scope; for using statements the initial yield is inside the using
+body. Invalid ownership operations yield no event. F6 direct
+initializer and instance method invocations use their original full
+span; ordinary execution receives no metadata. The existing relaxed
+delegate stack remains in use. Indirect bound-instance method-group
+fallback and group-specific callsite coverage remain final F6 work.
+
+Added compile/runtime tests exercise the complete single-note method
+set, eager/streamed parity, slot reuse, invalid aliases, using
+cancellation, warnings and original source spans. They have not yet
+passed CI. Slice 3b will migrate all numeric-script tests and examples
+and remove old numeric entrypoints before NoteGroup work. Full production
+mixdown/rewind and export checks remain outstanding.
 
 ## Compiler integration after #58 and #69
 
