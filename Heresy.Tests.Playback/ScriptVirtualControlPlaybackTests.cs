@@ -128,6 +128,62 @@ public sealed class ScriptVirtualControlPlaybackTests
         });
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void GroupControlsMatchExplicitHandleControlsWithoutTouchingUnrelatedVoice(bool relaxed)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: false);
+        string lookup = $"_O({sample.Value})";
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        ObjectId groupPattern = AddPattern(document, prefix + $"""
+            using var other = NoteVirtual(0, {lookup});
+            using (var chord = NewNoteGroup())
+            {
+                chord += NoteVirtual(0, {lookup});
+                chord += NoteVirtual(0, {lookup});
+                chord.Volume(0.5, 0.25);
+                chord.Cut(1, timeOffsetSeconds: 0.02);
+            }
+            using var replacement = NoteVirtual(1.1, {lookup});
+            replacement.Cut(2);
+            """);
+        ObjectId individualPattern = AddPattern(document, prefix + $"""
+            using var other = NoteVirtual(0, {lookup});
+            using (var first = NoteVirtual(0, {lookup}))
+            using (var second = NoteVirtual(0, {lookup}))
+            {
+                first.Volume(0.5, 0.25);
+                second.Volume(0.5, 0.25);
+                first.Cut(1, timeOffsetSeconds: 0.02);
+                second.Cut(1, timeOffsetSeconds: 0.02);
+            }
+            using var replacement = NoteVirtual(1.1, {lookup});
+            replacement.Cut(2);
+            """);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var reference = factory.Create(document, individualPattern);
+        using var group = factory.Create(document, groupPattern);
+        float[] expected = new float[400], actual = new float[400];
+        reference.Source.Render(expected.Length, expected);
+        for (int pos = 0; pos < actual.Length;)
+        {
+            int count = Math.Min(17, actual.Length - pos);
+            group.Source.Render(count, actual.AsSpan(pos, count));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(actual[25], Is.GreaterThan(1.4f), "All three voices start.");
+            Assert.That(actual[90], Is.EqualTo(16000f / 32768f * 1.5f).Within(1e-5f));
+            Assert.That(actual[200], Is.EqualTo(16000f / 32768f * 2).Within(1e-5f),
+                "The old group's deferred cuts leave the new generation and unrelated voice alive.");
+            Assert.That(actual[320], Is.EqualTo(16000f / 32768f).Within(1e-5f));
+            Assert.That(group.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+        });
+    }
+
     private static RenderConfiguration Mono()
         => new(1000, [new OutputChannelConfiguration(
             Vector3.Zero, positionalImportance: 0)]);
