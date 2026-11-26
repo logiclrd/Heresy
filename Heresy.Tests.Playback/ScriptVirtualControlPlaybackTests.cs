@@ -136,7 +136,7 @@ public sealed class ScriptVirtualControlPlaybackTests
         ObjectId sample = AddSample(document, stepped: false);
         string lookup = $"_O({sample.Value})";
         string prefix = relaxed ? "#order relaxed\n" : "";
-        ObjectId groupPattern = AddPattern(document, prefix + $"""
+        ObjectId groupPattern = AddPattern(document, prefix + $$"""
             using var other = NoteVirtual(0, {{lookup}});
             using (var chord = NewNoteGroup())
             {
@@ -148,7 +148,7 @@ public sealed class ScriptVirtualControlPlaybackTests
             using var replacement = NoteVirtual(1.1, {{lookup}});
             replacement.Cut(2);
             """);
-        ObjectId individualPattern = AddPattern(document, prefix + $"""
+        ObjectId individualPattern = AddPattern(document, prefix + $$"""
             using var other = NoteVirtual(0, {{lookup}});
             using (var first = NoteVirtual(0, {{lookup}}))
             using (var second = NoteVirtual(0, {{lookup}}))
