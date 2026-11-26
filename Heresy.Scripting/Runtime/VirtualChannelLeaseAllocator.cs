@@ -43,6 +43,13 @@ internal sealed class VirtualChannelLeaseAllocator
             && _owned.TryGetValue(identity.Slot, out ulong generation)
             && generation == identity.Generation;
 
+    internal void ReleaseAll()
+    {
+        foreach (uint slot in _owned.Keys)
+            _available.Push(slot);
+        _owned.Clear();
+    }
+
     public bool Release(VirtualChannelIdentity identity)
     {
         if (!Owns(identity))
