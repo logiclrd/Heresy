@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 
 using Heresy.Core.Assets;
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Samples;
@@ -239,6 +240,84 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
         });
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ReleaseRetainsSilentFilterUntilDeferredStartIsApplied(bool chunked)
+    {
+        VirtualChannelIdentity identity = new(7, 1);
+        ChannelTarget target = ChannelTarget.Virtual(identity);
+        TestPattern pattern = new((ObjectId)3U, 1, new RawPatternStep[] {
+            new RawPatternStep.Emit(At(0, target, new SetChannelFilterCommand {
+                Configuration = TestEcho(),
+            })),
+            new RawPatternStep.Emit(At(0, TimeSpan.FromMilliseconds(300), target,
+                new StartNoteCommand(SampleId))),
+            new RawPatternStep.ReleaseVirtualChannel(identity),
+        });
+        using IncrementalRecursiveTimeline timeline = new(new SequencingContext(),
+            new Resolver(pattern));
+        timeline.AddRoot(pattern.Id);
+        using PreparedIncrementalAudioSource pcm = new(timeline, Session());
+        float[] silent = Render(pcm, 280, chunked ? [7, 13, 17] : [280]);
+        Assert.That(silent, Is.All.EqualTo(0f));
+        Assert.That(pcm.Session.RetainedScopedVirtualFilterCount, Is.EqualTo(1),
+            "A released generation retains its filter through a deferred start beyond the final row.");
+        Assert.That(pcm.Session.RetiringVirtualFilterCount, Is.Zero,
+            "A prefetched future event is not a final applied event.");
+        float[] tail = Render(pcm, 500, chunked ? [1, 7, 13, 19] : [500]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(tail[20], Is.EqualTo(1f).Within(1e-5f));
+            Assert.That(tail[30], Is.EqualTo(2f).Within(1e-5f),
+                "The delayed start must actually use the original echo filter.");
+            Assert.That(pcm.Session.RetainedScopedVirtualFilterCount, Is.Zero,
+                "The final-use barrier eventually retires the old filter.");
+            Assert.That(pcm.Session.RetiringVirtualFilterCount, Is.Zero);
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void DiscardedPrefetchReclaimsReleasedFilterWithoutStartingVoice(bool stopProducing)
+    {
+        var identity = new VirtualChannelIdentity(7, 1);
+        var target = ChannelTarget.Virtual(identity);
+        TestPattern pattern = new((ObjectId)3U, 1, new RawPatternStep[] {
+            new RawPatternStep.Emit(At(0, target, new SetChannelFilterCommand {
+                Configuration = TestEcho(),
+            })),
+            new RawPatternStep.Emit(At(0.5, target, new StartNoteCommand(SampleId))),
+            new RawPatternStep.ReleaseVirtualChannel(identity),
+        });
+        using IncrementalRecursiveTimeline timeline = new(new SequencingContext(),
+            new Resolver(pattern));
+        long root = timeline.AddRoot(pattern.Id);
+        using PreparedIncrementalAudioSource pcm = new(timeline, Session());
+        Assert.That(Render(pcm, 10, [10]), Is.All.EqualTo(0f));
+        Assert.That(pcm.Session.RetainedScopedVirtualFilterCount, Is.EqualTo(1));
+        if (stopProducing)
+            pcm.StopProducing();
+        else
+            Assert.That(pcm.Cancel(root), Is.True);
+        Assert.That(Render(pcm, 250, [11, 3, 17]), Is.All.EqualTo(0f));
+        Assert.That(pcm.Session.RetainedScopedVirtualFilterCount, Is.Zero);
+        Assert.That(pcm.Session.RetiringVirtualFilterCount, Is.Zero);
+    }
+
+    private static FilterInstance TestEcho()
+    {
+        FilterDefinition definition = new((ObjectId)34099U, "Echo", [
+            new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+        ]);
+        FilterInstance filter = new(definition);
+        filter.SetStageParameters(1, [
+            new("DelaySeconds", FilterParameterValue.FromNumber(0.002)),
+            new("Feedforward", FilterParameterValue.FromNumber(1)),
+            new("Mix", FilterParameterValue.FromNumber(1)),
+        ]);
+        return filter;
+    }
+
     private static Scenario Create(TestPattern firstChild, TestPattern secondChild)
     {
         TestPattern first = Pattern(1, 1,
@@ -313,22 +392,21 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
     private sealed class TestPattern : PatternDefinition,
         IIncrementalRawPatternNoteGenerator
     {
-        private readonly NoteEvent[] _events;
+        private readonly RawPatternStep[] _steps;
 
         public TestPattern(ObjectId id, int channels, NoteEvent[] events)
+            : this(id, channels, events.Select(e => (RawPatternStep)new RawPatternStep.Emit(e)).ToArray()) { }
+
+        public TestPattern(ObjectId id, int channels, RawPatternStep[] steps)
             : base(id, "Test")
         {
             RowCount = 2;
             ChannelCount = channels;
-            _events = events;
+            _steps = steps;
         }
 
         public IEnumerable<RawPatternStep> EnumerateRawSteps(
-            SequencingContext context)
-        {
-            foreach (NoteEvent e in _events)
-                yield return new RawPatternStep.Emit(e);
-        }
+            SequencingContext context) => _steps;
     }
 
     private sealed class Resolver(params SongObject[] objects)
