@@ -1188,17 +1188,21 @@ public static class ScriptCompiler
 				StringComparison.Ordinal);
 	}
 
+	// Parse in the actual method-body context, including top-level using
+	// declarations. Newlines keep any authored directive on its own line.
+	private const int AuthoredBodyOffset = 2;
+	private static BlockSyntax ParseAuthoredBody(string source)
+		=> (BlockSyntax)SyntaxFactory.ParseStatement("{\n" + source + "\n}", options: WrapperParseOptions);
+	private static string AuthoredBodyText(BlockSyntax body)
+	{
+		string text = body.ToFullString();
+		return text.Substring(AuthoredBodyOffset, text.Length - AuthoredBodyOffset - 2);
+	}
+
 	private static string InstrumentLoops(string source)
 	{
-		SyntaxTree tree =
-			CSharpSyntaxTree.ParseText(
-				source,
-				ScriptParseOptions);
-		SyntaxNode root = tree.GetRoot();
-		return new LoopCheckpointRewriter()
-			.Visit(root)
-			?.ToFullString()
-			?? source;
+		BlockSyntax body = ParseAuthoredBody(source);
+		return AuthoredBodyText((BlockSyntax)new LoopCheckpointRewriter().Visit(body)!);
 	}
 
 	/// <summary>
@@ -1256,13 +1260,12 @@ public static class ScriptCompiler
 		ValidateIncrementalPatternStatements(
 			string source, IReadOnlySet<int> emitterStarts)
 	{
-		SyntaxNode root = CSharpSyntaxTree.ParseText(
-			source, ScriptParseOptions).GetRoot();
+		SyntaxNode root = ParseAuthoredBody(source);
 		List<ScriptAnalysisDiagnostic> diagnostics = [];
 		foreach (InvocationExpressionSyntax invocation
 			in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
 		{
-			if (!emitterStarts.Contains(invocation.SpanStart))
+			if (!emitterStarts.Contains(invocation.SpanStart - AuthoredBodyOffset))
 				continue;
 			if (invocation.Parent is ExpressionStatementSyntax statement
 				&& ReferenceEquals(statement.Expression, invocation))
@@ -1276,7 +1279,7 @@ public static class ScriptCompiler
 			diagnostics.Add(new ScriptAnalysisDiagnostic(
 				RestrictedFeatureCode, ScriptDiagnosticSeverity.Error,
 				"Streaming note helpers must be direct statements or a single local initializer.",
-				new ScriptSourceSpan(invocation.Span.Start, invocation.Span.Length)));
+				new ScriptSourceSpan(invocation.Span.Start - AuthoredBodyOffset, invocation.Span.Length)));
 		}
 		return diagnostics;
 	}
@@ -1326,19 +1329,17 @@ public static class ScriptCompiler
 		// Parse the authored statements in their actual method-body shape,
 		// rather than treating top-level locals as script fields. The
 		// synthetic opening brace shifts original offsets by exactly one.
-		BlockSyntax body = (BlockSyntax)SyntaxFactory.ParseStatement(
-			"{" + source + "\n}", options: WrapperParseOptions);
+		BlockSyntax body = ParseAuthoredBody(source);
 		body = (BlockSyntax)new StrictPatternEmitterRewriter(
-			emitterStarts, instrumentActionCallsites, 1).Visit(body)!;
+			emitterStarts, instrumentActionCallsites, AuthoredBodyOffset).Visit(body)!;
 		body = (BlockSyntax)new LoopCheckpointRewriter(cooperative: true).Visit(body)!;
-		string rewritten = body.ToFullString();
-		return rewritten.Substring(1, rewritten.Length - 2);
+		return AuthoredBodyText(body);
 	}
 
 	private static string InstrumentRelaxedPatternCallsites(string source,
 		IReadOnlySet<int> emitterStarts)
 	{
-		SyntaxNode root = CSharpSyntaxTree.ParseText(source, ScriptParseOptions).GetRoot();
+		SyntaxNode root = ParseAuthoredBody(source);
 		string prefix = "__heresyTrace";
 		var identifiers = root.DescendantTokens()
 			.Where(t => t.IsKind(SyntaxKind.IdentifierToken))
@@ -1376,7 +1377,7 @@ public static class ScriptCompiler
 		root = new LoopCheckpointRewriter().Visit(root) ?? root;
 		// Local adapter declarations are compiler-owned, after the original
 		// authored source, and never included in the canonical API audit.
-		return root.ToFullString() + "\n" + string.Join("\n", localAdapters);
+		return AuthoredBodyText((BlockSyntax)root) + "\n" + string.Join("\n", localAdapters);
 	}
 
 	private static string DefaultParameterSyntax(IParameterSymbol parameter)
@@ -1456,7 +1457,7 @@ public static class ScriptCompiler
 		string prefix) : CSharpSyntaxRewriter
 	{
 		private static ScriptSourceSpan Span(SyntaxNode node)
-			=> new(node.SpanStart, node.Span.Length);
+			=> new(node.SpanStart - AuthoredBodyOffset, node.Span.Length);
 
 		public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
 			=> methodGroups.TryGetValue(Span(node), out string? name)
@@ -1494,7 +1495,7 @@ public static class ScriptCompiler
 				return rewritten.WithExpression(SyntaxFactory.ParseExpression(adapter)
 					.WithTriviaFrom(rewritten.Expression));
 			}
-			if (!emitterStarts.Contains(node.SpanStart))
+			if (!emitterStarts.Contains(node.SpanStart - AuthoredBodyOffset))
 				return rewritten;
 
 			ArgumentSyntax callsite = SyntaxFactory.Argument(
