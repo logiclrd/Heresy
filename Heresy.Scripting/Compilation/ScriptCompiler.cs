@@ -1587,6 +1587,8 @@ public static class ScriptCompiler
 			};
 	}
 
+	private const string TrustedFanoutDrainAnnotation = "HeresyTrustedFanoutDrain";
+
 	private sealed class StrictPatternEmitterRewriter(
 		IReadOnlySet<int> emitterStarts, bool instrumentActionCallsites, int sourceOffset)
 		: CSharpSyntaxRewriter
@@ -1595,7 +1597,8 @@ public static class ScriptCompiler
 			=> emitterStarts.Contains(invocation.SpanStart - sourceOffset);
 
 		private static StatementSyntax YieldPending()
-			=> SyntaxFactory.ParseStatement("while (base.HasPendingEvent()) yield return base.EmitPendingStep();\n");
+			=> SyntaxFactory.ParseStatement("while (base.HasPendingEvent()) yield return base.EmitPendingStep();\n")
+				.WithAdditionalAnnotations(new SyntaxAnnotation(TrustedFanoutDrainAnnotation));
 
 		private bool HasEmitterInitializer(VariableDeclarationSyntax declaration)
 			=> declaration.Variables.Count == 1
@@ -2039,6 +2042,10 @@ public static class ScriptCompiler
 		public override SyntaxNode? VisitWhileStatement(
 			WhileStatementSyntax node)
 		{
+			// Trusted fanout drains already checkpoint each emitted event.
+			// Do not count these as authored CPU-only loop iterations.
+			if (node.HasAnnotations(TrustedFanoutDrainAnnotation))
+				return node;
 			WhileStatementSyntax visited =
 				(WhileStatementSyntax)(
 					base.VisitWhileStatement(node)
