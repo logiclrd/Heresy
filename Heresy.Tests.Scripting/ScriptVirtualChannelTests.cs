@@ -15,10 +15,10 @@ namespace Heresy.Tests.Scripting;
 public sealed class ScriptVirtualChannelTests
 {
     private const string LifecycleSource = """
-        NoteVirtual(0, 123U, _O(17), 2.0, 0.5, true, 0.75);
-        NoteVirtual(0.25, 123U, _O(18), timeOffsetSeconds: 0.01);
-        OffVirtual(0.5, 123U);
-        CutVirtual(0.75, 123U);
+        using var note = NoteVirtual(0, _O(17), 2.0, 0.5, true, 0.75);
+        note.Note(0.25, _O(18), timeOffsetSeconds: 0.01);
+        note.Off(0.5);
+        note.Cut(0.75);
         OffVirtualInScope(1);
         CutVirtualInScope(1.25);
         OffAllVirtual(1.5);
@@ -53,8 +53,8 @@ public sealed class ScriptVirtualChannelTests
         Assert.That(incrementalEvents, Has.Length.EqualTo(8));
         ChannelTarget[] targets =
         [
-            ChannelTarget.Virtual(123U), ChannelTarget.Virtual(123U),
-            ChannelTarget.Virtual(123U), ChannelTarget.Virtual(123U),
+            ChannelTarget.Virtual(new VirtualChannelIdentity(0, 1)), ChannelTarget.Virtual(new VirtualChannelIdentity(0, 1)),
+            ChannelTarget.Virtual(new VirtualChannelIdentity(0, 1)), ChannelTarget.Virtual(new VirtualChannelIdentity(0, 1)),
             ChannelTarget.AllVirtualInScope, ChannelTarget.AllVirtualInScope,
             ChannelTarget.AllVirtual, ChannelTarget.AllVirtual,
         ];
@@ -86,8 +86,8 @@ public sealed class ScriptVirtualChannelTests
         {
             RowCount = 2, ChannelCount = 1,
             Source = """
-                NoteVirtual(0, 4U, _O(17));
-                OffVirtual(0.25, 4U);
+                using var note = NoteVirtual(0, _O(17));
+                note.Off(0.25);
                 CutVirtualInScope(0.5);
                 OffAllVirtual(1);
                 """,
@@ -99,7 +99,7 @@ public sealed class ScriptVirtualChannelTests
             compilation.Program!.EnumerateRawSteps(new SequencingContext())
                 .GetEnumerator();
         foreach (ChannelTarget target in new[] {
-            ChannelTarget.Virtual(4U), ChannelTarget.Virtual(4U),
+            ChannelTarget.Virtual(new VirtualChannelIdentity(0, 1)), ChannelTarget.Virtual(new VirtualChannelIdentity(0, 1)),
             ChannelTarget.AllVirtualInScope, ChannelTarget.AllVirtual,
         })
         {
@@ -108,6 +108,8 @@ public sealed class ScriptVirtualChannelTests
             Assert.That(((RawPatternStep.Emit)iterator.Current).Note.Target,
                 Is.EqualTo(target));
         }
+        Assert.That(iterator.MoveNext(), Is.True);
+        Assert.That(iterator.Current, Is.TypeOf<RawPatternStep.ReleaseVirtualChannel>());
         Assert.That(iterator.MoveNext(), Is.True,
             "Incremental scripted Patterns terminate with an explicit Advance.");
         Assert.That(iterator.Current, Is.TypeOf<RawPatternStep.Advance>());
@@ -122,8 +124,8 @@ public sealed class ScriptVirtualChannelTests
             RowCount = 2, ChannelCount = 1,
             Source = """
                 Tempo(0, 250);
-                NoteVirtual(0.5, 0U, _O(17), timeOffsetSeconds: 0.025);
-                CutVirtual(1, 0U);
+                using var note = NoteVirtual(0.5, _O(17), timeOffsetSeconds: 0.025);
+                note.Cut(1);
                 """,
         };
         var compilation = ScriptCompiler.CompileIncrementalPattern(definition);
@@ -141,16 +143,16 @@ public sealed class ScriptVirtualChannelTests
             Assert.That(emitted.Select(x => x.Offset.TimeOffset.TotalSeconds),
                 Is.EqualTo(new[] { 0.0, 0.055, 0.06 }).Within(1e-6));
             Assert.That(emitted.Select(x => x.Target), Is.EqualTo(new[] {
-                ChannelTarget.Global, ChannelTarget.Virtual(0U),
-                ChannelTarget.Virtual(0U),
+                ChannelTarget.Global, ChannelTarget.Virtual(new VirtualChannelIdentity(0, 1)),
+                ChannelTarget.Virtual(new VirtualChannelIdentity(0, 1)),
             }));
         });
     }
 
-    [TestCase("NoteVirtual(0, 7U, _O(17), pitchMultiplier: 0);")]
-    [TestCase("NoteVirtual(0, 7U, _O(17), volume: 1.1);")]
-    [TestCase("NoteVirtual(0, 7U, default);")]
-    [TestCase("CutVirtual(1.5, 7U);")]
+    [TestCase("NoteVirtual(0, _O(17), pitchMultiplier: 0);")]
+    [TestCase("NoteVirtual(0, _O(17), volume: 1.1);")]
+    [TestCase("NoteVirtual(0, default);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Cut(1.5);")]
     [TestCase("OffVirtualInScope(0, timeOffsetSeconds: 1e300);")]
     [TestCase("CutAllVirtual(0, timeOffsetSeconds: 1e300);")]
     public void InvalidVirtualHelperFailsBeforeEmitting(string source)
@@ -164,7 +166,7 @@ public sealed class ScriptVirtualChannelTests
         using IEnumerator<RawPatternStep> iterator =
             compilation.Program!.EnumerateRawSteps(new SequencingContext())
                 .GetEnumerator();
-        Assert.Throws<ArgumentOutOfRangeException>(() => iterator.MoveNext());
+        Assert.Throws<ArgumentOutOfRangeException>(() => { while (iterator.MoveNext()) { } });
     }
 
     [Test]
@@ -173,7 +175,7 @@ public sealed class ScriptVirtualChannelTests
         ScriptPatternDefinition definition = new((ObjectId)1U, "Not a statement")
         {
             RowCount = 2, ChannelCount = 1,
-            Source = "for (int i = 0; i < 1; OffVirtual(i, 7U)) { }",
+            Source = "using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.Off(i)) { }",
         };
         var compilation = ScriptCompiler.CompileIncrementalPattern(definition);
         Assert.That(compilation.Success, Is.False);
