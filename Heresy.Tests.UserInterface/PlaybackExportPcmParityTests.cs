@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 
 using Heresy.Core.Assets;
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -67,8 +68,22 @@ public sealed class PlaybackExportPcmParityTests
 	public void NativeParametricOperatorsMatchOfflineAndRealtimePcm(int channels)
 		=> AssertParity(CreateParametricSong(), channels, 1000);
 
+	[TestCase(1, false, false)]
+	[TestCase(6, false, true)]
+	[TestCase(6, true, false)]
+	[TestCase(1, true, true)]
+	public void RepeatedPrivateVirtualGenerationsAndNativeRewindMatchOffline(
+		int channels, bool relaxedParent, bool relaxedChild)
+	{
+		SongDocument song = CreateRecycledPrivateVirtualSong(
+			relaxedParent, relaxedChild, out ObjectId parent);
+		AssertParity(song, channels, 1000, tracedPattern: parent,
+			tracedFrames: 700, expectedLogicalFrames: 1440);
+	}
+
 	private static void AssertParity(SongDocument document,
-		int channels, int sampleRate)
+		int channels, int sampleRate, ObjectId? tracedPattern = null,
+		int tracedFrames = 0, int? expectedLogicalFrames = null)
 	{
 		RenderConfiguration configuration = Configuration(sampleRate, channels);
 		float[] pcm = Enumerable.Range(0, 1800)
@@ -85,6 +100,23 @@ public sealed class PlaybackExportPcmParityTests
 		IAudioOutputSource liveSource = (IAudioOutputSource)realtime;
 		using OfflineSongRenderPlan export = exportFactory.Create(document);
 
+		float[]? tracedPcm = null;
+		if (tracedPattern is ObjectId pattern)
+		{
+			// Real editor-F6 request, not merely a script compiled with
+			// metadata. Its first visit must sound like ordinary playback.
+			var editorFactory = new PlaybackRequestAudioSourceFactory(configuration, samples);
+			var editorRequest = PatternPlaybackRequest.Create(document, pattern) with
+			{
+				EditorCallsiteSession = EditorCallsiteSessionIds.Next(),
+			};
+			using IDisposable editor = (IDisposable)editorFactory.Create(editorRequest);
+			Assert.That(editorFactory.TryTakePlaybackPositionTimeline(editorRequest, out _),
+				Is.True);
+			tracedPcm = new float[checked(tracedFrames * channels)];
+			((IAudioOutputSource)editor).Render(tracedFrames, tracedPcm);
+		}
+
 		// A fresh authored edit cannot change either already-frozen render.
 		ObjectId rootId = document.RootSequenceId;
 		DataSequenceDefinition root = (DataSequenceDefinition)document.Objects[rootId];
@@ -97,6 +129,8 @@ public sealed class PlaybackExportPcmParityTests
 			maximumLogicalFrames: 8000, maximumTailFrames: 8000);
 		Assert.That(result.LogicalFrameCount, Is.GreaterThan(0));
 		Assert.That(result.LogicalFrameCount, Is.LessThan(8000));
+		if (expectedLogicalFrames is int frames)
+			Assert.That(result.LogicalFrameCount, Is.EqualTo(frames));
 		Assert.That(result.TotalFrameCount,
 			Is.EqualTo(sink.FramesWritten));
 
@@ -117,6 +151,13 @@ public sealed class PlaybackExportPcmParityTests
 		Assert.That(offline.Length, Is.GreaterThanOrEqualTo(live.Length));
 		Assert.That(live.Any(v => Math.Abs(v) > 0.00001f), Is.True,
 			"An all-silent arrangement would not prove PCM parity.");
+		if (tracedPcm is not null)
+		{
+			Assert.That(tracedPcm, Is.EqualTo(live.Take(tracedPcm.Length).ToArray())
+				.Within(1e-6f), "Editor tracing must preserve the first visit's PCM.");
+			Assert.That(live.Skip(live.Length / 2).Any(v => Math.Abs(v) > 0.00001f),
+				Is.True, "The second invocation must actually render audio.");
+		}
 		for (int index = 0; index < live.Length; index++)
 		{
 			Assert.That(live[index], Is.EqualTo(offline[index]).Within(1e-6),
@@ -319,6 +360,72 @@ public sealed class PlaybackExportPcmParityTests
 		root.Entries.Add(new SequenceEntry(childId));
 		document.Add(root);
 		document.RootSequenceId = sequenceId;
+		return document;
+	}
+
+	private static SongDocument CreateRecycledPrivateVirtualSong(
+		bool relaxedParent, bool relaxedChild, out ObjectId parent)
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(new SampleDefinition(sample, "Memory PCM",
+			new ExternalAssetReference(Path.Combine(Path.GetTempPath(),
+				$"heresy-private-virtual-parity-{sample.Value}.wav"))));
+		ObjectId filter = document.AllocateObjectId();
+		document.Add(new FilterDefinition(filter, "Finite echo", [
+			new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+		]));
+		ObjectId child = document.AllocateObjectId();
+		string childSource = $"""
+			using var first = NewNoteGroup();
+			first += NoteVirtual(0, _O({sample.Value}));
+			first.ChannelFilter(0.25, _O({filter.Value}));
+			first.Cut(0.75, timeOffsetSeconds: 0.09);
+			first.Dispose();
+			using var second = NewNoteGroup();
+			second += NoteVirtual(1, _O({sample.Value}));
+			second.Volume(1.5, 0.5);
+			second.Cut(3);
+			""";
+		document.Add(new ScriptPatternDefinition(child, "Private generations")
+		{
+			RowCount = 6, ChannelCount = 1,
+			Source = relaxedChild ? "#order relaxed\n" + childSource : childSource,
+		});
+		ObjectId privateSequence = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(privateSequence, "Private sequence");
+		sequence.Entries.Add(new SequenceEntry(child));
+		document.Add(sequence);
+
+		parent = document.AllocateObjectId();
+		string parentSource = $"""
+			using var old = NewNoteGroup();
+			using var lead = NoteVirtual(0, _O({privateSequence.Value}), mixdown: true);
+			lead.SourceFrame(0.5, 100);
+			lead.SourceFrame(0.75, 0);
+			lead.Displacement(1, NoteDisplacementAction.Continue);
+			lead.Note(1.25, _O({privateSequence.Value}), mixdown: true);
+			old += lead;
+			old.Volume(1.5, 0.5);
+			old.Past(1.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.09);
+			old.Cut(1.75, timeOffsetSeconds: 0.09);
+			old.Dispose();
+			using var replacement = NewNoteGroup();
+			replacement += NoteVirtual(2, _O({privateSequence.Value}), mixdown: true);
+			replacement += NoteVirtual(2, _O({privateSequence.Value}), mixdown: true, volume: 0.25);
+			replacement.Cut(4);
+			""";
+		document.Add(new ScriptPatternDefinition(parent, "Seeking virtual mixdowns")
+		{
+			RowCount = 6, ChannelCount = 1,
+			Source = relaxedParent ? "#order relaxed\n" + parentSource : parentSource,
+		});
+		ObjectId rootId = document.AllocateObjectId();
+		DataSequenceDefinition root = new(rootId, "Repeated private virtual generations");
+		root.Entries.Add(new SequenceEntry(parent));
+		root.Entries.Add(new SequenceEntry(parent));
+		document.Add(root);
+		document.RootSequenceId = rootId;
 		return document;
 	}
 
