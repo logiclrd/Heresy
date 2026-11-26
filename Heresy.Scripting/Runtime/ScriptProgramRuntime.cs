@@ -46,6 +46,7 @@ internal sealed class ScriptExecutionBudget
 internal sealed class IncrementalPatternEventReceiver : INoteReceiver
 {
 	private NoteEvent? _pending;
+	internal bool HasPending => _pending is not null;
 
 	public void Append(NoteEvent noteEvent)
 	{
@@ -129,7 +130,26 @@ public abstract class PatternScriptProgram
 		return false;
 	}
 
-	internal void Execute() => ExecuteScript();
+	internal bool OwnsVirtualChannelLease(VirtualChannelIdentity identity)
+		=> _virtualLeases?.Owns(identity) == true;
+
+	internal void ReportVirtualOwnershipIssue(string reason)
+		=> _context.Diagnostics.ReportVirtualOwnershipIssue(reason);
+
+	private void CleanupVirtualLeases()
+	{
+		if (_virtualLeases is { ActiveCount: > 0 } allocator)
+		{
+			ReportVirtualOwnershipIssue("Script Pattern ended with undisposed virtual note leases; released remaining ownership.");
+			allocator.ReleaseAll();
+		}
+	}
+
+	internal void Execute()
+	{
+		try { ExecuteScript(); }
+		finally { CleanupVirtualLeases(); }
+	}
 
 	internal void ExecuteRelaxed()
 	{
@@ -140,12 +160,20 @@ public abstract class PatternScriptProgram
 			ExecuteScript();
 			_context.Cancellation.ThrowIfCancellationRequested();
 		}
-		finally { _collectingRelaxed = false; }
+		finally { _collectingRelaxed = false; CleanupVirtualLeases(); }
 	}
 
 	// The eager and resumable wrappers are deliberately separate. Eager
 	// callers cannot accidentally enumerate a streaming program, or vice versa.
-	internal IEnumerable<RawPatternStep> Enumerate() => EnumerateScript();
+	internal IEnumerable<RawPatternStep> Enumerate()
+	{
+		try
+		{
+			foreach (RawPatternStep step in EnumerateScript())
+				yield return step;
+		}
+		finally { CleanupVirtualLeases(); }
+	}
 
 	protected abstract void ExecuteScript();
 
@@ -158,6 +186,10 @@ public abstract class PatternScriptProgram
 			? new RawPatternStep.Emit(receiver.Take())
 			: throw new InvalidOperationException(
 				"Resumable scripts need an invocation-local event receiver.");
+
+	// Trusted strict rewrite: invalid ownership operations emit no event.
+	protected bool HasPendingEvent()
+		=> _output is IncrementalPatternEventReceiver { HasPending: true };
 
 	protected bool ShouldCooperate()
 	{
@@ -217,6 +249,65 @@ public abstract class PatternScriptProgram
 		AppendNoteStart(row, ChannelTarget.Physical(channel),
 			sourceId, pitchMultiplier, playbackSpeedMultiplier,
 			mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId);
+	}
+
+	/// <summary>Allocate an exclusive logical channel and schedule its first note.</summary>
+	protected VirtualNote NoteVirtual(double row, ObjectId sourceId,
+		double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0,
+		bool mixdown = false, double? volume = null,
+		double timeOffsetSeconds = 0.0, ObjectId? eventFilterDefinitionId = null)
+	{
+		ValidateRow(row);
+		VirtualChannelIdentity identity = AcquireVirtualChannelLease();
+		try
+		{
+			AppendNoteStart(row, ChannelTarget.Virtual(identity), sourceId,
+				pitchMultiplier, playbackSpeedMultiplier, mixdown, volume,
+				timeOffsetSeconds, eventFilterDefinitionId);
+			return new VirtualNote(this, identity);
+		}
+		catch
+		{
+			ReleaseVirtualChannelLease(identity);
+			throw;
+		}
+	}
+
+	protected VirtualNote NoteVirtual(SequenceCallsite callsite, double row,
+		ObjectId sourceId, double pitchMultiplier = 1.0,
+		double playbackSpeedMultiplier = 1.0, bool mixdown = false,
+		double? volume = null, double timeOffsetSeconds = 0.0,
+		ObjectId? eventFilterDefinitionId = null)
+	{
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = previous ?? callsite;
+		try { return NoteVirtual(row, sourceId, pitchMultiplier,
+			playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId); }
+		finally { _editorActionCallsite = previous; }
+	}
+
+	internal void StartVirtualLease(VirtualChannelIdentity identity, double row,
+		ObjectId sourceId, double pitchMultiplier, double playbackSpeedMultiplier,
+		bool mixdown, double? volume, double timeOffsetSeconds,
+		ObjectId? eventFilterDefinitionId, SequenceCallsite? callsite)
+	{
+		ValidateRow(row);
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = previous ?? callsite;
+		try { AppendNoteStart(row, ChannelTarget.Virtual(identity), sourceId,
+			pitchMultiplier, playbackSpeedMultiplier, mixdown, volume,
+			timeOffsetSeconds, eventFilterDefinitionId); }
+		finally { _editorActionCallsite = previous; }
+	}
+
+	internal void ControlVirtualLease(VirtualChannelIdentity identity, double row,
+		NoteCommand command, double timeOffsetSeconds, SequenceCallsite? callsite)
+	{
+		ValidateRow(row);
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = previous ?? callsite;
+		try { Append(row, ChannelTarget.Virtual(identity), command, timeOffsetSeconds); }
+		finally { _editorActionCallsite = previous; }
 	}
 
 	/// <summary>
