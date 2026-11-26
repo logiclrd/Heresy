@@ -178,7 +178,7 @@ public sealed class ScriptInstrumentPlaybackTests
         FilterInstance selected = Echo(song, 0.001);
         ObjectId id = ScriptPattern(song,
             useVirtual
-                ? $"NoteVirtual(0, 7U, _O({sample.Value}), " +
+                ? $"using var v7 = NoteVirtual(0, _O({sample.Value}), " +
                   $"eventFilterDefinitionId: _O({selected.DefinitionId.Value})); " +
                   $"Note(0, 0, _O({sample.Value}));"
                 : $"Note(0, 0, _O({sample.Value}), " +
@@ -352,8 +352,8 @@ public sealed class ScriptInstrumentPlaybackTests
         FilterInstance filter = Echo(song, 0.001);
         ObjectId root = ScriptPattern(song, $"""
             Note(0, 0, _O({sample.Value}));
-            NoteVirtual(0, 7U, _O({sample.Value}));
-            NoteFilterVirtual(0, 7U, _O({filter.DefinitionId.Value}));
+            using var v7 = NoteVirtual(0, _O({sample.Value}));
+            v7.NoteFilter(0, _O({filter.DefinitionId.Value}));
             """);
         PreparedIncrementalPlaybackFactory factory = new(Mono());
         using PreparedIncrementalPlaybackPlan plan = factory.Create(song, root);
@@ -445,8 +445,8 @@ public sealed class ScriptInstrumentPlaybackTests
         ObjectId sample = Sample(song, 16384);
         FilterInstance filter = Echo(song, 0.001);
         ObjectId root = ScriptPattern(song, $"""
-            ChannelFilterVirtual(0, 7U, _O({filter.DefinitionId.Value}));
-            NoteVirtual(0, 7U, _O({sample.Value}));
+            using var v7 = NoteVirtual(0, _O({sample.Value}));
+            v7.ChannelFilter(0, _O({filter.DefinitionId.Value}));
             Note(0, 0, _O({sample.Value}));
             """);
         using PreparedIncrementalPlaybackPlan plan =

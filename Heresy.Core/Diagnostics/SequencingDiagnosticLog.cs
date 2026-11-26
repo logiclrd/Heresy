@@ -40,6 +40,23 @@ public sealed class SequencingDiagnosticLog
 	private long _expensiveSourceSeeks;
 	private long _rejectedNoteFilterCommands;
 	private long _rejectedChannelFilterCommands;
+	private long _virtualOwnershipWarnings;
+
+	public const string VirtualOwnershipCode = "HRSEQ011";
+	public const string VirtualOwnershipSuppressionCode = "HRSEQ012";
+
+	public long VirtualOwnershipWarnings => Interlocked.Read(ref _virtualOwnershipWarnings);
+
+	public void ReportVirtualOwnershipIssue(string reason)
+	{
+		long count = Interlocked.Increment(ref _virtualOwnershipWarnings);
+		if (count <= MaximumIndividualMessages)
+			_pending.Enqueue(new SequencingDiagnostic(VirtualOwnershipCode, reason));
+		else if (count == MaximumIndividualMessages + 1)
+			_pending.Enqueue(new SequencingDiagnostic(VirtualOwnershipSuppressionCode,
+				"Further virtual note ownership warnings are suppressed."));
+	}
+
 
 	public long RejectedChannelFilterCommands =>
 		Interlocked.Read(ref _rejectedChannelFilterCommands);

@@ -3255,7 +3255,7 @@ public static class PatternNoteProcessor
 		if (compare != 0)
 			return compare;
 
-		return left.VirtualChannelId.CompareTo(right.VirtualChannelId);
+		return left.VirtualIdentity.CompareTo(right.VirtualIdentity);
 	}
 
 	private static int FloorRow(double rowOffset)

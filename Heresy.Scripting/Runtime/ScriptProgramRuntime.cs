@@ -46,6 +46,7 @@ internal sealed class ScriptExecutionBudget
 internal sealed class IncrementalPatternEventReceiver : INoteReceiver
 {
 	private NoteEvent? _pending;
+	internal bool HasPending => _pending is not null;
 
 	public void Append(NoteEvent noteEvent)
 	{
@@ -80,6 +81,15 @@ public abstract class PatternScriptProgram
 	private double _lastRawRow;
 	private bool _collectingRelaxed;
 	private SequenceCallsite? _editorActionCallsite;
+	private VirtualChannelLeaseAllocator? _virtualLeases;
+	private Queue<VirtualChannelIdentity>? _releasedVirtualChannels;
+	// Strict mode has exactly one event receiver slot. Retain a cursor
+	// into the group's lease list, not a second queue of musical events.
+	private IReadOnlyList<VirtualChannelIdentity>? _groupFanout;
+	private int _groupFanoutIndex;
+	private double _groupFanoutRow, _groupFanoutOffset;
+	private NoteCommand? _groupFanoutCommand;
+	private SequenceCallsite? _groupFanoutCallsite;
 
 	protected PatternScriptProgram(
 		SequencingContext context,
@@ -104,7 +114,50 @@ public abstract class PatternScriptProgram
 		_channelCount = channelCount;
 	}
 
-	internal void Execute() => ExecuteScript();
+	// Trusted ownership runtime only. No numeric lease API is exposed to
+	// authored source. The handle/group implementation will own these
+	// leases; the streaming wrapper publishes releases at yield boundaries.
+	internal VirtualChannelIdentity AcquireVirtualChannelLease()
+		=> (_virtualLeases ??= new()).Acquire();
+
+	internal bool ReleaseVirtualChannelLease(VirtualChannelIdentity identity)
+	{
+		if (_virtualLeases?.Release(identity) != true)
+			return false;
+		if (_output is IncrementalPatternEventReceiver)
+			(_releasedVirtualChannels ??= new()).Enqueue(identity);
+		return true;
+	}
+
+	internal bool TryTakeVirtualChannelRelease(out VirtualChannelIdentity identity)
+	{
+		if (_releasedVirtualChannels is not null)
+			return _releasedVirtualChannels.TryDequeue(out identity);
+		identity = default;
+		return false;
+	}
+
+	internal bool OwnsVirtualChannelLease(VirtualChannelIdentity identity)
+		=> _virtualLeases?.Owns(identity) == true;
+
+	internal void ReportVirtualOwnershipIssue(string reason)
+		=> _context.Diagnostics.ReportVirtualOwnershipIssue(reason);
+
+	private void CleanupVirtualLeases()
+	{
+		ClearGroupFanout();
+		if (_virtualLeases is { ActiveCount: > 0 } allocator)
+		{
+			ReportVirtualOwnershipIssue("Script Pattern ended with undisposed virtual note leases; released remaining ownership.");
+			allocator.ReleaseAll();
+		}
+	}
+
+	internal void Execute()
+	{
+		try { ExecuteScript(); }
+		finally { CleanupVirtualLeases(); }
+	}
 
 	internal void ExecuteRelaxed()
 	{
@@ -115,12 +168,20 @@ public abstract class PatternScriptProgram
 			ExecuteScript();
 			_context.Cancellation.ThrowIfCancellationRequested();
 		}
-		finally { _collectingRelaxed = false; }
+		finally { _collectingRelaxed = false; CleanupVirtualLeases(); }
 	}
 
 	// The eager and resumable wrappers are deliberately separate. Eager
 	// callers cannot accidentally enumerate a streaming program, or vice versa.
-	internal IEnumerable<RawPatternStep> Enumerate() => EnumerateScript();
+	internal IEnumerable<RawPatternStep> Enumerate()
+	{
+		try
+		{
+			foreach (RawPatternStep step in EnumerateScript())
+				yield return step;
+		}
+		finally { CleanupVirtualLeases(); }
+	}
 
 	protected abstract void ExecuteScript();
 
@@ -133,6 +194,67 @@ public abstract class PatternScriptProgram
 			? new RawPatternStep.Emit(receiver.Take())
 			: throw new InvalidOperationException(
 				"Resumable scripts need an invocation-local event receiver.");
+
+	// Trusted strict rewrite: invalid ownership operations emit no event.
+	protected bool HasPendingEvent()
+	{
+		if (_output is not IncrementalPatternEventReceiver receiver)
+			return false;
+		if (receiver.HasPending) return true;
+		if (_groupFanout is not { } leases) return false;
+		if (_groupFanoutIndex >= leases.Count)
+		{
+			ClearGroupFanout();
+			return false;
+		}
+		ControlVirtualLease(leases[_groupFanoutIndex++], _groupFanoutRow,
+			_groupFanoutCommand!, _groupFanoutOffset, _groupFanoutCallsite);
+		if (_groupFanoutIndex == leases.Count) ClearGroupFanout();
+		return true;
+	}
+
+	private void ClearGroupFanout()
+	{
+		_groupFanout = null;
+		_groupFanoutIndex = 0;
+		_groupFanoutCommand = null;
+		_groupFanoutCallsite = null;
+	}
+
+	protected NoteGroup NewNoteGroup()
+	{
+		Checkpoint();
+		return new NoteGroup(this);
+	}
+
+	internal void CheckOwnershipBudget() => Checkpoint();
+
+	internal void ControlVirtualGroup(IReadOnlyList<VirtualChannelIdentity> leases,
+		double row, NoteCommand command, double timeOffsetSeconds, SequenceCallsite? callsite)
+	{
+		ValidateRow(row);
+		if (!double.IsFinite(timeOffsetSeconds)
+			|| Math.Abs(timeOffsetSeconds) > TimeSpan.MaxValue.TotalSeconds)
+			throw new ArgumentOutOfRangeException(nameof(timeOffsetSeconds));
+		Checkpoint();
+		if (leases.Count == 0) return;
+		// The producer cannot execute another authored statement while
+		// the compiler's drain loop is suspended. Disposal of the
+		// suspended iterator abandons the un-emitted suffix instead.
+		if (_output is IncrementalPatternEventReceiver receiver)
+		{
+			if (_groupFanout is not null || receiver.HasPending)
+				throw new InvalidOperationException("A strict group must drain before another emission.");
+			_groupFanout = leases;
+			_groupFanoutRow = row;
+			_groupFanoutOffset = timeOffsetSeconds;
+			_groupFanoutCommand = command;
+			_groupFanoutCallsite = _editorActionCallsite ?? callsite;
+			return;
+		}
+		foreach (VirtualChannelIdentity identity in leases)
+			ControlVirtualLease(identity, row, command, timeOffsetSeconds, callsite);
+	}
 
 	protected bool ShouldCooperate()
 	{
@@ -194,27 +316,64 @@ public abstract class PatternScriptProgram
 			mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId);
 	}
 
-	/// <summary>
-	/// Start one invocation-scoped virtual voice. Its id is independent of
-	/// Pattern.ChannelCount and is local to this Pattern cursor invocation.
-	/// </summary>
-	protected void NoteVirtual(
-		double row,
-		uint virtualId,
-		ObjectId sourceId,
-		double pitchMultiplier = 1.0,
-		double playbackSpeedMultiplier = 1.0,
-		bool mixdown = false,
-		double? volume = null,
-		double timeOffsetSeconds = 0.0,
-		ObjectId? eventFilterDefinitionId = null)
+	/// <summary>Allocate an exclusive logical channel and schedule its first note.</summary>
+	protected VirtualNote NoteVirtual(double row, ObjectId sourceId,
+		double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0,
+		bool mixdown = false, double? volume = null,
+		double timeOffsetSeconds = 0.0, ObjectId? eventFilterDefinitionId = null)
 	{
 		ValidateRow(row);
-		AppendNoteStart(row, ChannelTarget.Virtual(virtualId),
-			sourceId, pitchMultiplier, playbackSpeedMultiplier,
-			mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId);
+		VirtualChannelIdentity identity = AcquireVirtualChannelLease();
+		try
+		{
+			AppendNoteStart(row, ChannelTarget.Virtual(identity), sourceId,
+				pitchMultiplier, playbackSpeedMultiplier, mixdown, volume,
+				timeOffsetSeconds, eventFilterDefinitionId);
+			return new VirtualNote(this, identity);
+		}
+		catch
+		{
+			ReleaseVirtualChannelLease(identity);
+			throw;
+		}
 	}
 
+	protected VirtualNote NoteVirtual(SequenceCallsite callsite, double row,
+		ObjectId sourceId, double pitchMultiplier = 1.0,
+		double playbackSpeedMultiplier = 1.0, bool mixdown = false,
+		double? volume = null, double timeOffsetSeconds = 0.0,
+		ObjectId? eventFilterDefinitionId = null)
+	{
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = previous ?? callsite;
+		try { return NoteVirtual(row, sourceId, pitchMultiplier,
+			playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId); }
+		finally { _editorActionCallsite = previous; }
+	}
+
+	internal void StartVirtualLease(VirtualChannelIdentity identity, double row,
+		ObjectId sourceId, double pitchMultiplier, double playbackSpeedMultiplier,
+		bool mixdown, double? volume, double timeOffsetSeconds,
+		ObjectId? eventFilterDefinitionId, SequenceCallsite? callsite)
+	{
+		ValidateRow(row);
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = previous ?? callsite;
+		try { AppendNoteStart(row, ChannelTarget.Virtual(identity), sourceId,
+			pitchMultiplier, playbackSpeedMultiplier, mixdown, volume,
+			timeOffsetSeconds, eventFilterDefinitionId); }
+		finally { _editorActionCallsite = previous; }
+	}
+
+	internal void ControlVirtualLease(VirtualChannelIdentity identity, double row,
+		NoteCommand command, double timeOffsetSeconds, SequenceCallsite? callsite)
+	{
+		ValidateRow(row);
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = previous ?? callsite;
+		try { Append(row, ChannelTarget.Virtual(identity), command, timeOffsetSeconds); }
+		finally { _editorActionCallsite = previous; }
+	}
 
 	/// <summary>Only rewritten editor-F6 calls use these overloads. Normal
 	/// Pattern scripts continue to call the unchanged musical API.</summary>
@@ -237,6 +396,34 @@ public abstract class PatternScriptProgram
 		where TDelegate : Delegate
 		=> createAdapter(target);
 
+	// Only F6 method-group references use this cache. The weak receiver key
+	// prevents short-lived notes/groups accumulating for the entire Pattern.
+	// Repeated conversion of the same bound method retains delegate equality
+	// (including multicast combination/removal), without re-evaluating its receiver.
+	private System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<Delegate, Delegate>>?
+		_boundTraceAdapters;
+
+	protected TDelegate __HeresyBindTrace<TDelegate>(
+		TDelegate target, Func<TDelegate, TDelegate> createAdapter)
+		where TDelegate : Delegate
+	{
+		object receiver = target.Target ?? throw new InvalidOperationException(
+			"Bound trace requires an instance method.");
+		var cache = (_boundTraceAdapters ??= new()).GetOrCreateValue(receiver);
+		if (cache.TryGetValue(target, out Delegate? existing))
+			return (TDelegate)existing;
+		TDelegate adapter = createAdapter(target);
+		cache.Add(target, adapter);
+		return adapter;
+	}
+
+	protected SequenceCallsite? __HeresyPushFallbackCallsite(SequenceCallsite callsite)
+	{
+		SequenceCallsite? previous = _editorActionCallsite;
+		_editorActionCallsite = previous ?? callsite;
+		return previous;
+	}
+
 	protected SequenceCallsite? __HeresyPushDelegateCallsite(SequenceCallsite callsite)
 	{
 		SequenceCallsite? previous = _editorActionCallsite;
@@ -256,34 +443,15 @@ public abstract class PatternScriptProgram
 		=> EmitWithEditorCallsite(callsite,
 			() => Note(row, channel, sourceId, pitchMultiplier, playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId));
 
-	protected void NoteVirtual(SequenceCallsite callsite, double row, uint virtualId, ObjectId sourceId,
-		double pitchMultiplier = 1.0,
-		double playbackSpeedMultiplier = 1.0,
-		bool mixdown = false, double? volume = null,
-		double timeOffsetSeconds = 0.0,
-		ObjectId? eventFilterDefinitionId = null)
-		=> EmitWithEditorCallsite(callsite,
-			() => NoteVirtual(row, virtualId, sourceId, pitchMultiplier, playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId));
-
 	protected void NoteFilter(SequenceCallsite callsite, double row, int channel, ObjectId? definitionId = null,
 		double timeOffsetSeconds = 0.0)
 		=> EmitWithEditorCallsite(callsite,
 			() => NoteFilter(row, channel, definitionId, timeOffsetSeconds));
 
-	protected void NoteFilterVirtual(SequenceCallsite callsite, double row, uint virtualId, ObjectId? definitionId = null,
-		double timeOffsetSeconds = 0.0)
-		=> EmitWithEditorCallsite(callsite,
-			() => NoteFilterVirtual(row, virtualId, definitionId, timeOffsetSeconds));
-
 	protected void ChannelFilter(SequenceCallsite callsite, double row, int channel, ObjectId? definitionId = null,
 		double timeOffsetSeconds = 0.0)
 		=> EmitWithEditorCallsite(callsite,
 			() => ChannelFilter(row, channel, definitionId, timeOffsetSeconds));
-
-	protected void ChannelFilterVirtual(SequenceCallsite callsite, double row, uint virtualId, ObjectId? definitionId = null,
-		double timeOffsetSeconds = 0.0)
-		=> EmitWithEditorCallsite(callsite,
-			() => ChannelFilterVirtual(row, virtualId, definitionId, timeOffsetSeconds));
 
 	// Editor-F6-only provenance for voice-ending operations. Delegate to
 	// the authored overloads so validation, channel scoping and note
@@ -297,16 +465,6 @@ public abstract class PatternScriptProgram
 		double timeOffsetSeconds = 0.0)
 		=> EmitWithEditorCallsite(callsite,
 			() => Cut(row, channel, timeOffsetSeconds));
-
-	protected void OffVirtual(SequenceCallsite callsite, double row, uint virtualId,
-		double timeOffsetSeconds = 0.0)
-		=> EmitWithEditorCallsite(callsite,
-			() => OffVirtual(row, virtualId, timeOffsetSeconds));
-
-	protected void CutVirtual(SequenceCallsite callsite, double row, uint virtualId,
-		double timeOffsetSeconds = 0.0)
-		=> EmitWithEditorCallsite(callsite,
-			() => CutVirtual(row, virtualId, timeOffsetSeconds));
 
 	protected void OffVirtualInScope(SequenceCallsite callsite, double row,
 		double timeOffsetSeconds = 0.0)
@@ -371,28 +529,6 @@ public abstract class PatternScriptProgram
 
 	// Editor-F6-only provenance for virtual-channel control commands.
 	// The authored overloads still own validation and command emission.
-	protected void VolumeVirtual(SequenceCallsite callsite, double row,
-		uint virtualId, double volume, double timeOffsetSeconds = 0.0)
-		=> EmitWithEditorCallsite(callsite,
-			() => VolumeVirtual(row, virtualId, volume, timeOffsetSeconds));
-
-	protected void SourceFrameVirtual(SequenceCallsite callsite, double row,
-		uint virtualId, long sourceFrameOffset, double timeOffsetSeconds = 0.0)
-		=> EmitWithEditorCallsite(callsite,
-			() => SourceFrameVirtual(row, virtualId, sourceFrameOffset, timeOffsetSeconds));
-
-	protected void DisplacementVirtual(SequenceCallsite callsite, double row,
-		uint virtualId, NoteDisplacementAction action,
-		double timeOffsetSeconds = 0.0)
-		=> EmitWithEditorCallsite(callsite,
-			() => DisplacementVirtual(row, virtualId, action, timeOffsetSeconds));
-
-	protected void PastVirtual(SequenceCallsite callsite, double row,
-		uint virtualId, TrackerPastNoteAction action,
-		double timeOffsetSeconds = 0.0)
-		=> EmitWithEditorCallsite(callsite,
-			() => PastVirtual(row, virtualId, action, timeOffsetSeconds));
-
 	private void AppendNoteStart(
 		double row,
 		ChannelTarget target,
@@ -441,15 +577,6 @@ public abstract class PatternScriptProgram
 			new SetNoteFilterCommand(definitionId), timeOffsetSeconds);
 	}
 
-	protected void NoteFilterVirtual(
-		double row, uint virtualId, ObjectId? definitionId = null,
-		double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new SetNoteFilterCommand(definitionId), timeOffsetSeconds);
-	}
-
 	/// <summary>Choose or clear the persistent output Filter on the actual
 	/// physical host, independent of note events and invocation memory.</summary>
 	protected void ChannelFilter(double row, int channel,
@@ -459,94 +586,6 @@ public abstract class PatternScriptProgram
 		ValidateChannel(channel);
 		Append(row, ChannelTarget.Physical(channel),
 			new SetChannelFilterCommand(definitionId), timeOffsetSeconds);
-	}
-
-	protected void ChannelFilterVirtual(double row, uint virtualId,
-		ObjectId? definitionId = null, double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new SetChannelFilterCommand(definitionId), timeOffsetSeconds);
-	}
-
-	/// <summary>
-	/// Set a virtual channel's current note volume in normalized [0,1] units.
-	/// The channel remembers the volume for later notes on the same scoped ID.
-	/// </summary>
-	protected void VolumeVirtual(
-		double row, uint virtualId, double volume,
-		double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		ValidateUnitInterval(volume, nameof(volume));
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new SetNoteVolumeCommand(volume), timeOffsetSeconds);
-	}
-
-	/// <summary>
-	/// Seek the current virtual voice by native source frames. Unlike the
-	/// physical Seek helper, the units are not elapsed wall seconds.
-	/// Non-seekable sources ignore this request, like physical Oxx.
-	/// </summary>
-	protected void SourceFrameVirtual(
-		double row, uint virtualId, long sourceFrameOffset,
-		double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		if (sourceFrameOffset < 0)
-			throw new ArgumentOutOfRangeException(nameof(sourceFrameOffset));
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new SetSourceFrameOffsetCommand(sourceFrameOffset),
-			timeOffsetSeconds);
-	}
-
-	/// <summary>
-	/// Override how the current virtual voice is displaced by the next start
-	/// on the same scoped ID. Does not change the future replacement's policy.
-	/// </summary>
-	protected void DisplacementVirtual(
-		double row, uint virtualId, NoteDisplacementAction action,
-		double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		if (!Enum.IsDefined(action))
-			throw new ArgumentOutOfRangeException(nameof(action));
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new SetCurrentVoiceDisplacementActionCommand(action),
-			timeOffsetSeconds);
-	}
-
-	/// <summary>
-	/// Act only on displaced/past voices originating from this virtual ID
-	/// and Pattern cursor, never its current or a sibling's voice.
-	/// </summary>
-	protected void PastVirtual(
-		double row, uint virtualId, TrackerPastNoteAction action,
-		double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		if (!Enum.IsDefined(action))
-			throw new ArgumentOutOfRangeException(nameof(action));
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new ApplyPastNoteActionCommand(action), timeOffsetSeconds);
-	}
-
-	/// <summary>Release the voice at one invocation-local virtual ID.</summary>
-	protected void OffVirtual(
-		double row, uint virtualId, double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new NoteOffCommand(), timeOffsetSeconds);
-	}
-
-	/// <summary>Cut the voice at one invocation-local virtual ID.</summary>
-	protected void CutVirtual(
-		double row, uint virtualId, double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new NoteCutCommand(), timeOffsetSeconds);
 	}
 
 	/// <summary>Release previously started virtual voices in this scope.</summary>

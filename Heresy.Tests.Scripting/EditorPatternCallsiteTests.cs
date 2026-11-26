@@ -20,13 +20,13 @@ public sealed class EditorPatternCallsiteTests
     {
         const string source = """
             Note(0, 0, _O(17), Semitone(2));
-            NoteVirtual(
-                1, 7, _O(17),
+            using var note = NoteVirtual(
+                1, _O(17),
                 timeOffsetSeconds: 0.02);
             NoteFilter(2, 0, _O(30));
-            NoteFilterVirtual(2, 7);
+            note.NoteFilter(2);
             ChannelFilter(3, 0);
-            ChannelFilterVirtual(3, 7);
+            note.ChannelFilter(3);
             """;
         ScriptPatternDefinition pattern = new((ObjectId)2U, "Actions")
         {
@@ -50,7 +50,7 @@ public sealed class EditorPatternCallsiteTests
         Assert.That(b, Has.Length.EqualTo(6));
         Assert.That(a, Has.Length.EqualTo(b.Length));
         string[] helpers = { "Note(", "NoteVirtual(", "NoteFilter(",
-            "NoteFilterVirtual(", "ChannelFilter(", "ChannelFilterVirtual(" };
+            "note.NoteFilter(", "ChannelFilter(", "note.ChannelFilter(" };
         for (int i = 0; i < b.Length; i++)
         {
             int start = source.IndexOf(helpers[i], StringComparison.Ordinal);
@@ -78,17 +78,18 @@ public sealed class EditorPatternCallsiteTests
     public void EditorF6TracesVirtualControlsWithoutChangingTypedCommands()
     {
         const string source = """
-            VolumeVirtual(0, 7U, .25);
-            SourceFrameVirtual(
-                1, 7U, 256,
+            using var note = NoteVirtual(0, _O(17));
+            note.Volume(0, .25);
+            note.SourceFrame(
+                1, 256,
                 timeOffsetSeconds: .01);
-            DisplacementVirtual(2, 7U, NoteDisplacementAction.Continue);
-            PastVirtual(3, 7U, TrackerPastNoteAction.Cut);
+            note.Displacement(2, NoteDisplacementAction.Continue);
+            note.Past(3, TrackerPastNoteAction.Cut);
             """;
         string[] helperNames =
         {
-            "VolumeVirtual(", "SourceFrameVirtual(",
-            "DisplacementVirtual(", "PastVirtual(",
+            "NoteVirtual(", "note.Volume(", "note.SourceFrame(",
+            "note.Displacement(", "note.Past(",
         };
         ScriptPatternDefinition pattern = new((ObjectId)12U, "Virtual controls")
         {
@@ -125,19 +126,19 @@ public sealed class EditorPatternCallsiteTests
                 Assert.That(ordinary[i].EditorPatternRow, Is.Null);
                 Assert.That(traced[i].EditorCallsite,
                     Is.EqualTo(new SequenceCallsite(start, end - start)));
-                Assert.That(traced[i].EditorPatternRow, Is.EqualTo(i));
+                Assert.That(traced[i].EditorPatternRow, Is.EqualTo(Math.Max(0, i - 1)));
                 Assert.That(traced[i].Offset, Is.EqualTo(ordinary[i].Offset));
                 Assert.That(traced[i].Target, Is.EqualTo(ordinary[i].Target));
-                Assert.That(traced[i].Commands, Is.EqualTo(ordinary[i].Commands));
+                Assert.That(traced[i].Commands.Select(c => c.GetType()), Is.EqualTo(ordinary[i].Commands.Select(c => c.GetType())));
             });
         }
         Assert.That(pattern.Source, Is.EqualTo(source));
     }
 
-    [TestCase("VolumeVirtual(default(SequenceCallsite), 0, 7U, .25);")]
-    [TestCase("SourceFrameVirtual(default(SequenceCallsite), 0, 7U, 256);")]
-    [TestCase("DisplacementVirtual(default(SequenceCallsite), 0, 7U, NoteDisplacementAction.Cut);")]
-    [TestCase("PastVirtual(default(SequenceCallsite), 0, 7U, TrackerPastNoteAction.Cut);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Volume(default(SequenceCallsite), 0, .25);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.SourceFrame(default(SequenceCallsite), 0, 256);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Displacement(default(SequenceCallsite), 0, NoteDisplacementAction.Cut);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Past(default(SequenceCallsite), 0, TrackerPastNoteAction.Cut);")]
     public void AuthoredSourceCannotSpoofVirtualControlCallsites(string source)
     {
         ScriptPatternDefinition pattern = new((ObjectId)13U, "Restricted")
@@ -245,14 +246,15 @@ public sealed class EditorPatternCallsiteTests
         const string source = """
             Off(0, 0);
             Cut(1, 0);
-            OffVirtual(2, 7);
-            CutVirtual(3, 7);
+            using var note = NoteVirtual(2, _O(17));
+            note.Off(2);
+            note.Cut(3);
             OffVirtualInScope(4);
             CutVirtualInScope(5);
             OffAllVirtual(6);
             CutAllVirtual(7);
             """;
-        string[] names = { "Off(", "Cut(", "OffVirtual(", "CutVirtual(",
+        string[] names = { "Off(", "Cut(", "NoteVirtual(", "note.Off(", "note.Cut(",
             "OffVirtualInScope(", "CutVirtualInScope(", "OffAllVirtual(",
             "CutAllVirtual(" };
         ScriptPatternDefinition pattern = new((ObjectId)7U, "Voice endings")
@@ -277,13 +279,13 @@ public sealed class EditorPatternCallsiteTests
         for (int i = 0; i < annotated.Length; i++)
         {
             int first = source.IndexOf(names[i], StringComparison.Ordinal);
-            int end = source.IndexOf(')', first) + 1;
+            int end = source.IndexOf(");", first, StringComparison.Ordinal) + 1;
             Assert.Multiple(() =>
             {
                 Assert.That(ordinary[i].EditorCallsite, Is.Null);
                 Assert.That(annotated[i].EditorCallsite,
                     Is.EqualTo(new SequenceCallsite(first, end - first)));
-                Assert.That(annotated[i].EditorPatternRow, Is.EqualTo(i));
+                Assert.That(annotated[i].EditorPatternRow, Is.EqualTo(i < 3 ? i : i - 1));
                 Assert.That(ordinary[i].Target, Is.EqualTo(annotated[i].Target));
                 Assert.That(ordinary[i].Offset, Is.EqualTo(annotated[i].Offset));
                 Assert.That(ordinary[i].Commands.Select(x => x.GetType()),

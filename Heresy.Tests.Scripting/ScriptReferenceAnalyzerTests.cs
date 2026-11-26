@@ -37,6 +37,20 @@ public sealed class ScriptReferenceAnalyzerTests
 			.Should().Equal("_O(137)", "_O(42)");
 	}
 
+	[TestCase("")]
+	[TestCase("#order relaxed\r\n")]
+	public void TopLevelUsingDeclarationPreservesObjectLookupSpans(string prefix)
+	{
+		string source = prefix + "using var note = NoteVirtual(0, _O(17));\r\n"
+			+ "note.Note(2, _O(18));";
+		var analysis = ScriptReferenceAnalyzer.Analyze(source);
+		analysis.IsReliable.Should().BeTrue();
+		analysis.Diagnostics.Should().BeEmpty();
+		analysis.References.Select(r => r.Id).Should().Equal((ObjectId)17U, (ObjectId)18U);
+		analysis.References.Select(r => source.Substring(r.Span.Start, r.Span.Length))
+			.Should().Equal("_O(17)", "_O(18)");
+	}
+
 	[Test]
 	public void CommentsAndStringFormsDoNotCreateObjectReferences()
 	{

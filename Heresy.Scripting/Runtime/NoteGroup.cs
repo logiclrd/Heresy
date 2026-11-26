@@ -1,0 +1,154 @@
+using System;
+using System.Collections.Generic;
+
+using Heresy.Core.Objects;
+using Heresy.Core.Sequences;
+using Heresy.Core.Sequencing;
+
+namespace Heresy.Scripting.Runtime;
+
+/// <summary>Exclusive aggregation of invocation-local virtual leases.
+/// No engine group channel and no wrapper ownership remain after transfer.</summary>
+public sealed class NoteGroup : IDisposable
+{
+    private readonly PatternScriptProgram _owner;
+    private readonly List<VirtualChannelIdentity> _leases = [];
+    private bool _disposed;
+
+    internal NoteGroup(PatternScriptProgram owner) => _owner = owner;
+
+    // C# 14 instance compound assignment, not binary + followed by
+    // reassignment of a readonly using local.
+    public void operator +=(VirtualNote note)
+    {
+        _owner.CheckOwnershipBudget();
+        if (_disposed || note is null
+            || !note.TryGetTransferIdentity(_owner, out var identity))
+        {
+            _owner.ReportVirtualOwnershipIssue(
+                "Ignored invalid NoteGroup transfer: disposed destination or disposed, transferred, null or foreign source.");
+            return;
+        }
+        // A live wrapper is exclusive. Reserve/add storage before
+        // invalidating it; no allocator release occurs on transfer.
+        _leases.Add(identity);
+        note.MarkTransferred();
+    }
+
+    private bool CheckOwned()
+    {
+        if (!_disposed) return true;
+        _owner.ReportVirtualOwnershipIssue("Ignored operation on a disposed NoteGroup.");
+        return false;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        foreach (var identity in _leases)
+            _owner.ReleaseVirtualChannelLease(identity);
+        _leases.Clear();
+    }
+
+    public void Volume(double row, double volume, double timeOffsetSeconds = 0.0)
+        => VolumeCore(null, row, volume, timeOffsetSeconds);
+
+    public void Volume(SequenceCallsite callsite, double row, double volume, double timeOffsetSeconds = 0.0)
+        => VolumeCore(callsite, row, volume, timeOffsetSeconds);
+
+    private void VolumeCore(SequenceCallsite? callsite, double row, double volume, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        if (!double.IsFinite(volume) || volume < 0 || volume > 1) throw new ArgumentOutOfRangeException(nameof(volume));
+        _owner.ControlVirtualGroup(_leases, row, new SetNoteVolumeCommand(volume), timeOffsetSeconds, callsite);
+    }
+
+    public void Off(double row, double timeOffsetSeconds = 0.0)
+        => OffCore(null, row, timeOffsetSeconds);
+
+    public void Off(SequenceCallsite callsite, double row, double timeOffsetSeconds = 0.0)
+        => OffCore(callsite, row, timeOffsetSeconds);
+
+    private void OffCore(SequenceCallsite? callsite, double row, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, new NoteOffCommand(), timeOffsetSeconds, callsite);
+    }
+
+    public void Cut(double row, double timeOffsetSeconds = 0.0)
+        => CutCore(null, row, timeOffsetSeconds);
+
+    public void Cut(SequenceCallsite callsite, double row, double timeOffsetSeconds = 0.0)
+        => CutCore(callsite, row, timeOffsetSeconds);
+
+    private void CutCore(SequenceCallsite? callsite, double row, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, new NoteCutCommand(), timeOffsetSeconds, callsite);
+    }
+
+    public void NoteFilter(double row, ObjectId? definitionId = null, double timeOffsetSeconds = 0.0)
+        => NoteFilterCore(null, row, definitionId, timeOffsetSeconds);
+
+    public void NoteFilter(SequenceCallsite callsite, double row, ObjectId? definitionId = null, double timeOffsetSeconds = 0.0)
+        => NoteFilterCore(callsite, row, definitionId, timeOffsetSeconds);
+
+    private void NoteFilterCore(SequenceCallsite? callsite, double row, ObjectId? definitionId, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, new SetNoteFilterCommand(definitionId), timeOffsetSeconds, callsite);
+    }
+
+    public void ChannelFilter(double row, ObjectId? definitionId = null, double timeOffsetSeconds = 0.0)
+        => ChannelFilterCore(null, row, definitionId, timeOffsetSeconds);
+
+    public void ChannelFilter(SequenceCallsite callsite, double row, ObjectId? definitionId = null, double timeOffsetSeconds = 0.0)
+        => ChannelFilterCore(callsite, row, definitionId, timeOffsetSeconds);
+
+    private void ChannelFilterCore(SequenceCallsite? callsite, double row, ObjectId? definitionId, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, new SetChannelFilterCommand(definitionId), timeOffsetSeconds, callsite);
+    }
+
+    public void SourceFrame(double row, long sourceFrameOffset, double timeOffsetSeconds = 0.0)
+        => SourceFrameCore(null, row, sourceFrameOffset, timeOffsetSeconds);
+
+    public void SourceFrame(SequenceCallsite callsite, double row, long sourceFrameOffset, double timeOffsetSeconds = 0.0)
+        => SourceFrameCore(callsite, row, sourceFrameOffset, timeOffsetSeconds);
+
+    private void SourceFrameCore(SequenceCallsite? callsite, double row, long sourceFrameOffset, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        if (sourceFrameOffset < 0) throw new ArgumentOutOfRangeException(nameof(sourceFrameOffset));
+        _owner.ControlVirtualGroup(_leases, row, new SetSourceFrameOffsetCommand(sourceFrameOffset), timeOffsetSeconds, callsite);
+    }
+
+    public void Displacement(double row, NoteDisplacementAction action, double timeOffsetSeconds = 0.0)
+        => DisplacementCore(null, row, action, timeOffsetSeconds);
+
+    public void Displacement(SequenceCallsite callsite, double row, NoteDisplacementAction action, double timeOffsetSeconds = 0.0)
+        => DisplacementCore(callsite, row, action, timeOffsetSeconds);
+
+    private void DisplacementCore(SequenceCallsite? callsite, double row, NoteDisplacementAction action, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
+        _owner.ControlVirtualGroup(_leases, row, new SetCurrentVoiceDisplacementActionCommand(action), timeOffsetSeconds, callsite);
+    }
+
+    public void Past(double row, TrackerPastNoteAction action, double timeOffsetSeconds = 0.0)
+        => PastCore(null, row, action, timeOffsetSeconds);
+
+    public void Past(SequenceCallsite callsite, double row, TrackerPastNoteAction action, double timeOffsetSeconds = 0.0)
+        => PastCore(callsite, row, action, timeOffsetSeconds);
+
+    private void PastCore(SequenceCallsite? callsite, double row, TrackerPastNoteAction action, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
+        _owner.ControlVirtualGroup(_leases, row, new ApplyPastNoteActionCommand(action), timeOffsetSeconds, callsite);
+    }
+
+}

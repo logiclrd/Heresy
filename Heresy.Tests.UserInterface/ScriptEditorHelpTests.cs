@@ -19,9 +19,9 @@ public sealed class ScriptEditorHelpTests
         string[] methods =
         [
             "_O", "Random", "Checkpoint", "Note", "NoteVirtual",
-            "NoteFilter", "NoteFilterVirtual", "ChannelFilter",
-            "ChannelFilterVirtual", "VolumeVirtual", "SourceFrameVirtual",
-            "DisplacementVirtual", "PastVirtual", "OffVirtual", "CutVirtual",
+            "NoteFilter", "ChannelFilter", "note.Note", "note.NoteFilter", "note.ChannelFilter",
+            "note.Volume", "note.SourceFrame", "note.Displacement", "note.Past",
+            "note.Off", "note.Cut", "Dispose",
             "OffVirtualInScope", "CutVirtualInScope", "OffAllVirtual",
             "CutAllVirtual", "Off", "Cut", "Tempo", "Speed", "Seek",
             "Pan", "Surround", "Filter", "FilterCutoff", "FilterResonance",
@@ -41,6 +41,42 @@ public sealed class ScriptEditorHelpTests
             Does.Contain("native source frames"));
         Assert.That(reference,
             Does.Contain("playback in seconds"));
+    }
+
+    [Test]
+    public void PatternReferenceExplainsExclusiveGroupOwnership()
+    {
+        string reference = ScriptEditorHelp.PatternReference;
+        Assert.That(reference, Does.Contain("NewNoteGroup()"));
+        Assert.That(reference, Does.Contain("chord += NoteVirtual("));
+        Assert.That(reference, Does.Contain("original handle and all its aliases"));
+        Assert.That(reference, Does.Contain("There is no group Note method"));
+        Assert.That(reference, Does.Contain("Group actions affect members only"));
+        Assert.That(reference, Does.Contain("without changing scheduled music"));
+        Assert.That(reference, Does.Not.Contain("chord.Note("));
+    }
+
+    [Test]
+    public void PatternReferenceDocumentsCurrentOwnershipApiWithoutRetiredNumericHelpers()
+    {
+        string reference = ScriptEditorHelp.PatternReference;
+        string[] retired =
+        [
+            "NoteFilterVirtual", "ChannelFilterVirtual", "VolumeVirtual",
+            "SourceFrameVirtual", "DisplacementVirtual", "PastVirtual",
+            "OffVirtual", "CutVirtual",
+        ];
+        foreach (string method in retired)
+            Assert.That(reference, Does.Not.Contain(method + "("));
+        Assert.That(reference, Does.Not.Contain("virtualId"));
+        Assert.That(reference, Does.Contain("VirtualNote NoteVirtual(double row, ObjectId sourceId,"));
+        Assert.That(reference, Does.Contain("both on the first start and on each retrigger"));
+        Assert.That(reference, Does.Contain("Unproven ownership termination produces a compiler warning"));
+        Assert.That(reference, Does.Contain("disposed or transferred handle"));
+        Assert.That(reference, Does.Contain("Strict mode yields once per member"));
+        Assert.That(reference, Does.Contain("Group controls: Volume, Off, Cut, NoteFilter, ChannelFilter, SourceFrame,"));
+        Assert.That(reference, Does.Contain("Displacement and Past"));
+        Assert.That(reference, Does.Contain("Ambiguous reference sites retain normal delegate equality"));
     }
 
     [Test]

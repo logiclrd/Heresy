@@ -132,6 +132,12 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	/// inferred from raw sequencing effect memory alone.</summary>
 	public Func<long, int, TimeSpan, double>? ReadRememberedNoteVolume { get; set; }
 
+	public event Action<long, VirtualChannelIdentity>? VirtualChannelFinalUse
+	{
+		add => _timeline.VirtualChannelFinalUse += value;
+		remove => _timeline.VirtualChannelFinalUse -= value;
+	}
+
 	public event Action<long>? ScopeRetired;
 	/// <summary>Explicit subtree cancellation (as opposed to natural
 	/// completion) cuts voices belonging to the cancelled scope.</summary>
@@ -193,6 +199,17 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			cancelAudible: true,
 			canceledPatternCursors: canceledPatternCursors);
 		return true;
+	}
+
+	/// <summary>Stop all producer work without requesting audible cuts.
+	/// Existing voices and their independent release/fade tails remain
+	/// owned by the renderer. No new invocation is started by this call.</summary>
+	public void StopAllProducing()
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		foreach (long id in _frames.Values.Where(f => f.ParentId is null)
+			.Select(f => f.Id).ToArray())
+			RemoveSubtree(id);
 	}
 
 	private void RemoveSubtree(long invocationId,
@@ -547,7 +564,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							}
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new NotSupportedException(
-									"Flattened child requires a physical parent channel.");
+									"Flattened Pattern/Sequence sources require a physical parent channel. For a virtual note, specify mixdown: true.");
 							// Starting a flattened source is a *real start*
 							// for the caller's remembered volume, but does not
 							// create or control one individual playback voice.

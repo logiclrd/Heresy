@@ -15,15 +15,31 @@ internal static class ScriptPatternEmissionPolicy
 {
     internal static bool IsEmitterName(string name)
         => name is
-            "Note" or "NoteVirtual" or "NoteFilter" or "NoteFilterVirtual"
-            or "ChannelFilter" or "ChannelFilterVirtual"
-            or "Off" or "Cut" or "OffVirtual" or "CutVirtual"
+            "Note" or "NoteVirtual" or "NoteFilter"
+            or "ChannelFilter"
+            or "Off" or "Cut"
             or "OffVirtualInScope" or "CutVirtualInScope"
             or "OffAllVirtual" or "CutAllVirtual"
             or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
-            or "Filter" or "FilterCutoff" or "FilterResonance"
-            or "VolumeVirtual" or "SourceFrameVirtual"
-            or "DisplacementVirtual" or "PastVirtual";
+            or "Filter" or "FilterCutoff" or "FilterResonance";
+
+    internal static bool IsVirtualNoteEmitterName(string name)
+        => name is "Note" or "Volume" or "Off" or "Cut" or "NoteFilter"
+            or "ChannelFilter" or "SourceFrame" or "Displacement" or "Past";
+
+    internal static bool IsNoteGroupEmitterName(string name)
+        => name != "Note" && IsVirtualNoteEmitterName(name);
+
+    internal static bool IsNoteGroupTransfer(IMethodSymbol method,
+        Microsoft.CodeAnalysis.Compilation compilation)
+        => SymbolEqualityComparer.Default.Equals(method.ContainingType,
+                compilation.GetTypeByMetadataName(typeof(NoteGroup).FullName!))
+            && method.Name == "op_AdditionAssignment"
+            && method.MethodKind == MethodKind.UserDefinedOperator
+            && !method.IsStatic && method.ReturnsVoid
+            && method.Parameters.Length == 1
+            && SymbolEqualityComparer.Default.Equals(method.Parameters[0].Type,
+                compilation.GetTypeByMetadataName(typeof(VirtualNote).FullName!));
 
     internal static bool IsEmitterMethod(IMethodSymbol method,
         Microsoft.CodeAnalysis.Compilation compilation)
@@ -33,6 +49,12 @@ internal static class ScriptPatternEmissionPolicy
         return patternBase is not null
             && SymbolEqualityComparer.Default.Equals(
                 method.ContainingType, patternBase)
-            && IsEmitterName(method.Name);
+            && IsEmitterName(method.Name)
+            || SymbolEqualityComparer.Default.Equals(method.ContainingType,
+                compilation.GetTypeByMetadataName(typeof(VirtualNote).FullName!))
+                && IsVirtualNoteEmitterName(method.Name)
+            || SymbolEqualityComparer.Default.Equals(method.ContainingType,
+                compilation.GetTypeByMetadataName(typeof(NoteGroup).FullName!))
+                && IsNoteGroupEmitterName(method.Name);
     }
 }

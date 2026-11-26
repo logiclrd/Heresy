@@ -122,6 +122,173 @@ public sealed class IncrementalVirtualTargetTests
 	}
 
 	[Test]
+	public void RecycledSlotKeepsOldGenerationOnDeferredWallDeadline()
+	{
+		var oldTarget = ChannelTarget.Virtual(new VirtualChannelIdentity(7, 1));
+		var newTarget = ChannelTarget.Virtual(new VirtualChannelIdentity(7, 2));
+		var legacy = ChannelTarget.Virtual(7);
+		Assert.That(new[] { oldTarget, newTarget, legacy }.Distinct().Count(), Is.EqualTo(3));
+		RawSource source = new(
+			At(0, oldTarget, new StartNoteCommand((ObjectId)90U)),
+			new NoteEvent(new MusicalTime(TimeSpan.FromMilliseconds(85), 0),
+				oldTarget, [new NoteCutCommand()]),
+			At(0.5, newTarget, new StartNoteCommand((ObjectId)91U)));
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(source, 1, context);
+		var actual = Drain(timeline);
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual.Select(x => x.InvocationId), Is.All.EqualTo(owner));
+			Assert.That(actual.Select(x => x.Note.Target),
+				Is.EqualTo(new[] { oldTarget, newTarget, oldTarget }));
+			Assert.That(actual.Select(x => x.Note.Offset.TimeOffset),
+				Is.EqualTo(new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(60),
+					TimeSpan.FromMilliseconds(85) }));
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void ReleaseWaitsForEveryAcceptedEventIncludingDeadlineBeyondFinalRow(bool explicitRelease)
+	{
+		var old = new VirtualChannelIdentity(0, 1);
+		var replacement = new VirtualChannelIdentity(0, 2);
+		var target = ChannelTarget.Virtual(old);
+		List<RawPatternStep> steps = [
+			new RawPatternStep.Emit(At(0, target, new StartNoteCommand((ObjectId)90U))),
+			new RawPatternStep.Emit(new NoteEvent(new MusicalTime(TimeSpan.FromMilliseconds(200), 0),
+				target, [new NoteCutCommand()])),
+		];
+		if (explicitRelease) steps.Add(new RawPatternStep.ReleaseVirtualChannel(old));
+		steps.Add(new RawPatternStep.Emit(At(0.5, ChannelTarget.Virtual(replacement),
+			new StartNoteCommand((ObjectId)91U))));
+		steps.Add(new RawPatternStep.ReleaseVirtualChannel(replacement));
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(new StepSource(steps), 1, context);
+		List<(long Owner, VirtualChannelIdentity Identity, TimeSpan Time)> retired = [];
+		timeline.VirtualChannelFinalUse += (id, identity) => retired.Add((id, identity, timeline.Elapsed));
+		while (timeline.TryStep(out var step))
+		{
+			if (step is IncrementalPatternTimelineStep.Emit emit
+				&& emit.Note.Target.VirtualIdentity == old
+				&& emit.Time == TimeSpan.Zero)
+				Assert.That(retired, Is.Empty);
+			if (timeline.Elapsed < TimeSpan.FromMilliseconds(200))
+				Assert.That(retired.Any(x => x.Identity == old), Is.False);
+		}
+		Assert.That(retired, Is.EqualTo(new[] {
+			(owner, replacement, TimeSpan.FromMilliseconds(60)),
+			(owner, old, TimeSpan.FromMilliseconds(200)),
+		}));
+	}
+
+	[Test]
+	public void CancellationDiscardsDeadlineAndClosesOnlyCanceledGeneration()
+	{
+		var id = new VirtualChannelIdentity(0, 1);
+		var target = ChannelTarget.Virtual(id);
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(new StepSource([
+			new RawPatternStep.Emit(At(0, target, new StartNoteCommand((ObjectId)90U))),
+			new RawPatternStep.Emit(new NoteEvent(new MusicalTime(TimeSpan.FromMilliseconds(300), 0),
+				target, [new NoteCutCommand()])),
+			new RawPatternStep.ReleaseVirtualChannel(id),
+		]), 1, context);
+		List<(long, VirtualChannelIdentity)> retired = [];
+		timeline.VirtualChannelFinalUse += (o, i) => retired.Add((o, i));
+		while (timeline.TryStep(out var step))
+			if (step is IncrementalPatternTimelineStep.Advance) break;
+		Assert.That(retired, Is.Empty);
+		Assert.That(timeline.Cancel(owner), Is.True);
+		Assert.That(retired, Is.EqualTo(new[] { (owner, id) }));
+		Assert.That(Drain(timeline), Is.Empty);
+		Assert.That(timeline.Cancel(owner), Is.False);
+	}
+
+	[Test]
+	public void StartingRowSkipsUnmaterializedGenerationWithoutRetirementTombstone()
+	{
+		var skipped = new VirtualChannelIdentity(0, 1);
+		var kept = new VirtualChannelIdentity(0, 2);
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(new StepSource([
+			new RawPatternStep.Emit(At(0, ChannelTarget.Virtual(skipped), new StartNoteCommand((ObjectId)90U))),
+			new RawPatternStep.ReleaseVirtualChannel(skipped),
+			new RawPatternStep.Emit(At(1, ChannelTarget.Virtual(kept), new StartNoteCommand((ObjectId)91U))),
+			new RawPatternStep.ReleaseVirtualChannel(kept),
+		]), 2, context, startRow: 1);
+		List<(long, VirtualChannelIdentity)> retired = [];
+		timeline.VirtualChannelFinalUse += (o, i) => retired.Add((o, i));
+		Assert.That(Drain(timeline).Select(e => e.Note.Target.VirtualIdentity), Is.EqualTo(new[] { kept }));
+		Assert.That(retired, Is.EqualTo(new[] { (owner, kept) }));
+	}
+
+	[Test]
+	public void LongRunningDeferredGenerationsRetireWithoutHistoricalEntries()
+	{
+		const int cycles = 4096;
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(new RecyclingSource(cycles), cycles, context);
+		int retired = 0, emitted = 0, peak = 0;
+		timeline.VirtualChannelFinalUse += (id, identity) =>
+		{
+			if (id != owner || identity.Slot != 0
+				|| identity.Generation != (ulong)retired + 1)
+				Assert.Fail("Missing, duplicated or misordered final-use notification.");
+			double expectedMs = retired * 120.0 + 180.0;
+			if (Math.Abs(timeline.Elapsed.TotalMilliseconds - expectedMs) > 0.001)
+				Assert.Fail("Final use fired before or after the delayed cut deadline.");
+			retired++;
+		};
+		while (timeline.TryStep(out var step))
+		{
+			if (step is IncrementalPatternTimelineStep.Emit) emitted++;
+			peak = Math.Max(peak, timeline.RetainedVirtualIdentityCount);
+			if (timeline.RetainedVirtualIdentityCount > 4)
+				Assert.Fail("Retirement entries grew beyond the overlap horizon.");
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(emitted, Is.EqualTo(cycles * 2));
+			Assert.That(retired, Is.EqualTo(cycles));
+			Assert.That(peak, Is.InRange(2, 4));
+			Assert.That(timeline.RetainedVirtualIdentityCount, Is.Zero);
+			Assert.That(timeline.IsComplete, Is.True);
+		});
+	}
+
+	private sealed class RecyclingSource(int cycles) : IIncrementalRawPatternNoteGenerator
+	{
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			for (int row = 0; row < cycles; row++)
+			{
+				VirtualChannelIdentity id = new(0, (ulong)row + 1);
+				ChannelTarget target = ChannelTarget.Virtual(id);
+				yield return new RawPatternStep.Emit(At(row, target,
+					new StartNoteCommand((ObjectId)90U)));
+				yield return new RawPatternStep.Emit(new NoteEvent(
+					new MusicalTime(TimeSpan.FromMilliseconds(180), row),
+					target, [new NoteCutCommand()]));
+				yield return new RawPatternStep.ReleaseVirtualChannel(id);
+			}
+			yield return new RawPatternStep.Advance(cycles);
+		}
+	}
+
+	private sealed class StepSource(IReadOnlyList<RawPatternStep> steps)
+		: IIncrementalRawPatternNoteGenerator
+	{
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+			=> steps;
+	}
+
+	[Test]
 	public void TrackerMemoryEffectsStillRequirePhysicalTargets()
 	{
 		SequencingContext root = new();

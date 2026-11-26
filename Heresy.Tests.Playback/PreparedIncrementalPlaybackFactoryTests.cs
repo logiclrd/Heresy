@@ -3298,6 +3298,277 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void VirtualHandleRetriggersPrivatePatternMixdown(bool relaxed)
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav", LongWave(8192)));
+		ObjectId child = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(child, "Private source")
+		{
+			Source = $"Note(0, 0, _O({sample.Value}));",
+			RowCount = 4, ChannelCount = 1,
+		});
+		ObjectId parent = doc.AllocateObjectId();
+		string source = $"using var note = NoteVirtual(0, _O({child.Value}), mixdown: true); "
+			+ $"note.Cut(1); note.Note(2, _O({child.Value}), mixdown: true); note.Cut(3);";
+		doc.Add(new ScriptPatternDefinition(parent, "Virtual parent")
+		{
+			Source = relaxed ? "#order relaxed\n" + source : source,
+			RowCount = 4, ChannelCount = 1,
+		});
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var whole = factory.Create(doc, parent);
+		using var chunked = factory.Create(doc, parent);
+		float[] expected = new float[480], actual = new float[480];
+		whole.Source.Render(expected.Length, expected);
+		for (int pos = 0; pos < actual.Length;)
+		{
+			int count = Math.Min(37, actual.Length - pos);
+			chunked.Source.Render(count, actual.AsSpan(pos, count));
+			pos += count;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+			Assert.That(expected[10], Is.GreaterThan(.1f));
+			Assert.That(expected[180], Is.Zero.Within(1e-6f));
+			Assert.That(expected[250], Is.GreaterThan(.1f));
+			Assert.That(expected[420], Is.Zero.Within(1e-6f));
+			Assert.That(whole.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+		});
+	}
+
+	[TestCase(false, false)]
+	[TestCase(false, true)]
+	[TestCase(true, false)]
+	[TestCase(true, true)]
+	public void RewoundPrivateSequenceReplaysRecycledGenerationsWithoutTouchingSibling(
+		bool relaxedMiddle, bool relaxedLeaf)
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav",
+			LongWave(8192, 1200)));
+		ObjectId filter = doc.AllocateObjectId();
+		doc.Add(new FilterDefinition(filter, "Finite echo", [
+			new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+		]));
+		ObjectId AddPattern(string code, bool relaxed, int channels = 1)
+		{
+			ObjectId id = doc.AllocateObjectId();
+			doc.Add(new ScriptPatternDefinition(id, "Private generation fixture")
+			{
+				Source = relaxed ? "#order relaxed\n" + code : code,
+				RowCount = 6, ChannelCount = channels,
+			});
+			return id;
+		}
+		ObjectId AddSequence(ObjectId pattern)
+		{
+			ObjectId id = doc.AllocateObjectId();
+			DataSequenceDefinition sequence = new(id, "Private sequence");
+			sequence.Entries.Add(new SequenceEntry(pattern));
+			doc.Add(sequence);
+			return id;
+		}
+		ObjectId leaf = AddPattern($"""
+			using var group = NewNoteGroup();
+			group += NoteVirtual(0, _O({sample.Value}));
+			group.Volume(0.5, 0.75);
+			group.Cut(4);
+			""", relaxedLeaf);
+		// The reference keeps the first lease until after the second start,
+		// so its two identities cannot share a slot. Only the disposal
+		// position differs, and disposal is deliberately non-musical.
+		string Middle(bool recycle) => $"""
+			using var old = NewNoteGroup();
+			using var lead = NoteVirtual(0, _O({leaf.Value}), mixdown: true);
+			lead.Displacement(0, NoteDisplacementAction.Continue);
+			lead.Note(0.25, _O({leaf.Value}), mixdown: true);
+			old += lead;
+			old.ChannelFilter(0.25, _O({filter.Value}));
+			old.Past(0.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.09);
+			old.Cut(0.75, timeOffsetSeconds: 0.09);
+			{(recycle ? "old.Dispose();" : "")}
+			using var replacement = NewNoteGroup();
+			replacement += NoteVirtual(1, _O({leaf.Value}), mixdown: true);
+			{(recycle ? "" : "old.Dispose();")}
+			replacement.Cut(2.5);
+			""";
+		ObjectId middle = AddPattern(Middle(true), relaxedMiddle);
+		ObjectId sequenceId = AddSequence(middle);
+		ObjectId referenceId = AddSequence(AddPattern(Middle(false), relaxedMiddle));
+		ObjectId root = AddPattern($"""
+			Note(0, 0, _O({sequenceId.Value}), mixdown: true);
+			Note(0, 1, _O({sequenceId.Value}), mixdown: true);
+			""", false, channels: 2);
+
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var baseline = factory.Create(doc, referenceId);
+		using var plan = factory.Create(SongDocumentSnapshot.Create(doc), root,
+			instrumentedPatternId: middle);
+		float[] reference = new float[900];
+		baseline.Source.Render(reference.Length, reference);
+		Assert.That(reference[150], Is.GreaterThan(0.3f),
+			"Both old private voices and the recycled replacement must overlap.");
+		Assert.That(reference[230], Is.GreaterThan(0.1f),
+			"The replacement must survive the old generation's delayed Past/Cut.");
+		Assert.That(reference[650], Is.Zero.Within(1e-6f));
+
+		float[] initial = new float[1];
+		plan.Source.Render(1, initial);
+		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
+		PlaybackVoice sibling = plan.Session.GetChannelState(1).CurrentVoice!;
+		PropertyInfo sessionProperty = outer.Sound.GetType().GetProperty("Session",
+			BindingFlags.Public | BindingFlags.Instance)!;
+		PlaybackSession PrivateSession(PlaybackVoice voice)
+			=> (PlaybackSession)sessionProperty.GetValue(voice.Sound)!;
+		PlaybackSession abandoned = PrivateSession(outer);
+		PlaybackSession independent = PrivateSession(sibling);
+		int initialRegistrations = PreparedRegistrationCount(plan);
+		Assert.That(initialRegistrations, Is.GreaterThan(2));
+		Assert.That(initial[0], Is.EqualTo(2 * reference[0]).Within(1e-6f));
+
+		ISourceFrameSeekableSound seekable = (ISourceFrameSeekableSound)outer.Sound;
+		// Frame 150 lies after the recycled start but before the old
+		// generation's delayed Cut/Past at frame 180.
+		seekable.SetSourceFrameOffset(outer.SoundState, 149);
+		float[] ahead = new float[1];
+		plan.Source.Render(1, ahead);
+		Assert.That(ahead[0], Is.EqualTo(reference[150] + reference[1]).Within(1e-6f));
+		Assert.That(abandoned.NextFrame, Is.EqualTo(151L));
+		Assert.That(abandoned.RetainedScopedVirtualChannelCount, Is.EqualTo(2));
+		Assert.That(abandoned.RetainedScopedVirtualFilterCount, Is.GreaterThan(0));
+		Assert.That(abandoned.VirtualVoices.Count, Is.EqualTo(1));
+		Assert.That(PreparedRegistrationCount(plan), Is.GreaterThan(initialRegistrations));
+		Assert.That(independent.NextFrame, Is.EqualTo(2L));
+
+		// Rewind just one outer sound while its child has deferred
+		// controls, an output filter and a displaced private sound.
+		seekable.SetSourceFrameOffset(outer.SoundState, 0);
+		float[] actual = new float[reference.Length - 2];
+		plan.Source.Render(1, actual.AsSpan(0, 1));
+		PlaybackSession rebuilt = PrivateSession(outer);
+		Assert.That(rebuilt, Is.Not.SameAs(abandoned));
+		Assert.That(PrivateSession(sibling), Is.SameAs(independent));
+		Assert.That(rebuilt.NextFrame, Is.EqualTo(3L));
+		Assert.That(independent.NextFrame, Is.EqualTo(3L));
+		Assert.That(PreparedRegistrationCount(plan), Is.EqualTo(initialRegistrations),
+			"Reconstruction must unregister all abandoned descendant mixdowns.");
+
+		int[] chunks = [1, 37, 83, 19, 113];
+		for (int pos = 1, i = 0; pos < actual.Length;)
+		{
+			int count = Math.Min(chunks[i++ % chunks.Length], actual.Length - pos);
+			plan.Source.Render(count, actual.AsSpan(pos, count));
+			pos += count;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual, Is.EqualTo(reference.Skip(2).Select(v => 2 * v).ToArray())
+				.Within(1e-6f));
+			Assert.That(abandoned.NextFrame, Is.EqualTo(151L),
+				"The abandoned private renderer must never advance again.");
+			Assert.That(rebuilt.RetainedScopedVirtualChannelCount, Is.Zero);
+			Assert.That(rebuilt.RetainedScopedVirtualFilterCount, Is.Zero);
+			Assert.That(rebuilt.RetiringVirtualFilterCount, Is.Zero);
+			Assert.That(rebuilt.VirtualVoices, Is.Empty);
+			Assert.That(independent.RetainedScopedVirtualChannelCount, Is.Zero);
+			Assert.That(independent.RetainedScopedVirtualFilterCount, Is.Zero);
+			Assert.That(PreparedRegistrationCount(plan), Is.Zero);
+			Assert.That(plan.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+			Assert.That(plan.SequencingContext.Diagnostics.RejectedChannelFilterCommands, Is.Zero);
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void CancelingPrivateVirtualRootDiscardsRecycledGenerationsButNotSibling(bool relaxed)
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav",
+			LongWave(8192, 1200)));
+		ObjectId filter = doc.AllocateObjectId();
+		doc.Add(new FilterDefinition(filter, "Finite echo", [
+			new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+		]));
+		ObjectId child = doc.AllocateObjectId();
+		string source = $"""
+			using var old = NewNoteGroup();
+			using var lead = NoteVirtual(0, _O({sample.Value}));
+			lead.Displacement(0, NoteDisplacementAction.Continue);
+			lead.Note(0.25, _O({sample.Value}));
+			old += lead;
+			old.ChannelFilter(0.25, _O({filter.Value}));
+			old.Past(0.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.09);
+			old.Cut(0.75, timeOffsetSeconds: 0.09);
+			old.Dispose();
+			using var next = NewNoteGroup();
+			next += NoteVirtual(1, _O({sample.Value}));
+			next.Cut(3);
+			""";
+		doc.Add(new ScriptPatternDefinition(child, "Private generations")
+		{
+			Source = relaxed ? "#order relaxed\n" + source : source,
+			RowCount = 6, ChannelCount = 1,
+		});
+		ObjectId root = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(root, "Virtual private root")
+		{
+			Source = $"""
+				using var group = NewNoteGroup();
+				group += NoteVirtual(0, _O({child.Value}), mixdown: true);
+				group.Cut(5);
+				""",
+			RowCount = 6, ChannelCount = 1,
+		});
+
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var baseline = factory.Create(doc, root);
+		using var plan = factory.Create(doc, root);
+		long sibling = plan.Timeline.AddRoot(root);
+		float[] expected = new float[900];
+		baseline.Source.Render(expected.Length, expected);
+		float[] before = new float[150];
+		plan.Source.Render(before.Length, before);
+		Assert.That(before, Is.EqualTo(expected.Take(150).Select(v => 2 * v).ToArray())
+			.Within(1e-6f));
+		Assert.That(PreparedRegistrationCount(plan), Is.EqualTo(2));
+		Assert.That(expected[220], Is.GreaterThan(0.1f));
+
+		// Both private children have sounding and displaced voices,
+		// a recycled slot, and delayed controls due at frame 180.
+		Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+		Assert.That(plan.Timeline.IsInvocationActive(sibling), Is.True);
+		float[] after = new float[expected.Length - before.Length];
+		plan.Source.Render(70, after.AsSpan(0, 70));
+		Assert.That(PreparedRegistrationCount(plan), Is.EqualTo(1),
+			"Only the canceled private subtree may be unregistered.");
+		for (int pos = 70; pos < after.Length;)
+		{
+			int count = Math.Min(37, after.Length - pos);
+			plan.Source.Render(count, after.AsSpan(pos, count));
+			pos += count;
+		}
+		Assert.Multiple(() =>
+		{
+			// Ignore only the canceled voice's normal short anti-click
+			// residue. The sibling, including its own delayed controls,
+			// must match an independently rendered single invocation.
+			Assert.That(after.Skip(70).ToArray(), Is.EqualTo(expected.Skip(220).ToArray())
+				.Within(1e-6f));
+			Assert.That(PreparedRegistrationCount(plan), Is.Zero);
+			Assert.That(plan.Session.RetainedScopedVirtualChannelCount, Is.Zero);
+			Assert.That(plan.Session.RetainedScopedVirtualFilterCount, Is.Zero);
+			Assert.That(plan.Session.VirtualVoices, Is.Empty);
+			Assert.That(plan.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+		});
+	}
+
 	[TestCase(false, true, false)]
 	[TestCase(true, false, false)]
 	[TestCase(true, true, false)]

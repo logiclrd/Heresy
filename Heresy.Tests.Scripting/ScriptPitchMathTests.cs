@@ -103,7 +103,7 @@ public sealed class ScriptPitchMathTests
     {
         const string source = """
             Note(0, 0, _O(17), pitchMultiplier: Semitone(7));
-            NoteVirtual(1, 3U, _O(17), pitchMultiplier: Cent(-25));
+            using var note = NoteVirtual(1, _O(17), pitchMultiplier: Cent(-25));
             Note(2, 0, _O(17), pitchMultiplier: Octave(-1) * Semitone(4));
             """;
         ScriptPatternDefinition pattern = new((ObjectId)1U, "Conversions")

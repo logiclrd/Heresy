@@ -88,8 +88,9 @@ EVENT ORDER
   #order strict       default if omitted; stream events in musical-row order.
   #order relaxed      collect the invocation, then sort events before playback.
 Place at most one #order directive before the first C# statement.
-Strict: emitting helpers must be direct statements, not callbacks or method
-groups. Earlier rows emitted after later ones are dropped with a diagnostic.
+Strict: emitting helpers must be direct statements, a single local
+NoteVirtual initializer, or a direct group += NoteVirtual(...) statement,
+not callbacks or method groups. Earlier rows emitted after later ones are dropped with a diagnostic.
 Relaxed: calls may be out of order, inside synchronous lambdas or through
 approved method-group delegates. Equal rows retain original emission order
 for the scheduler; tempo, speed and wall-time offsets are resolved at playback.
@@ -105,10 +106,11 @@ Example (Pattern length >= 8, two channels; replace 35 with a Source ID):
 
 F6 highlights an active authored delegate invocation, otherwise its musical
 helper call. An unambiguous emitter method-group reference can also highlight.
+Ambiguous reference sites retain normal delegate equality, not a forced highlight.
 
 Rows are doubles (including fractional rows) in [0, RowCount].
-Physical channels are ints in [0, ChannelCount - 1]. Virtual IDs are
-uints scoped to this Pattern invocation, independent of ChannelCount.
+Physical channels are ints in [0, ChannelCount - 1]. VirtualNote handles
+own invocation-local logical channels independent of ChannelCount.
 timeOffsetSeconds adds a signed wall-time offset to the specified row.
 
 OBJECT REFERENCES, PITCH AND UTILITIES
@@ -141,57 +143,74 @@ PHYSICAL NOTE START
        ObjectId? eventFilterDefinitionId = null)
     Begin a note on a physical channel; volume is an optional [0,1] value.
 
-VIRTUAL NOTE START
-  NoteVirtual(double row, uint virtualId, ObjectId sourceId,
+VIRTUAL NOTE OWNERSHIP
+  VirtualNote NoteVirtual(double row, ObjectId sourceId,
               double pitchMultiplier = 1.0,
               double playbackSpeedMultiplier = 1.0,
               bool mixdown = false, double? volume = null,
               double timeOffsetSeconds = 0.0,
               ObjectId? eventFilterDefinitionId = null)
-    Begin a Pattern-invocation-scoped virtual voice.
+    Allocate a logical virtual channel and start its first note.
+    Pattern/Sequence sources require mixdown: true on virtual channels,
+    both on the first start and on each retrigger of such a source.
+    Use using var or a using block, or explicitly Dispose the handle.
+    Dispose() releases ownership; it does not stop or cancel scheduled audio.
+    Unproven ownership termination produces a compiler warning.
+    Calls through a disposed or transferred handle are ignored with a warning.
 
-NOTE FILTERS (OUTER FILTER OF CURRENT NOTE)
-  NoteFilter(double row, int channel,
-             ObjectId? definitionId = null,
-             double timeOffsetSeconds = 0.0)
-  NoteFilterVirtual(double row, uint virtualId,
-                    ObjectId? definitionId = null,
+VirtualNote instance methods (shown on a local named note):
+  note.Note(row, sourceId, pitchMultiplier: 1.0,
+            playbackSpeedMultiplier: 1.0, mixdown: false, volume: null,
+            timeOffsetSeconds: 0.0, eventFilterDefinitionId: null)
+    Start/retrigger on the same logical channel.
+  note.Volume(double row, double volume, double timeOffsetSeconds = 0.0)
+    Set normalized note volume [0,1].
+  note.SourceFrame(double row, long sourceFrameOffset,
+                   double timeOffsetSeconds = 0.0)
+    Seek in native source frames (nonnegative); non-seekable sounds ignore it.
+  note.Displacement(double row, NoteDisplacementAction action,
                     double timeOffsetSeconds = 0.0)
-    Set/clear current note's Filter definition; not the tracker channel filter.
-
-CHANNEL FILTERS (PERSISTENT OUTPUT FILTER)
-  ChannelFilter(double row, int channel,
-                ObjectId? definitionId = null,
-                double timeOffsetSeconds = 0.0)
-  ChannelFilterVirtual(double row, uint virtualId,
-                       ObjectId? definitionId = null,
-                       double timeOffsetSeconds = 0.0)
-    Set/clear channel output Filter by definition ID.
-
-VIRTUAL-ONLY VOICE CONTROLS
-  VolumeVirtual(double row, uint virtualId, double volume,
-                double timeOffsetSeconds = 0.0)
-    Set current virtual note volume to [0,1], remembered for later notes
-    on the same scoped virtual ID. No physical Volume helper exists yet.
-
-  SourceFrameVirtual(double row, uint virtualId, long sourceFrameOffset,
+    Next displacement: Cut, Continue, Off, Fade.
+  note.Past(double row, TrackerPastNoteAction action,
+            double timeOffsetSeconds = 0.0)
+    Act on displaced voices from this channel: Cut, Off, Fade.
+  note.NoteFilter(double row, ObjectId? definitionId = null,
+                  double timeOffsetSeconds = 0.0)
+  note.ChannelFilter(double row, ObjectId? definitionId = null,
                      double timeOffsetSeconds = 0.0)
-    Seek in native source frames (nonnegative). Non-seekable sounds ignore it.
-    Unlike physical Seek, this is NOT a playback-seconds offset.
+    Select/clear the current note Filter or persistent output Filter respectively.
+  note.Off(double row, double timeOffsetSeconds = 0.0)
+  note.Cut(double row, double timeOffsetSeconds = 0.0)
 
-  DisplacementVirtual(double row, uint virtualId, NoteDisplacementAction action,
-                      double timeOffsetSeconds = 0.0)
-    Set current voice's next-displacement policy: Cut, Continue, Off, Fade.
+OWNING NOTE GROUPS
+  NoteGroup NewNoteGroup()
+    Create an empty group. Use using var, a using block or Dispose().
+    Heresy supports += directly on a using-group local, with a hidden
+    disposal scope. Other assignments to that using local remain forbidden.
+  using var chord = NewNoteGroup();
+  chord += NoteVirtual(0, _O(35));
+  chord += NoteVirtual(0, _O(35), Semitone(4));
+  chord += NoteVirtual(0, _O(35), Semitone(7));
+  chord.Volume(4, 0.5);
+  chord.Off(8);
 
-  PastVirtual(double row, uint virtualId, TrackerPastNoteAction action,
-              double timeOffsetSeconds = 0.0)
-    Act on displaced voices in this virtual scope: Cut, Off, Fade.
+  chord += note transfers ownership of an existing handle to the group.
+  The original handle and all its aliases become unusable; disposing
+  that old handle is harmless. The group retains the same logical channel.
+  Group controls: Volume, Off, Cut, NoteFilter, ChannelFilter, SourceFrame,
+  Displacement and Past, with the same arguments as VirtualNote.
+  There is no group Note method. Group actions affect members only.
+  Strict mode yields once per member before continuing the script.
+  Group Dispose() releases all owned leases without changing scheduled music.
+  Invalid transfers and use-after-disposal produce warnings, not commands.
 
-NOTE RELEASE/CUT
+PHYSICAL FILTERS AND RELEASE/CUT
+  NoteFilter(double row, int channel, ObjectId? definitionId = null,
+             double timeOffsetSeconds = 0.0)
+  ChannelFilter(double row, int channel, ObjectId? definitionId = null,
+                double timeOffsetSeconds = 0.0)
   Off(double row, int channel, double timeOffsetSeconds = 0.0)
   Cut(double row, int channel, double timeOffsetSeconds = 0.0)
-  OffVirtual(double row, uint virtualId, double timeOffsetSeconds = 0.0)
-  CutVirtual(double row, uint virtualId, double timeOffsetSeconds = 0.0)
   OffVirtualInScope(double row, double timeOffsetSeconds = 0.0)
   CutVirtualInScope(double row, double timeOffsetSeconds = 0.0)
     Scope-wide actions apply to virtual voices within this Pattern invocation.
@@ -225,13 +244,13 @@ PHYSICAL-CHANNEL CONTROLS
 
 COPYABLE EXAMPLES (substitute actual object IDs)
   Note(0, 0, _O(35), pitchMultiplier: 1.0, volume: 0.75);
+  using var note = NoteVirtual(0, _O(35), pitchMultiplier: Cent(-25));
   Note(1, 0, _O(35), pitchMultiplier: Semitone(7));
-  NoteVirtual(0, 7U, _O(35), pitchMultiplier: Cent(-25));
+  note.Volume(1, 0.5);
   Note(2, 0, _O(35), pitchMultiplier: Octave(-1) * Semitone(4));
-  VolumeVirtual(1, 7U, 0.5);
   NoteFilter(2, 0, _O(36));
-  ChannelFilterVirtual(2, 7U, _O(36));
-  OffVirtual(4, 7U);
+  note.ChannelFilter(2, _O(36));
+  note.Off(4);
 
 RESTRICTIONS
 Musical helpers, the four pitch conversions, and named voice-action enum

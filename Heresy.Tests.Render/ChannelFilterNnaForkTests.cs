@@ -226,6 +226,101 @@ public sealed class ChannelFilterNnaForkTests
     }
 
     [Test]
+    public void ReusedSlotKeepsSeparateFiltersAndDisplacedVoiceIdentity()
+    {
+        PlaybackSession session = CreateSession(new LongPulse(), Schedule());
+        var old = ChannelTarget.Virtual(new VirtualChannelIdentity(7, 1));
+        var next = ChannelTarget.Virtual(new VirtualChannelIdentity(7, 2));
+        session.ApplyScopedEvent(11, old, [
+            new SetChannelFilterCommand { Configuration = Echo(34070, 0.001) },
+            new StartNoteCommand(SoundId),
+        ]);
+        session.ApplyScopedEvent(11, next, [
+            new SetChannelFilterCommand { Configuration = Echo(34071, 0.002) },
+            new StartNoteCommand(SoundId),
+        ]);
+        float[] initial = new float[1];
+        session.Render(0, 1, initial);
+        Assert.That(initial, Is.EqualTo(new float[] { 2 }));
+        session.ApplyScopedEvent(11, old, [new StartNoteCommand(SoundId)]);
+        float[] continuation = new float[3];
+        session.Render(1, continuation.Length, continuation);
+        Assert.That(continuation, Is.EqualTo(new float[] { 3, 2, 0 }));
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        var former = session.VirtualVoices[0];
+        Assert.That(former.OriginVirtualIdentity, Is.EqualTo(old.VirtualIdentity));
+        Assert.That(former.OriginScopedVirtualOwner, Is.EqualTo(11));
+        Assert.That(former.DisplacedOutputFilterState!.SnapshotConfiguration()
+            .GetStageParameters(1).GetParameter("DelaySeconds").NumericValue,
+            Is.EqualTo(0.001));
+        session.ApplyScopedEvent(11, next, [
+            new ApplyPastNoteActionCommand(TrackerPastNoteAction.Cut),
+        ]);
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1),
+            "Past on the replacement generation cannot reach the old one.");
+        session.ApplyScopedEvent(11, old, [
+            new ApplyPastNoteActionCommand(TrackerPastNoteAction.Cut),
+        ]);
+        Assert.That(session.VirtualVoices, Is.Empty);
+    }
+
+    [Test]
+    public void FinalUseBarrierPreservesVoiceAndFilterTailThenReclaimsOnlyRetiredGeneration()
+    {
+        var old = new VirtualChannelIdentity(7, 1);
+        var next = new VirtualChannelIdentity(7, 2);
+        PlaybackSession Make()
+        {
+            PlaybackSession session = CreateSession(new LongPulse(), Schedule());
+            session.ApplyScopedEvent(11, ChannelTarget.Virtual(old), [
+                new SetChannelFilterCommand { Configuration = Echo(34080, 0.002) },
+                new StartNoteCommand(SoundId),
+            ]);
+            session.ConfigureVirtualChannelOutputFilter(next, Echo(34081, 0.001), 11);
+            return session;
+        }
+        var reference = Make();
+        var retiring = Make();
+        float[] expected = new float[64], actual = new float[64];
+        reference.Render(0, expected.Length, expected);
+        retiring.Render(0, 1, actual.AsSpan(0, 1));
+        retiring.RetireScopedVirtualChannel(11, old);
+        Assert.That(retiring.RetainedScopedVirtualFilterCount, Is.EqualTo(2));
+        Assert.That(retiring.RetiringVirtualFilterCount, Is.EqualTo(1));
+        for (int pos = 1; pos < actual.Length;)
+        {
+            int count = Math.Min(7, actual.Length - pos);
+            retiring.Render(pos, count, actual.AsSpan(pos, count));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(actual[2], Is.EqualTo(1f));
+            Assert.That(retiring.RetainedScopedVirtualFilterCount, Is.EqualTo(1));
+            Assert.That(retiring.RetiringVirtualFilterCount, Is.Zero);
+        });
+        retiring.RetireScopedVirtualChannel(11, next);
+        Assert.That(retiring.RetainedScopedVirtualFilterCount, Is.Zero);
+    }
+
+    [Test]
+    public void FinalUseOfUnmaterializedOrSilentGenerationDoesNotRetainTombstones()
+    {
+        PlaybackSession session = CreateSession(new LongPulse(), Schedule());
+        var filter = Echo(34090, 0.001);
+        for (ulong generation = 1; generation <= 512; generation++)
+        {
+            var id = new VirtualChannelIdentity(7, generation);
+            session.ConfigureVirtualChannelOutputFilter(id, filter, 11);
+            session.RetireScopedVirtualChannel(11, id);
+            session.RetireScopedVirtualChannel(11, id);
+        }
+        Assert.That(session.RetainedScopedVirtualFilterCount, Is.Zero);
+        Assert.That(session.RetiringVirtualFilterCount, Is.Zero);
+    }
+
+    [Test]
     public void DisplacedNnaOutputEnvelopeRemainsIndependentAfterPhysicalDetach()
     {
         PlaybackSession session = CreateSession(new LongPulse(), Schedule(

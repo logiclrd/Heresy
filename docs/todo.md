@@ -316,14 +316,14 @@ Do not reintroduce completed-task checklists here.
   behavior. Script Pattern intro: `_O(35)` refers to object 35;
   each Pattern invocation emits note and control commands; document
   physical and virtual channels, `Note`, `NoteVirtual`,
-  `NoteFilter`/`NoteFilterVirtual`,
-  `ChannelFilter`/`ChannelFilterVirtual`, `VolumeVirtual`,
+  the owned `VirtualNote` and `NoteGroup` controls (formerly numeric
+  virtual helpers; superseded by #54),
   `Random` and **all other currently supported methods** with
   working call signatures. Match the actual runtime and incremental
   compiler, not illustrative invented APIs. In particular `Note`
   receives `pitchMultiplier` and can use the shared
   `Semitone(n)`/`Cent(n)`/`Octave(n)` pitch conversions, while
-  `VolumeVirtual` sets note/voice volume
+  `note.Volume` sets note/voice volume
   on its scoped virtual channel rather than generalized song volume.
   Do not present optional bracket notation as copy/pasteable C#;
   distinguish signatures from usage samples. Script Envelope and
@@ -465,11 +465,11 @@ Do not reintroduce completed-task checklists here.
   Save groups; draft keyboard-shortcuts PR, awaiting acceptance.
 
 - [ ] **Audit Script Pattern physical/virtual channel helper parity.**
-  The current `PatternScriptProgram` exposes `VolumeVirtual`,
-  `SourceFrameVirtual`, `DisplacementVirtual` and `PastVirtual`
+  The current owned `VirtualNote` API exposes `Volume`,
+  `SourceFrame`, `Displacement` and `Past`
   without direct physical-channel counterparts. The existing
   physical `Seek` is measured in playback **seconds**, whereas
-  `SourceFrameVirtual` uses native source **frames**, so an apparent
+  `note.SourceFrame` uses native source **frames**, so an apparent
   name mapping is not semantic parity. Examine whether `Volume`
   (physical), source-frame seek, per-voice displacement policy,
   and past-note action helpers should be exposed for physical

@@ -32,10 +32,10 @@ public sealed class ScriptVirtualPlaybackTests
             RowCount = 3, ChannelCount = 1,
             Source = $"""
                 Note(0, 0, _O({sampleId.Value}));
-                NoteVirtual(0, 7U, _O({sampleId.Value}));
-                NoteVirtual(0, 8U, _O({sampleId.Value}));
-                OffVirtual(0.25, 7U);
-                CutVirtual(0.5, 8U);
+                using var v7 = NoteVirtual(0, _O({sampleId.Value}));
+                using var v8 = NoteVirtual(0, _O({sampleId.Value}));
+                v7.Off(0.25);
+                v8.Cut(0.5);
                 """,
         });
         PreparedIncrementalPlaybackFactory factory = new(Mono());
@@ -67,7 +67,7 @@ public sealed class ScriptVirtualPlaybackTests
         {
             RowCount = 3, ChannelCount = 1,
             Source = $"""
-                NoteVirtual(0, 7U, _O({sampleId.Value}));
+                using var v7 = NoteVirtual(0, _O({sampleId.Value}));
                 CutVirtualInScope(0);
                 CutVirtualInScope(0.5);
                 CutAllVirtual(1.5);
@@ -76,7 +76,7 @@ public sealed class ScriptVirtualPlaybackTests
         song.Add(new ScriptPatternDefinition(secondId, "Second virtual owner")
         {
             RowCount = 3, ChannelCount = 1,
-            Source = $"NoteVirtual(0, 7U, _O({sampleId.Value}));",
+            Source = $"using var v7 = NoteVirtual(0, _O({sampleId.Value}));",
         });
         PreparedIncrementalPlaybackFactory factory = new(Mono());
         using PreparedIncrementalPlaybackPlan plan = factory.Create(song, firstId);
@@ -107,14 +107,14 @@ public sealed class ScriptVirtualPlaybackTests
         {
             RowCount = 3, ChannelCount = 1,
             Source = $"""
-                NoteVirtual(0, 7U, _O({sampleId.Value}));
-                CutVirtual(1, 7U);
+                using var v7 = NoteVirtual(0, _O({sampleId.Value}));
+                v7.Cut(1);
                 """,
         });
         song.Add(new ScriptPatternDefinition(secondId, "Survivor")
         {
             RowCount = 3, ChannelCount = 1,
-            Source = $"NoteVirtual(0, 7U, _O({sampleId.Value}));",
+            Source = $"using var v7 = NoteVirtual(0, _O({sampleId.Value}));",
         });
         using PreparedIncrementalPlaybackPlan plan =
             new PreparedIncrementalPlaybackFactory(Mono()).Create(song, firstId);

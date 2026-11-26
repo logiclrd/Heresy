@@ -805,7 +805,8 @@ public sealed class PlaybackVoice
 	/// <summary>The explicit virtual target (if any) where this voice
 	/// originated. It survives NNA migration and prevents physical S7x
 	/// past-note controls from stealing virtual-channel voices.</summary>
-	internal uint? OriginVirtualChannelId { get; init; }
+	internal VirtualChannelIdentity? OriginVirtualIdentity { get; init; }
+	internal uint? OriginVirtualChannelId => OriginVirtualIdentity?.Slot;
 	/// <summary>The cursor owning an invocation-local virtual target.
 	/// Null denotes a legacy/global virtual target or physical voice.</summary>
 	internal long? OriginScopedVirtualOwner { get; init; }
