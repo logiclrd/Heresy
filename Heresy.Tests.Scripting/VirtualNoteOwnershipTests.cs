@@ -158,6 +158,27 @@ public sealed class VirtualNoteOwnershipTests
             Assert.That(ScriptCompiler.AnalyzePatternSource(source).Any(d => d.Code == "HRS2101"), Is.False);
     }
 
+    [TestCase("NoteVirtual(0, 7U, _O(17));")]
+    [TestCase("OffVirtual(0, 7U);")]
+    [TestCase("CutVirtual(0, 7U);")]
+    [TestCase("VolumeVirtual(0, 7U, 0.5);")]
+    [TestCase("SourceFrameVirtual(0, 7U, 256);")]
+    [TestCase("DisplacementVirtual(0, 7U, NoteDisplacementAction.Continue);")]
+    [TestCase("PastVirtual(0, 7U, TrackerPastNoteAction.Cut);")]
+    [TestCase("NoteFilterVirtual(0, 7U, _O(19));")]
+    [TestCase("ChannelFilterVirtual(0, 7U, _O(19));")]
+    public void RetiredNumericScriptApiIsRejectedInAllModes(string source)
+    {
+        foreach (string authored in new[] { source, "#order relaxed\n" + source })
+        {
+            Assert.That(ScriptCompiler.AnalyzePatternSource(authored).Any(d =>
+                d.Severity == ScriptDiagnosticSeverity.Error), Is.True);
+            Assert.That(ScriptCompiler.CompilePattern(Pattern(authored)).Success, Is.False);
+            Assert.That(ScriptCompiler.CompileIncrementalPattern(Pattern(authored)).Success, Is.False);
+            Assert.That(ScriptCompiler.CompileIncrementalPattern(Pattern(authored), true).Success, Is.False);
+        }
+    }
+
     [TestCase("using var note = NoteVirtual(0, _O(17)); note.Off(default(Heresy.Core.Sequences.SequenceCallsite), 2);")]
     [TestCase("var note = new VirtualNote(null, default);")]
     [TestCase("HasPendingEvent();")]
