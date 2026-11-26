@@ -27,6 +27,20 @@ internal static class ScriptPatternEmissionPolicy
         => name is "Note" or "Volume" or "Off" or "Cut" or "NoteFilter"
             or "ChannelFilter" or "SourceFrame" or "Displacement" or "Past";
 
+    internal static bool IsNoteGroupEmitterName(string name)
+        => name != "Note" && IsVirtualNoteEmitterName(name);
+
+    internal static bool IsNoteGroupTransfer(IMethodSymbol method,
+        Microsoft.CodeAnalysis.Compilation compilation)
+        => SymbolEqualityComparer.Default.Equals(method.ContainingType,
+                compilation.GetTypeByMetadataName(typeof(NoteGroup).FullName!))
+            && method.Name == "op_AdditionAssignment"
+            && method.MethodKind == MethodKind.UserDefinedOperator
+            && !method.IsStatic && method.ReturnsVoid
+            && method.Parameters.Length == 1
+            && SymbolEqualityComparer.Default.Equals(method.Parameters[0].Type,
+                compilation.GetTypeByMetadataName(typeof(VirtualNote).FullName!));
+
     internal static bool IsEmitterMethod(IMethodSymbol method,
         Microsoft.CodeAnalysis.Compilation compilation)
     {
@@ -38,6 +52,9 @@ internal static class ScriptPatternEmissionPolicy
             && IsEmitterName(method.Name)
             || SymbolEqualityComparer.Default.Equals(method.ContainingType,
                 compilation.GetTypeByMetadataName(typeof(VirtualNote).FullName!))
-                && IsVirtualNoteEmitterName(method.Name);
+                && IsVirtualNoteEmitterName(method.Name)
+            || SymbolEqualityComparer.Default.Equals(method.ContainingType,
+                compilation.GetTypeByMetadataName(typeof(NoteGroup).FullName!))
+                && IsNoteGroupEmitterName(method.Name);
     }
 }
