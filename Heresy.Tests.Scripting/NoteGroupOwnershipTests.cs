@@ -63,6 +63,14 @@ public sealed class NoteGroupOwnershipTests
         Assert.That(actual.Length, Is.EqualTo(29));
         var identities = actual.Take(3).Select(e => e.Target).ToArray();
         Assert.That(identities.Distinct().Count(), Is.EqualTo(3));
+        if (traced)
+        {
+            string[] starts = ["NoteVirtual(0, _O(17))", "NoteVirtual(0, _O(18), Semitone(4))",
+                "NoteVirtual(0, _O(19), Semitone(7))"];
+            for (int i = 0; i < starts.Length; i++)
+                Assert.That(actual[i].EditorCallsite, Is.EqualTo(new SequenceCallsite(
+                    source.IndexOf(starts[i], StringComparison.Ordinal), starts[i].Length)));
+        }
         string[] spans = [
             "chord.Volume(\n        4, 0.25)", "chord.SourceFrame(5, 256)",
             "chord.Displacement(6, NoteDisplacementAction.Continue)",
@@ -84,7 +92,9 @@ public sealed class NoteGroupOwnershipTests
         Assert.Multiple(() =>
         {
             Assert.That(actual.Select(e => e.Target), Is.EqualTo(expected.Select(e => e.Target)));
-            Assert.That(actual.Select(e => e.Commands.Single()), Is.EqualTo(expected.Select(e => e.Commands.Single())));
+            Assert.That(actual.Select(e => e.Commands.Single() is StartNoteCommand start
+                ? start with { EditorOriginCallsite = null } : e.Commands.Single()),
+                Is.EqualTo(expected.Select(e => e.Commands.Single())));
             Assert.That(identities.Any(t => t.VirtualIdentity.Slot == actual[27].Target.VirtualIdentity.Slot), Is.True);
             Assert.That(identities.Contains(actual[27].Target), Is.False);
             Assert.That(context.Diagnostics.VirtualOwnershipWarnings, Is.EqualTo(1));
@@ -101,8 +111,8 @@ public sealed class NoteGroupOwnershipTests
             chord += NoteVirtual(0, _O(18));
             chord += NoteVirtual(0, _O(19));
             chord.Volume(4, 0.5);
-            noteAfterImpossible();
-            """.Replace("noteAfterImpossible();", "Note(8, 0, _O(20));"));
+            Note(8, 0, _O(20));
+            """);
         var result = ScriptCompiler.CompileIncrementalPattern(pattern);
         Assert.That(result.Success, Is.True, string.Join("; ", result.Diagnostics.Select(d => d.Message)));
         SequencingContext context = new();
