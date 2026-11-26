@@ -25,6 +25,10 @@ internal static class ScriptPatternEmissionPolicy
             or "VolumeVirtual" or "SourceFrameVirtual"
             or "DisplacementVirtual" or "PastVirtual";
 
+    internal static bool IsVirtualNoteEmitterName(string name)
+        => name is "Note" or "Volume" or "Off" or "Cut" or "NoteFilter"
+            or "ChannelFilter" or "SourceFrame" or "Displacement" or "Past";
+
     internal static bool IsEmitterMethod(IMethodSymbol method,
         Microsoft.CodeAnalysis.Compilation compilation)
     {
@@ -33,6 +37,9 @@ internal static class ScriptPatternEmissionPolicy
         return patternBase is not null
             && SymbolEqualityComparer.Default.Equals(
                 method.ContainingType, patternBase)
-            && IsEmitterName(method.Name);
+            && IsEmitterName(method.Name)
+            || SymbolEqualityComparer.Default.Equals(method.ContainingType,
+                compilation.GetTypeByMetadataName(typeof(VirtualNote).FullName!))
+                && IsVirtualNoteEmitterName(method.Name);
     }
 }
