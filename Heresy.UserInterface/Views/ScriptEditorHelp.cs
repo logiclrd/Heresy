@@ -106,6 +106,7 @@ Example (Pattern length >= 8, two channels; replace 35 with a Source ID):
 
 F6 highlights an active authored delegate invocation, otherwise its musical
 helper call. An unambiguous emitter method-group reference can also highlight.
+Ambiguous reference sites retain normal delegate equality, not a forced highlight.
 
 Rows are doubles (including fractional rows) in [0, RowCount].
 Physical channels are ints in [0, ChannelCount - 1]. VirtualNote handles
@@ -150,10 +151,12 @@ VIRTUAL NOTE OWNERSHIP
               double timeOffsetSeconds = 0.0,
               ObjectId? eventFilterDefinitionId = null)
     Allocate a logical virtual channel and start its first note.
-    Pattern/Sequence sources require mixdown: true on virtual channels.
+    Pattern/Sequence sources require mixdown: true on virtual channels,
+    both on the first start and on each retrigger of such a source.
     Use using var or a using block, or explicitly Dispose the handle.
     Dispose() releases ownership; it does not stop or cancel scheduled audio.
-    Calls through a disposed handle are ignored with a warning.
+    Unproven ownership termination produces a compiler warning.
+    Calls through a disposed or transferred handle are ignored with a warning.
 
 VirtualNote instance methods (shown on a local named note):
   note.Note(row, sourceId, pitchMultiplier: 1.0,
@@ -197,6 +200,7 @@ OWNING NOTE GROUPS
   Group controls: Volume, Off, Cut, NoteFilter, ChannelFilter, SourceFrame,
   Displacement and Past, with the same arguments as VirtualNote.
   There is no group Note method. Group actions affect members only.
+  Strict mode yields once per member before continuing the script.
   Group Dispose() releases all owned leases without changing scheduled music.
   Invalid transfers and use-after-disposal produce warnings, not commands.
 
