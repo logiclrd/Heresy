@@ -1195,7 +1195,14 @@ public static class ScriptCompiler
 	private static string AuthoredBodyText(BlockSyntax body)
 	{
 		string text = body.ToFullString();
-		return text.Substring(AuthoredBodyOffset, text.Length - AuthoredBodyOffset - 2);
+		// Rewriters can move the synthetic trailing newline onto an
+		// inner statement or replace its trivia altogether. Slice by
+		// brace token positions, never assume two trailing characters.
+		int first = body.OpenBraceToken.Span.End - body.FullSpan.Start;
+		int last = body.CloseBraceToken.SpanStart - body.FullSpan.Start;
+		string contents = text.Substring(first, last - first);
+		return contents.StartsWith("\n", StringComparison.Ordinal)
+			? contents.Substring(1) : contents;
 	}
 
 	private static string InstrumentLoops(string source)
