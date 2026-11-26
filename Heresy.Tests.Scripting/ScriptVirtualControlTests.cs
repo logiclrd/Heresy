@@ -15,16 +15,16 @@ namespace Heresy.Tests.Scripting;
 public sealed class ScriptVirtualControlTests
 {
     private const string Source = """
-        NoteVirtual(0, 7U, _O(17));
-        VolumeVirtual(0.25, 7U, 0.25);
-        SourceFrameVirtual(0.5, 7U, 256, timeOffsetSeconds: 0.01);
-        DisplacementVirtual(0.75, 7U, NoteDisplacementAction.Continue);
-        PastVirtual(1, 7U, TrackerPastNoteAction.Off);
-        DisplacementVirtual(1.25, 7U, NoteDisplacementAction.Cut);
-        DisplacementVirtual(1.5, 7U, NoteDisplacementAction.Off);
-        DisplacementVirtual(1.75, 7U, NoteDisplacementAction.Fade);
-        PastVirtual(2, 7U, TrackerPastNoteAction.Cut);
-        PastVirtual(2.25, 7U, TrackerPastNoteAction.Fade);
+        using var note = NoteVirtual(0, _O(17));
+        note.Volume(0.25, 0.25);
+        note.SourceFrame(0.5, 256, timeOffsetSeconds: 0.01);
+        note.Displacement(0.75, NoteDisplacementAction.Continue);
+        note.Past(1, TrackerPastNoteAction.Off);
+        note.Displacement(1.25, NoteDisplacementAction.Cut);
+        note.Displacement(1.5, NoteDisplacementAction.Off);
+        note.Displacement(1.75, NoteDisplacementAction.Fade);
+        note.Past(2, TrackerPastNoteAction.Cut);
+        note.Past(2.25, TrackerPastNoteAction.Fade);
         """;
 
     [Test]
@@ -53,7 +53,7 @@ public sealed class ScriptVirtualControlTests
         {
             Assert.That(actual.Length, Is.EqualTo(10));
             Assert.That(actual.Select(e => e.Target),
-                Is.All.EqualTo(ChannelTarget.Virtual(7U)));
+                Is.All.EqualTo(ChannelTarget.Virtual(new VirtualChannelIdentity(0, 1))));
             Assert.That(actual.Select(e => e.Offset),
                 Is.EqualTo(expected.Select(e => e.Offset)));
             Assert.That(actual.Select(e => e.Commands.Single()),
@@ -85,10 +85,11 @@ public sealed class ScriptVirtualControlTests
         {
             RowCount = 2, ChannelCount = 1,
             Source = """
-                VolumeVirtual(0, 7U, 0.5);
-                SourceFrameVirtual(0.25, 7U, 300);
-                DisplacementVirtual(0.5, 7U, NoteDisplacementAction.Fade);
-                PastVirtual(0.75, 7U, TrackerPastNoteAction.Cut);
+                using var note = NoteVirtual(0, _O(17));
+                note.Volume(0, 0.5);
+                note.SourceFrame(0.25, 300);
+                note.Displacement(0.5, NoteDisplacementAction.Fade);
+                note.Past(0.75, TrackerPastNoteAction.Cut);
                 """,
         };
         var result = ScriptCompiler.CompileIncrementalPattern(definition);
@@ -97,6 +98,7 @@ public sealed class ScriptVirtualControlTests
         using IEnumerator<RawPatternStep> iter =
             result.Program!.EnumerateRawSteps(new SequencingContext()).GetEnumerator();
         Type[] types = [
+            typeof(StartNoteCommand),
             typeof(SetNoteVolumeCommand),
             typeof(SetSourceFrameOffsetCommand),
             typeof(SetCurrentVoiceDisplacementActionCommand),
@@ -110,18 +112,20 @@ public sealed class ScriptVirtualControlTests
                 Is.EqualTo(type));
         }
         Assert.That(iter.MoveNext(), Is.True);
+        Assert.That(iter.Current, Is.TypeOf<RawPatternStep.ReleaseVirtualChannel>());
+        Assert.That(iter.MoveNext(), Is.True);
         Assert.That(iter.Current, Is.TypeOf<RawPatternStep.Advance>());
         Assert.That(iter.MoveNext(), Is.False);
     }
 
-    [TestCase("VolumeVirtual(0, 7U, -0.1);")]
-    [TestCase("VolumeVirtual(0, 7U, Math.Sqrt(-1));")]
-    [TestCase("VolumeVirtual(0, 7U, 1.1);")]
-    [TestCase("SourceFrameVirtual(0, 7U, -1);")]
-    [TestCase("SourceFrameVirtual(1.1, 7U, 0);")]
-    [TestCase("DisplacementVirtual(0, 7U, (NoteDisplacementAction)99);")]
-    [TestCase("PastVirtual(0, 7U, (TrackerPastNoteAction)99);")]
-    [TestCase("PastVirtual(0, 7U, TrackerPastNoteAction.Cut, timeOffsetSeconds: 1e300);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Volume(0, -0.1);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Volume(0, Math.Sqrt(-1));")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Volume(0, 1.1);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.SourceFrame(0, -1);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.SourceFrame(1.1, 0);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Displacement(0, (NoteDisplacementAction)99);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Past(0, (TrackerPastNoteAction)99);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Past(0, TrackerPastNoteAction.Cut, timeOffsetSeconds: 1e300);")]
     public void InvalidHelperArgumentsFailBeforeEmitting(string source)
     {
         ScriptPatternDefinition definition = new((ObjectId)1U, "Invalid")
@@ -133,13 +137,13 @@ public sealed class ScriptVirtualControlTests
             string.Join("; ", compiled.Diagnostics.Select(x => x.Message)));
         using IEnumerator<RawPatternStep> iter =
             compiled.Program!.EnumerateRawSteps(new SequencingContext()).GetEnumerator();
-        Assert.Throws<ArgumentOutOfRangeException>(() => iter.MoveNext());
+        Assert.Throws<ArgumentOutOfRangeException>(() => { while (iter.MoveNext()) { } });
     }
 
-    [TestCase("for (int i = 0; i < 1; VolumeVirtual(i, 7U, 0.5)) { }")]
-    [TestCase("for (int i = 0; i < 1; SourceFrameVirtual(i, 7U, 10)) { }")]
-    [TestCase("for (int i = 0; i < 1; DisplacementVirtual(i, 7U, NoteDisplacementAction.Continue)) { }")]
-    [TestCase("for (int i = 0; i < 1; PastVirtual(i, 7U, TrackerPastNoteAction.Cut)) { }")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.Volume(i, 0.5)) { }")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.SourceFrame(i, 10)) { }")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.Displacement(i, NoteDisplacementAction.Continue)) { }")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.Past(i, TrackerPastNoteAction.Cut)) { }")]
     public void VirtualControlsAreOnlyValidAsDirectScriptStatements(string source)
     {
         ScriptPatternDefinition definition = new((ObjectId)1U, "Nested")
