@@ -169,7 +169,8 @@ public sealed class NoteGroupOwnershipTests
         SequencingContext firstContext = new(), secondContext = new();
         var first = new Probe(firstContext);
         var second = new Probe(secondContext);
-        using var destination = first.CreateGroup();
+        var destination = first.CreateGroup();
+        using var destinationScope = destination;
         using var own = first.CreateNote();
         using var foreign = second.CreateNote();
         destination += foreign;
