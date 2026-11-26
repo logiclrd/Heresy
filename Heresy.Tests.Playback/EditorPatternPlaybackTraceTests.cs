@@ -440,7 +440,7 @@ public sealed class EditorPatternPlaybackTraceTests
         const string second =
             "Note(0, 0, _O(21), timeOffsetSeconds: 0.002)";
         const string cut = "Cut(0, 0, timeOffsetSeconds: 0.003)";
-        string source = first + "; " + second + "; " + cut + ";";
+        string source = "using var note = " + first + "; " + second + "; " + cut + ";";
         ScriptPatternDefinition script = new((ObjectId)5U, "Fading NNA")
         {
             RowCount = 16, ChannelCount = 1, Source = source,
@@ -1452,12 +1452,12 @@ public sealed class EditorPatternPlaybackTraceTests
         SongDocument song = new();
         song.Add(SampleDefinition.CreateImported((ObjectId)20U,
             "Long sustained", "sustained.wav", LongMonoWave()));
-        const string first = "NoteVirtual(0, 7U, _O(20))";
-        const string replacement = "NoteVirtual(4, 7U, _O(20))";
+        const string first = "NoteVirtual(0, _O(20))";
+        const string replacement = "note.Note(4, _O(20))";
         string source = first + "; " +
-            "DisplacementVirtual(2, 7U, NoteDisplacementAction.Continue); " +
-            replacement + "; CutVirtual(8, 7U); " +
-            "PastVirtual(12, 7U, TrackerPastNoteAction.Cut);";
+            "note.Displacement(2, NoteDisplacementAction.Continue); " +
+            replacement + "; note.Cut(8); " +
+            "note.Past(12, TrackerPastNoteAction.Cut);";
         ScriptPatternDefinition script = new((ObjectId)5U, "NNA origin")
         {
             RowCount = 16, ChannelCount = 1, Source = source,
@@ -1683,8 +1683,8 @@ public sealed class EditorPatternPlaybackTraceTests
         ScriptPatternDefinition script = new((ObjectId)5U, "F6 profile")
         {
             RowCount = 8, ChannelCount = 1,
-            Source = note + "; NoteVirtual(2, 7U, _O(20)); "
-                + "Cut(4, 0); CutVirtual(6, 7U);",
+            Source = note + "; using var v = NoteVirtual(2, _O(20)); "
+                + "Cut(4, 0); v.Cut(6);",
         };
         song.Add(script);
         RenderConfiguration config = new(sampleRate, new[]
@@ -2069,13 +2069,15 @@ public sealed class EditorPatternPlaybackTraceTests
     public void SameRowVirtualControlsRetainSpansRegardlessOfOrder(bool reverseOrder)
     {
         SongDocument song = new();
-        string volume0 = "VolumeVirtual(0, 7U, .25)";
-        string frame0 = "SourceFrameVirtual(0, 7U, 256)";
-        string displacement8 = "DisplacementVirtual(8, 7U, NoteDisplacementAction.Continue)";
-        string past8 = "PastVirtual(8, 7U, TrackerPastNoteAction.Cut)";
+        const string start0 = "NoteVirtual(0, _O(20))";
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U, "Short", "short.wav", LongMonoWave()));
+        string volume0 = "note.Volume(0, .25)";
+        string frame0 = "note.SourceFrame(0, 256)";
+        string displacement8 = "note.Displacement(8, NoteDisplacementAction.Continue)";
+        string past8 = "note.Past(8, TrackerPastNoteAction.Cut)";
         string source = reverseOrder
-            ? $"{frame0}; {volume0}; {past8}; {displacement8};"
-            : $"{volume0}; {frame0}; {displacement8}; {past8};";
+            ? $"using var note = {start0}; {frame0}; {volume0}; {past8}; {displacement8};"
+            : $"using var note = {start0}; {volume0}; {frame0}; {displacement8}; {past8};";
         ScriptPatternDefinition script = new((ObjectId)5U, "Virtual controls")
         {
             RowCount = 16, ChannelCount = 1, Source = source,
@@ -2101,6 +2103,7 @@ public sealed class EditorPatternPlaybackTraceTests
             Assert.That(zero!.EditorCallsiteSession, Is.EqualTo(session));
             Assert.That(zero.EditorPatternCallsites, Is.EquivalentTo(new[]
             {
+                new SequenceCallsite(source.IndexOf(start0, StringComparison.Ordinal), start0.Length),
                 new SequenceCallsite(source.IndexOf(volume0, StringComparison.Ordinal),
                     volume0.Length),
                 new SequenceCallsite(source.IndexOf(frame0, StringComparison.Ordinal),
