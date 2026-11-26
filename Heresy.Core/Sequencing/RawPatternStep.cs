@@ -27,4 +27,14 @@ public abstract record RawPatternStep(double Row)
 	/// consumers must not treat it as a musical progress boundary.
 	/// </summary>
 	public sealed record Cooperate(double Row) : RawPatternStep(Row);
+
+	/// <summary>
+	/// Trusted, non-musical producer release. No further raw event may
+	/// reference this generated identity after this marker in enumeration
+	/// order. A relaxed producer emits the marker after its last sorted
+	/// event for the identity, not at the authored disposal position.
+	/// Row is deliberately not a progress marker.
+	/// </summary>
+	public sealed record ReleaseVirtualChannel(VirtualChannelIdentity Identity)
+		: RawPatternStep(0);
 }
