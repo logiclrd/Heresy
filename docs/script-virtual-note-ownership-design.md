@@ -1,6 +1,6 @@
 # Script Pattern virtual-note ownership redesign (#54)
 
-Status: approved owner contract; first single-handle implementation committed, awaiting combined slice 2b/3a CI.
+Status: single-handle API and numeric script API removal committed, awaiting combined CI.
 Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
 [Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
 this document records the implementation choices and boundaries. No public
@@ -227,6 +227,32 @@ cancellation, warnings and original source spans. They have not yet
 passed CI. Slice 3b will migrate all numeric-script tests and examples
 and remove old numeric entrypoints before NoteGroup work. Full production
 mixdown/rewind and export checks remain outstanding.
+
+### Numeric script API removal (slice 3b)
+
+The numeric script-facing overloads of NoteVirtual, NoteFilterVirtual,
+ChannelFilterVirtual, VolumeVirtual, SourceFrameVirtual,
+DisplacementVirtual, PastVirtual, OffVirtual and CutVirtual have been
+removed, including their F6 metadata variants and compiler policy
+entries. No compatibility path remains for scripts. Numeric generation-zero
+engine targets and separate scope/global broadcasts are unchanged.
+
+Existing scripting, production playback, filter, F6, pitch and export
+fixtures now exercise owned handles. The editor reference and current
+programmability documentation describe the new API and explicit
+mixdown requirement. Negative compilation tests reject each retired
+entrypoint in eager, strict, relaxed and traced compilation. Historical
+milestone descriptions are not an alternate API contract.
+
+Owner accepted manual Synth retrigger and explicit private Pattern
+mixdown auditions. CI #45736135524 passed all other suites and 400/401
+scripting tests, including the two new production private mixdown
+tests. The remaining failure was a missing final brace when rewriting
+a using statement on one line; extraction now uses actual Roslyn
+brace-token spans rather than fixed-length suffix trimming. Combined
+exact-head CI must validate the fix and migrated fixtures before
+starting group transfer. No full generation-qualified private rewind
+or all final stress/F6 cases have been claimed yet.
 
 ## Compiler integration after #58 and #69
 
