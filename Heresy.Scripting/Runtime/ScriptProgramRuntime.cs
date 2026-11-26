@@ -83,6 +83,13 @@ public abstract class PatternScriptProgram
 	private SequenceCallsite? _editorActionCallsite;
 	private VirtualChannelLeaseAllocator? _virtualLeases;
 	private Queue<VirtualChannelIdentity>? _releasedVirtualChannels;
+	// Strict mode has exactly one event receiver slot. Retain a cursor
+	// into the group's lease list, not a second queue of musical events.
+	private IReadOnlyList<VirtualChannelIdentity>? _groupFanout;
+	private int _groupFanoutIndex;
+	private double _groupFanoutRow, _groupFanoutOffset;
+	private NoteCommand? _groupFanoutCommand;
+	private SequenceCallsite? _groupFanoutCallsite;
 
 	protected PatternScriptProgram(
 		SequencingContext context,
@@ -138,6 +145,7 @@ public abstract class PatternScriptProgram
 
 	private void CleanupVirtualLeases()
 	{
+		ClearGroupFanout();
 		if (_virtualLeases is { ActiveCount: > 0 } allocator)
 		{
 			ReportVirtualOwnershipIssue("Script Pattern ended with undisposed virtual note leases; released remaining ownership.");
@@ -189,7 +197,64 @@ public abstract class PatternScriptProgram
 
 	// Trusted strict rewrite: invalid ownership operations emit no event.
 	protected bool HasPendingEvent()
-		=> _output is IncrementalPatternEventReceiver { HasPending: true };
+	{
+		if (_output is not IncrementalPatternEventReceiver receiver)
+			return false;
+		if (receiver.HasPending) return true;
+		if (_groupFanout is not { } leases) return false;
+		if (_groupFanoutIndex >= leases.Count)
+		{
+			ClearGroupFanout();
+			return false;
+		}
+		ControlVirtualLease(leases[_groupFanoutIndex++], _groupFanoutRow,
+			_groupFanoutCommand!, _groupFanoutOffset, _groupFanoutCallsite);
+		if (_groupFanoutIndex == leases.Count) ClearGroupFanout();
+		return true;
+	}
+
+	private void ClearGroupFanout()
+	{
+		_groupFanout = null;
+		_groupFanoutIndex = 0;
+		_groupFanoutCommand = null;
+		_groupFanoutCallsite = null;
+	}
+
+	protected NoteGroup NewNoteGroup()
+	{
+		Checkpoint();
+		return new NoteGroup(this);
+	}
+
+	internal void CheckOwnershipBudget() => Checkpoint();
+
+	internal void ControlVirtualGroup(IReadOnlyList<VirtualChannelIdentity> leases,
+		double row, NoteCommand command, double timeOffsetSeconds, SequenceCallsite? callsite)
+	{
+		ValidateRow(row);
+		if (!double.IsFinite(timeOffsetSeconds)
+			|| Math.Abs(timeOffsetSeconds) > TimeSpan.MaxValue.TotalSeconds)
+			throw new ArgumentOutOfRangeException(nameof(timeOffsetSeconds));
+		Checkpoint();
+		if (leases.Count == 0) return;
+		// The producer cannot execute another authored statement while
+		// the compiler's drain loop is suspended. Disposal of the
+		// suspended iterator abandons the un-emitted suffix instead.
+		if (_output is IncrementalPatternEventReceiver receiver)
+		{
+			if (_groupFanout is not null || receiver.HasPending)
+				throw new InvalidOperationException("A strict group must drain before another emission.");
+			_groupFanout = leases;
+			_groupFanoutRow = row;
+			_groupFanoutOffset = timeOffsetSeconds;
+			_groupFanoutCommand = command;
+			_groupFanoutCallsite = _editorActionCallsite ?? callsite;
+			return;
+		}
+		foreach (VirtualChannelIdentity identity in leases)
+			ControlVirtualLease(identity, row, command, timeOffsetSeconds, callsite);
+	}
 
 	protected bool ShouldCooperate()
 	{
