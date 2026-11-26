@@ -137,28 +137,28 @@ public sealed class ScriptVirtualControlPlaybackTests
         string lookup = $"_O({sample.Value})";
         string prefix = relaxed ? "#order relaxed\n" : "";
         ObjectId groupPattern = AddPattern(document, prefix + $"""
-            using var other = NoteVirtual(0, {lookup});
+            using var other = NoteVirtual(0, {{lookup}});
             using (var chord = NewNoteGroup())
             {
-                chord += NoteVirtual(0, {lookup});
-                chord += NoteVirtual(0, {lookup});
+                chord += NoteVirtual(0, {{lookup}});
+                chord += NoteVirtual(0, {{lookup}});
                 chord.Volume(0.5, 0.25);
                 chord.Cut(1, timeOffsetSeconds: 0.02);
             }
-            using var replacement = NoteVirtual(1.1, {lookup});
+            using var replacement = NoteVirtual(1.1, {{lookup}});
             replacement.Cut(2);
             """);
         ObjectId individualPattern = AddPattern(document, prefix + $"""
-            using var other = NoteVirtual(0, {lookup});
-            using (var first = NoteVirtual(0, {lookup}))
-            using (var second = NoteVirtual(0, {lookup}))
+            using var other = NoteVirtual(0, {{lookup}});
+            using (var first = NoteVirtual(0, {{lookup}}))
+            using (var second = NoteVirtual(0, {{lookup}}))
             {
                 first.Volume(0.5, 0.25);
                 second.Volume(0.5, 0.25);
                 first.Cut(1, timeOffsetSeconds: 0.02);
                 second.Cut(1, timeOffsetSeconds: 0.02);
             }
-            using var replacement = NoteVirtual(1.1, {lookup});
+            using var replacement = NoteVirtual(1.1, {{lookup}});
             replacement.Cut(2);
             """);
         var factory = new PreparedIncrementalPlaybackFactory(Mono());
