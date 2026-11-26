@@ -823,7 +823,66 @@ public static class ScriptCompiler
 			}
 		}
 
+		if (canonicalKind == ScriptWrapperKind.Pattern && !HasErrors(diagnostics))
+			WarnUnprovenVirtualOwnership(entry.Body, model, canonical, source, diagnostics);
+
 		return diagnostics;
+	}
+
+	private static void WarnUnprovenVirtualOwnership(BlockSyntax body,
+		SemanticModel model, CSharpCompilation compilation, string source,
+		List<ScriptAnalysisDiagnostic> diagnostics)
+	{
+		var handleType = compilation.GetTypeByMetadataName(typeof(VirtualNote).FullName!);
+		var patternType = compilation.GetTypeByMetadataName(typeof(PatternScriptProgram).FullName!);
+		foreach (InvocationExpressionSyntax call in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
+		{
+			if (model.GetSymbolInfo(call).Symbol is not IMethodSymbol method
+				|| method.Name != "NoteVirtual"
+				|| !SymbolEqualityComparer.Default.Equals(method.ContainingType, patternType)
+				|| !SymbolEqualityComparer.Default.Equals(method.ReturnType, handleType))
+				continue;
+			if (call.Parent is EqualsValueClauseSyntax initializer
+				&& initializer.Parent is VariableDeclaratorSyntax variable
+				&& variable.Parent is VariableDeclarationSyntax declaration)
+			{
+				if (declaration.Parent is UsingStatementSyntax
+					|| declaration.Parent is LocalDeclarationStatementSyntax localUsing
+						&& localUsing.UsingKeyword.RawKind != 0)
+					continue;
+				// Conservative normal-flow proof for a straightforward local
+				// followed by direct Dispose. Aliases and branching require
+				// a using scope (or the future owning-group transfer proof).
+				if (declaration.Parent is LocalDeclarationStatementSyntax local
+					&& local.Parent is BlockSyntax block
+					&& model.GetDeclaredSymbol(variable) is ILocalSymbol owned)
+				{
+					bool disposed = false;
+					foreach (StatementSyntax next in block.Statements.Skip(block.Statements.IndexOf(local) + 1))
+					{
+						if (next is not ExpressionStatementSyntax { Expression: InvocationExpressionSyntax action })
+							break;
+						if (action.Expression is MemberAccessExpressionSyntax access
+							&& SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(access.Expression).Symbol, owned)
+							&& model.GetSymbolInfo(action).Symbol is IMethodSymbol target
+							&& target.Name == "Dispose"
+							&& SymbolEqualityComparer.Default.Equals(target.ContainingType, handleType))
+						{
+							disposed = true;
+							break;
+						}
+						if (action.DescendantNodes().Any(n => n is AssignmentExpressionSyntax
+							or AnonymousFunctionExpressionSyntax
+							or ArgumentSyntax { RefKindKeyword.RawKind: not 0 }))
+							break;
+					}
+					if (disposed) continue;
+				}
+			}
+			diagnostics.Add(new ScriptAnalysisDiagnostic("HRS2101", ScriptDiagnosticSeverity.Warning,
+				"VirtualNote ownership termination is not proven; use a using scope or explicitly Dispose the handle.",
+				MapSpan(call.GetLocation(), source)));
+		}
 	}
 
 	private static IReadOnlyList<ScriptAnalysisDiagnostic>
