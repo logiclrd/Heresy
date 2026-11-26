@@ -160,8 +160,9 @@ public static class ScriptCompiler
 			AnalyzePatternSource(definition.Source);
 		if (HasErrors(authored))
 			return new(null, authored);
+		HashSet<int> transferEmitterStarts = [];
 		HashSet<int> emitterStarts = ResolveAuthoredCallStarts(
-			source, ScriptWrapperKind.Pattern);
+			source, ScriptWrapperKind.Pattern, transferEmitterStarts);
 
 		if (order.Order == ScriptPatternOrder.Relaxed)
 		{
@@ -182,7 +183,7 @@ public static class ScriptCompiler
 		}
 
 		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
-			ValidateIncrementalPatternStatements(source, emitterStarts);
+			ValidateIncrementalPatternStatements(source, emitterStarts, transferEmitterStarts);
 		if (restrictions.Count != 0)
 			return new(null, restrictions);
 
@@ -797,7 +798,14 @@ public static class ScriptCompiler
 						canonical.GetTypeByMetadataName(typeof(VirtualNote).FullName!))
 					&& method.MethodKind == MethodKind.Ordinary
 					&& (method.Name == "Dispose" || ScriptPatternEmissionPolicy.IsVirtualNoteEmitterName(method.Name))
-					&& (method.Parameters.Length == 0 || method.Parameters[0].Type.Name != "SequenceCallsite")),
+					&& (method.Parameters.Length == 0 || method.Parameters[0].Type.Name != "SequenceCallsite"))
+				|| (canonicalKind == ScriptWrapperKind.Pattern
+					&& (ScriptPatternEmissionPolicy.IsNoteGroupTransfer(method, canonical)
+						|| SymbolEqualityComparer.Default.Equals(method.ContainingType,
+							canonical.GetTypeByMetadataName(typeof(NoteGroup).FullName!))
+							&& method.MethodKind == MethodKind.Ordinary
+							&& (method.Name == "Dispose" || ScriptPatternEmissionPolicy.IsNoteGroupEmitterName(method.Name))
+							&& (method.Parameters.Length == 0 || method.Parameters[0].Type.Name != "SequenceCallsite"))),
 			_ => IsAllowedActionEnumMember(
 				symbol, displacement, past, nna),
 		};
@@ -1110,6 +1118,7 @@ public static class ScriptCompiler
 		if (SymbolEqualityComparer.Default.Equals(containingType, patternBase))
 			return method.MethodKind == MethodKind.Ordinary
 				&& (method.Name is "_O" or "Random" or "Checkpoint"
+					|| method.Name == "NewNoteGroup"
 					|| ScriptPatternEmissionPolicy.IsEmitterName(method.Name));
 		if (SymbolEqualityComparer.Default.Equals(containingType, sequenceBase))
 			return method.MethodKind == MethodKind.Ordinary
@@ -1218,7 +1227,7 @@ public static class ScriptCompiler
 	/// unresolved source and unauthorized helper access.
 	/// </summary>
 	private static HashSet<int> ResolveAuthoredCallStarts(
-		string source, ScriptWrapperKind kind)
+		string source, ScriptWrapperKind kind, HashSet<int>? transferEmitterStarts = null)
 	{
 		bool sequence = kind == ScriptWrapperKind.Sequence;
 		string wrapper = sequence
@@ -1255,14 +1264,26 @@ public static class ScriptCompiler
 					&& (method.Parameters.Length == 0
 						|| method.Parameters[0].Type.Name != "SequenceCallsite");
 			if (trusted)
-				positions.Add(MapSpan(invocation.GetLocation(), source).Start);
+			{
+				int start = MapSpan(invocation.GetLocation(), source).Start;
+				positions.Add(start);
+				if (method.Name == "NoteVirtual"
+					&& invocation.Parent is AssignmentExpressionSyntax assignment
+					&& assignment.IsKind(SyntaxKind.AddAssignmentExpression)
+					&& ReferenceEquals(assignment.Right, invocation)
+					&& assignment.Parent is ExpressionStatementSyntax
+					&& semantic.GetOperation(assignment) is ICompoundAssignmentOperation
+						{ OperatorMethod: { } transfer }
+					&& ScriptPatternEmissionPolicy.IsNoteGroupTransfer(transfer, compilation))
+					transferEmitterStarts?.Add(start);
+			}
 		}
 		return positions;
 	}
 
 	private static IReadOnlyList<ScriptAnalysisDiagnostic>
 		ValidateIncrementalPatternStatements(
-			string source, IReadOnlySet<int> emitterStarts)
+			string source, IReadOnlySet<int> emitterStarts, IReadOnlySet<int> transferEmitterStarts)
 	{
 		SyntaxNode root = ParseAuthoredBody(source);
 		List<ScriptAnalysisDiagnostic> diagnostics = [];
@@ -1274,6 +1295,8 @@ public static class ScriptCompiler
 			if (invocation.Parent is ExpressionStatementSyntax statement
 				&& ReferenceEquals(statement.Expression, invocation))
 				continue;
+			if (transferEmitterStarts.Contains(invocation.SpanStart - AuthoredBodyOffset))
+				continue;
 			if (invocation.Parent is EqualsValueClauseSyntax initializer
 				&& initializer.Parent is VariableDeclaratorSyntax variable
 				&& variable.Parent is VariableDeclarationSyntax declaration
@@ -1282,7 +1305,7 @@ public static class ScriptCompiler
 				continue;
 			diagnostics.Add(new ScriptAnalysisDiagnostic(
 				RestrictedFeatureCode, ScriptDiagnosticSeverity.Error,
-				"Streaming note helpers must be direct statements or a single local initializer.",
+				"Streaming note helpers must be direct statements, a single local initializer, or a direct NoteGroup += NoteVirtual(...) transfer.",
 				new ScriptSourceSpan(invocation.Span.Start - AuthoredBodyOffset, invocation.Span.Length)));
 		}
 		return diagnostics;
@@ -1527,7 +1550,7 @@ public static class ScriptCompiler
 			=> emitterStarts.Contains(invocation.SpanStart - sourceOffset);
 
 		private static StatementSyntax YieldPending()
-			=> SyntaxFactory.ParseStatement("if (base.HasPendingEvent()) yield return base.EmitPendingStep();\n");
+			=> SyntaxFactory.ParseStatement("while (base.HasPendingEvent()) yield return base.EmitPendingStep();\n");
 
 		private bool HasEmitterInitializer(VariableDeclarationSyntax declaration)
 			=> declaration.Variables.Count == 1
@@ -1585,8 +1608,11 @@ public static class ScriptCompiler
 		public override SyntaxNode? VisitExpressionStatement(ExpressionStatementSyntax node)
 		{
 			var visited = (ExpressionStatementSyntax)base.VisitExpressionStatement(node)!;
-			if (node.Expression is not InvocationExpressionSyntax invocation || !IsEmitter(invocation))
-				return visited;
+			bool emits = node.Expression is InvocationExpressionSyntax invocation && IsEmitter(invocation)
+				|| node.Expression is AssignmentExpressionSyntax assignment
+					&& assignment.IsKind(SyntaxKind.AddAssignmentExpression)
+					&& assignment.Right is InvocationExpressionSyntax start && IsEmitter(start);
+			if (!emits) return visited;
 			return SyntaxFactory.Block(visited.WithoutLeadingTrivia(), YieldPending())
 				.WithTriviaFrom(node);
 		}
