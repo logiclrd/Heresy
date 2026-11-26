@@ -304,12 +304,12 @@ public sealed class PlaybackExportPcmParityTests
 		{
 			RowCount = 3, ChannelCount = 1,
 			Source = $"""
-				NoteVirtual(0, 7U, _O({sample.Value}));
-				NoteVirtual(0, 8U, _O({sample.Value}));
-				CutVirtual(0.5, 7U);
-				NoteVirtual(1, 9U, _O({sample.Value}));
+				using var v7 = NoteVirtual(0, _O({sample.Value}));
+				using var v8 = NoteVirtual(0, _O({sample.Value}));
+				v7.Cut(0.5);
+				using var v9 = NoteVirtual(1, _O({sample.Value}));
 				OffVirtualInScope(1.5);
-				NoteVirtual(1.75, 10U, _O({sample.Value}));
+				using var v10 = NoteVirtual(1.75, _O({sample.Value}));
 				CutAllVirtual(2.25);
 				""",
 		});
