@@ -57,6 +57,29 @@ public sealed class ScriptEditorHelpTests
     }
 
     [Test]
+    public void PatternReferenceDocumentsCurrentOwnershipApiWithoutRetiredNumericHelpers()
+    {
+        string reference = ScriptEditorHelp.PatternReference;
+        string[] retired =
+        [
+            "NoteFilterVirtual", "ChannelFilterVirtual", "VolumeVirtual",
+            "SourceFrameVirtual", "DisplacementVirtual", "PastVirtual",
+            "OffVirtual", "CutVirtual",
+        ];
+        foreach (string method in retired)
+            Assert.That(reference, Does.Not.Contain(method + "("));
+        Assert.That(reference, Does.Not.Contain("virtualId"));
+        Assert.That(reference, Does.Contain("VirtualNote NoteVirtual(double row, ObjectId sourceId,"));
+        Assert.That(reference, Does.Contain("both on the first start and on each retrigger"));
+        Assert.That(reference, Does.Contain("Unproven ownership termination produces a compiler warning"));
+        Assert.That(reference, Does.Contain("disposed or transferred handle"));
+        Assert.That(reference, Does.Contain("Strict mode yields once per member"));
+        Assert.That(reference, Does.Contain("Group controls: Volume, Off, Cut, NoteFilter, ChannelFilter, SourceFrame,"));
+        Assert.That(reference, Does.Contain("Displacement and Past"));
+        Assert.That(reference, Does.Contain("Ambiguous reference sites retain normal delegate equality"));
+    }
+
+    [Test]
     public void PatternReferenceExplainsOrderingModesAndTheirTradeoffs()
     {
         string reference = ScriptEditorHelp.PatternReference;
