@@ -148,6 +148,92 @@ public sealed class IncrementalVirtualTargetTests
 		});
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void ReleaseWaitsForEveryAcceptedEventIncludingDeadlineBeyondFinalRow(bool explicitRelease)
+	{
+		var old = new VirtualChannelIdentity(0, 1);
+		var replacement = new VirtualChannelIdentity(0, 2);
+		var target = ChannelTarget.Virtual(old);
+		List<RawPatternStep> steps = [
+			new RawPatternStep.Emit(At(0, target, new StartNoteCommand((ObjectId)90U))),
+			new RawPatternStep.Emit(new NoteEvent(new MusicalTime(TimeSpan.FromMilliseconds(200), 0),
+				target, [new NoteCutCommand()])),
+		];
+		if (explicitRelease) steps.Add(new RawPatternStep.ReleaseVirtualChannel(old));
+		steps.Add(new RawPatternStep.Emit(At(0.5, ChannelTarget.Virtual(replacement),
+			new StartNoteCommand((ObjectId)91U))));
+		steps.Add(new RawPatternStep.ReleaseVirtualChannel(replacement));
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(new StepSource(steps), 1, context);
+		List<(long Owner, VirtualChannelIdentity Identity, TimeSpan Time)> retired = [];
+		timeline.VirtualChannelFinalUse += (id, identity) => retired.Add((id, identity, timeline.Elapsed));
+		while (timeline.TryStep(out var step))
+		{
+			if (step is IncrementalPatternTimelineStep.Emit emit
+				&& emit.Note.Target.VirtualIdentity == old
+				&& emit.Time == TimeSpan.Zero)
+				Assert.That(retired, Is.Empty);
+			if (timeline.Elapsed < TimeSpan.FromMilliseconds(200))
+				Assert.That(retired.Any(x => x.Identity == old), Is.False);
+		}
+		Assert.That(retired, Is.EqualTo(new[] {
+			(owner, replacement, TimeSpan.FromMilliseconds(60)),
+			(owner, old, TimeSpan.FromMilliseconds(200)),
+		}));
+	}
+
+	[Test]
+	public void CancellationDiscardsDeadlineAndClosesOnlyCanceledGeneration()
+	{
+		var id = new VirtualChannelIdentity(0, 1);
+		var target = ChannelTarget.Virtual(id);
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(new StepSource([
+			new RawPatternStep.Emit(At(0, target, new StartNoteCommand((ObjectId)90U))),
+			new RawPatternStep.Emit(new NoteEvent(new MusicalTime(TimeSpan.FromMilliseconds(300), 0),
+				target, [new NoteCutCommand()])),
+			new RawPatternStep.ReleaseVirtualChannel(id),
+		]), 1, context);
+		List<(long, VirtualChannelIdentity)> retired = [];
+		timeline.VirtualChannelFinalUse += (o, i) => retired.Add((o, i));
+		while (timeline.TryStep(out var step))
+			if (step is IncrementalPatternTimelineStep.Advance) break;
+		Assert.That(retired, Is.Empty);
+		Assert.That(timeline.Cancel(owner), Is.True);
+		Assert.That(retired, Is.EqualTo(new[] { (owner, id) }));
+		Assert.That(Drain(timeline), Is.Empty);
+		Assert.That(timeline.Cancel(owner), Is.False);
+	}
+
+	[Test]
+	public void StartingRowSkipsUnmaterializedGenerationWithoutRetirementTombstone()
+	{
+		var skipped = new VirtualChannelIdentity(0, 1);
+		var kept = new VirtualChannelIdentity(0, 2);
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(new StepSource([
+			new RawPatternStep.Emit(At(0, ChannelTarget.Virtual(skipped), new StartNoteCommand((ObjectId)90U))),
+			new RawPatternStep.ReleaseVirtualChannel(skipped),
+			new RawPatternStep.Emit(At(1, ChannelTarget.Virtual(kept), new StartNoteCommand((ObjectId)91U))),
+			new RawPatternStep.ReleaseVirtualChannel(kept),
+		]), 2, context, startRow: 1);
+		List<(long, VirtualChannelIdentity)> retired = [];
+		timeline.VirtualChannelFinalUse += (o, i) => retired.Add((o, i));
+		Assert.That(Drain(timeline).Select(e => e.Note.Target.VirtualIdentity), Is.EqualTo(new[] { kept }));
+		Assert.That(retired, Is.EqualTo(new[] { (owner, kept) }));
+	}
+
+	private sealed class StepSource(IReadOnlyList<RawPatternStep> steps)
+		: IIncrementalRawPatternNoteGenerator
+	{
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+			=> steps;
+	}
+
 	[Test]
 	public void TrackerMemoryEffectsStillRequirePhysicalTargets()
 	{
