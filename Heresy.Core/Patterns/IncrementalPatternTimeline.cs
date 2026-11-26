@@ -832,6 +832,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					.Depart(note.Target.VirtualIdentity);
 		}
 
+		public int RetainedVirtualIdentityCount => _virtualRetirement?.Count ?? 0;
+
 		public void AbandonVirtualEvents() => _virtualRetirement?.Abandon();
 
 		public void Dispose()
@@ -1090,6 +1092,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 	private void ReportVirtualChannelFinalUse(long owner, VirtualChannelIdentity id)
 		=> VirtualChannelFinalUse?.Invoke(owner, id);
+	/// <summary>Diagnostic snapshot of generated identities still tracked by
+	/// live or deferred-only cursors. Computed on demand, not per event.</summary>
+	public int RetainedVirtualIdentityCount => _active
+		.Concat(_delayed.Select(note => note.Owner)).Distinct()
+		.Sum(cursor => cursor.RetainedVirtualIdentityCount);
+
 	public bool IsComplete => _active.Count == 0
 		&& _delayed.Count == 0 && _queuedTempoEvents.Count == 0
 		&& _futureTempoRamps.Count == 0;
