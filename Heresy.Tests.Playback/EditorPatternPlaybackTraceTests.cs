@@ -81,6 +81,81 @@ public sealed class EditorPatternPlaybackTraceTests
         }
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void GroupFanoutDeduplicatesActivationSpansAndRetainsOnlySurvivingVoiceOrigins(bool relaxed)
+    {
+        SongDocument song = new();
+        song.Add(SampleDefinition.CreateImported((ObjectId)20U,
+            "Long source", "group.wav", LongMonoWave()));
+        string source = """
+            using var chord = NewNoteGroup();
+            chord += NoteVirtual(0, _O(20), Semitone(0));
+            chord += NoteVirtual(0, _O(20), Semitone(4));
+            using var other = NoteVirtual(0, _O(20), Semitone(-12));
+            chord.Volume(2, .25, timeOffsetSeconds: .03);
+            chord.Cut(4);
+            other.Cut(6);
+            """;
+        if (relaxed)
+            source = "#order relaxed\n" + source.Replace("chord.Cut(4);",
+                "Action<double, double> stop = chord.Cut; stop(4, 0);", StringComparison.Ordinal);
+        var pattern = new ScriptPatternDefinition((ObjectId)5U, "Traced group")
+        { RowCount = 8, ChannelCount = 1, Source = source };
+        song.Add(pattern);
+        RenderConfiguration config = new(48000, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0.0)]);
+        var tracedFactory = new PlaybackRequestAudioSourceFactory(config);
+        var ordinaryFactory = new PlaybackRequestAudioSourceFactory(config);
+        var request = PatternPlaybackRequest.Create(song, pattern.Id) with
+        { EditorCallsiteSession = EditorCallsiteSessionIds.Next() };
+        IAudioOutputSource traced = tracedFactory.Create(request);
+        IAudioOutputSource ordinary = ordinaryFactory.Create(PatternPlaybackRequest.Create(song, pattern.Id));
+        try
+        {
+            Assert.That(tracedFactory.TryTakePlaybackPositionTimeline(request,
+                out PlaybackPositionTimeline? timeline), Is.True);
+            const int frames = 44000;
+            float[] withTrace = new float[frames], withoutTrace = new float[frames];
+            for (int pos = 0; pos < frames;)
+            {
+                int count = Math.Min(509, frames - pos);
+                traced.Render(count, withTrace.AsSpan(pos, count));
+                pos += count;
+            }
+            ordinary.Render(frames, withoutTrace);
+            SequenceCallsite Span(string text) =>
+                new(source.IndexOf(text, StringComparison.Ordinal), text.Length);
+            var a = Span("NoteVirtual(0, _O(20), Semitone(0))");
+            var b = Span("NoteVirtual(0, _O(20), Semitone(4))");
+            var other = Span("NoteVirtual(0, _O(20), Semitone(-12))");
+            var volume = Span("chord.Volume(2, .25, timeOffsetSeconds: .03)");
+            var cut = Span(relaxed ? "stop(4, 0)" : "chord.Cut(4)");
+            var atZero = timeline!.GetPositionAt(TimeSpan.Zero);
+            var beforeVolume = timeline.GetPositionAt(TimeSpan.FromMilliseconds(250));
+            var afterVolume = timeline.GetPositionAt(TimeSpan.FromMilliseconds(280));
+            var afterCut = timeline.GetPositionAt(TimeSpan.FromMilliseconds(520));
+            var afterOther = timeline.GetPositionAt(TimeSpan.FromMilliseconds(760));
+            Assert.Multiple(() =>
+            {
+                Assert.That(atZero?.EditorPatternCallsites, Is.EquivalentTo(new[] { a, b, other }));
+                Assert.That(beforeVolume?.EditorPatternCallsites ?? [], Does.Not.Contain(volume));
+                Assert.That(afterVolume?.EditorPatternCallsites, Is.EquivalentTo(new[] { volume }));
+                Assert.That(afterVolume?.EditorActiveNoteCallsites, Is.EquivalentTo(new[] { a, b, other }));
+                Assert.That(afterCut?.EditorPatternCallsites, Is.EquivalentTo(new[] { cut }));
+                Assert.That(afterCut?.EditorActiveNoteCallsites, Is.EquivalentTo(new[] { other }));
+                Assert.That(afterOther?.EditorActiveNoteCallsites ?? [], Is.Empty);
+                Assert.That(withTrace, Is.EqualTo(withoutTrace).Within(1e-6f));
+                Assert.That(withTrace.Any(v => Math.Abs(v) > 1e-5f), Is.True);
+            });
+        }
+        finally
+        {
+            (traced as IDisposable)?.Dispose();
+            (ordinary as IDisposable)?.Dispose();
+        }
+    }
+
     [Test]
     public void F6SustainedOriginsFollowRealVoicesAcrossRowsAndCuts()
     {
