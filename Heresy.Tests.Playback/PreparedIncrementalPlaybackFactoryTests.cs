@@ -3484,6 +3484,91 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		});
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void CancelingPrivateVirtualRootDiscardsRecycledGenerationsButNotSibling(bool relaxed)
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav",
+			LongWave(8192, 1200)));
+		ObjectId filter = doc.AllocateObjectId();
+		doc.Add(new FilterDefinition(filter, "Finite echo", [
+			new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+		]));
+		ObjectId child = doc.AllocateObjectId();
+		string source = $"""
+			using var old = NewNoteGroup();
+			using var lead = NoteVirtual(0, _O({sample.Value}));
+			lead.Displacement(0, NoteDisplacementAction.Continue);
+			lead.Note(0.25, _O({sample.Value}));
+			old += lead;
+			old.ChannelFilter(0.25, _O({filter.Value}));
+			old.Past(0.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.09);
+			old.Cut(0.75, timeOffsetSeconds: 0.09);
+			old.Dispose();
+			using var next = NewNoteGroup();
+			next += NoteVirtual(1, _O({sample.Value}));
+			next.Cut(3);
+			""";
+		doc.Add(new ScriptPatternDefinition(child, "Private generations")
+		{
+			Source = relaxed ? "#order relaxed\n" + source : source,
+			RowCount = 6, ChannelCount = 1,
+		});
+		ObjectId root = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(root, "Virtual private root")
+		{
+			Source = $"""
+				using var group = NewNoteGroup();
+				group += NoteVirtual(0, _O({child.Value}), mixdown: true);
+				group.Cut(5);
+				""",
+			RowCount = 6, ChannelCount = 1,
+		});
+
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var baseline = factory.Create(doc, root);
+		using var plan = factory.Create(doc, root);
+		long sibling = plan.Timeline.AddRoot(root);
+		float[] expected = new float[900];
+		baseline.Source.Render(expected.Length, expected);
+		float[] before = new float[150];
+		plan.Source.Render(before.Length, before);
+		Assert.That(before, Is.EqualTo(expected.Take(150).Select(v => 2 * v).ToArray())
+			.Within(1e-6f));
+		Assert.That(PreparedRegistrationCount(plan), Is.EqualTo(2));
+		Assert.That(expected[220], Is.GreaterThan(0.1f));
+
+		// Both private children have sounding and displaced voices,
+		// a recycled slot, and delayed controls due at frame 180.
+		Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+		Assert.That(plan.Timeline.IsInvocationActive(sibling), Is.True);
+		float[] after = new float[expected.Length - before.Length];
+		plan.Source.Render(70, after.AsSpan(0, 70));
+		Assert.That(PreparedRegistrationCount(plan), Is.EqualTo(1),
+			"Only the canceled private subtree may be unregistered.");
+		for (int pos = 70; pos < after.Length;)
+		{
+			int count = Math.Min(37, after.Length - pos);
+			plan.Source.Render(count, after.AsSpan(pos, count));
+			pos += count;
+		}
+		Assert.Multiple(() =>
+		{
+			// Ignore only the canceled voice's normal short anti-click
+			// residue. The sibling, including its own delayed controls,
+			// must match an independently rendered single invocation.
+			Assert.That(after.Skip(70).ToArray(), Is.EqualTo(expected.Skip(220).ToArray())
+				.Within(1e-6f));
+			Assert.That(PreparedRegistrationCount(plan), Is.Zero);
+			Assert.That(plan.Session.RetainedScopedVirtualChannelCount, Is.Zero);
+			Assert.That(plan.Session.RetainedScopedVirtualFilterCount, Is.Zero);
+			Assert.That(plan.Session.VirtualVoices, Is.Empty);
+			Assert.That(plan.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+		});
+	}
+
 	[TestCase(false, true, false)]
 	[TestCase(true, false, false)]
 	[TestCase(true, true, false)]
