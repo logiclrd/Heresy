@@ -1,9 +1,12 @@
 # Script Pattern virtual-note ownership redesign (#54)
 
-Status: public API and F6 acceptance complete; final sustained stress, rewind and export acceptance underway.
+Status: slices 1–5c implemented and verified; slice 5d final audit and owner merge approval pending.
 Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
 [Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
-this document records the implementation choices and boundaries. The single-handle and initial group APIs have been implemented; final acceptance remains.
+this document records the implementation choices and boundaries. The public
+API is implemented, including both disposable wrapper types. Earlier milestone
+sections and the baseline inventory are historical snapshots, not outstanding
+work or alternate API contracts. See the final acceptance record below.
 
 ## Public scripting surface
 
@@ -399,9 +402,44 @@ tail decay, and no unexpected ownership/filter diagnostics. The
 observability properties are read on demand, not per audio sample.
 Tests use deterministic state bounds rather than machine-dependent
 wall-clock or GC thresholds; no performance improvement is claimed.
-Exact-head CI for this slice is still required.
+Initial CI #45761485059 passed ARM64, Core and scripting stress, but
+Playback compilation was blocked by NUnit1033. The output-only correction
+`3cd192f9b50c19f85e5a3136023510f29b8eab80` changed no assertion.
+Exact-head CI [#45765230611](https://github.com/logiclrd/Heresy/actions/runs/45765230611)
+passed all 4,641 tests, Release bundle smoke and ARM64. Both PCM stress
+cases reported peaks of 4 scoped channels, 4 filters, 2 retiring filters
+and 1 displaced voice; all four categories returned to zero.
 
-## Compiler integration after #58 and #69
+### Private mixdown rewind, cancellation and export (slice 5c)
+
+Four strict/relaxed combinations in
+`RewoundPrivateSequenceReplaysRecycledGenerationsWithoutTouchingSibling`
+compare a recycled-slot private Sequence/Pattern hierarchy against a
+reference that retains the original lease until the replacement starts.
+The reference is independent of slot recycling. Rewind one of two sibling
+mixdowns while old deferred Past/Cut, NNA and channel-filter state are live;
+verify fresh renderer state, unchanged sibling clock, disposal of abandoned
+private registrations and sample-exact replay within 1e-6.
+
+Two explicit cancellation cases cancel one private virtual root while its
+sibling has identical local identities and pending events. Verify only the
+canceled subtree is unregistered; after its ordinary anti-click residue,
+the survivor matches independently rendered single-invocation PCM.
+
+Four production `PlaybackExportPcmParityTests` cases compare actual
+realtime request and offline renderer float PCM (mono and six channels),
+with two visits to a Pattern using groups, recycled generations, delayed
+controls and forward/backward native SourceFrame seeks into private
+Sequence/Pattern mixdowns. The actual editor-F6 first visit also matches
+ordinary PCM. Export compares the logical body separately from its
+intentional end-input release policy.
+
+Exact-head CI [#45765806135](https://github.com/logiclrd/Heresy/actions/runs/45765806135)
+at `ae40c20ff8d8b7da31c2eae692797bd090cf24b6` passed all **4,651 tests**,
+including all ten new cases, Release bundle smoke and ARM64. No production
+engine correction was needed for these regressions.
+
+## Compiler integration after #58 and #69 (original design)
 
 The issue's older observation that using/member calls are prohibited is
 superseded: canonical Roslyn IOperation validation now supports managed
@@ -498,6 +536,35 @@ inventory during migration.
    audition, reference migration, randomized/stress and nested/repeated/
    export PCM parity, exact-head CI and explicit owner merge approval.
 
-Keep one draft feature PR until the entire redesign is accepted. A
-production identity migration, API switch, or unverified retirement
-mechanism is not implied by this design-only first commit.
+## Final acceptance record (slice 5d)
+
+The implemented API is the public surface above, not the retired numeric
+script helpers. Both wrapper types are sealed and have internal constructors;
+only their approved bound methods, Dispose and the exact instance compound
+assignment operator are authorized in Pattern scripts. Metadata overloads
+and trusted runtime members remain unavailable to authored source. Strict
+fanout suspends for every member; relaxed collection remains transactional
+before playback, with stable raw-row ordering and cooperative work limits.
+The using-local extension is confined to the approved NoteGroup transfer;
+ordinary assignment/ref/out restrictions and original-source spans remain.
+
+The generation allocator, scheduler final-use accounting and renderer
+retirement barriers distinguish live leases, pending scheduled references
+and actual audio tails. Generated keys include the owner and full identity;
+legacy generation-zero engine targets remain supported. The deterministic
+rewind and cancellation cases above validate fresh private rendering and
+sibling isolation, not globally unique numeric identities across sessions.
+
+Manual owner acceptance already recorded: Synth retrigger, Pattern mixdown
+with explicit mixdown on both starts, direct using/+= group syntax and
+relaxed group F6 audition. Automated tests establish the scoped behavior
+and bounded live state in the tested workloads, not measured CPU/GC speedup,
+universal hard-realtime guarantees, or a complete OS security sandbox.
+Cancellation remains cooperative; relaxed mode may buffer events and delay
+startup. Ambiguous delegate reference sites and unnameable delegate types
+retain the equality-first fallback limitations documented in slice 5a.
+
+Keep draft PR #70 open until final exact-head CI and explicit owner merge
+approval. Physical/virtual helper parity and other unrelated TODOs remain
+separate. No saved-script compatibility shim for retired numeric helpers
+is required.
