@@ -227,6 +227,60 @@ public sealed class IncrementalVirtualTargetTests
 		Assert.That(retired, Is.EqualTo(new[] { (owner, kept) }));
 	}
 
+	[Test]
+	public void LongRunningDeferredGenerationsRetireWithoutHistoricalEntries()
+	{
+		const int cycles = 4096;
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long owner = timeline.Add(new RecyclingSource(cycles), cycles, context);
+		int retired = 0, emitted = 0, peak = 0;
+		timeline.VirtualChannelFinalUse += (id, identity) =>
+		{
+			if (id != owner || identity.Slot != 0
+				|| identity.Generation != (ulong)retired + 1)
+				Assert.Fail("Missing, duplicated or misordered final-use notification.");
+			double expectedMs = retired * 120.0 + 180.0;
+			if (Math.Abs(timeline.Elapsed.TotalMilliseconds - expectedMs) > 0.001)
+				Assert.Fail("Final use fired before or after the delayed cut deadline.");
+			retired++;
+		};
+		while (timeline.TryStep(out var step))
+		{
+			if (step is IncrementalPatternTimelineStep.Emit) emitted++;
+			peak = Math.Max(peak, timeline.RetainedVirtualIdentityCount);
+			if (timeline.RetainedVirtualIdentityCount > 4)
+				Assert.Fail("Retirement entries grew beyond the overlap horizon.");
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(emitted, Is.EqualTo(cycles * 2));
+			Assert.That(retired, Is.EqualTo(cycles));
+			Assert.That(peak, Is.InRange(2, 4));
+			Assert.That(timeline.RetainedVirtualIdentityCount, Is.Zero);
+			Assert.That(timeline.IsComplete, Is.True);
+		});
+	}
+
+	private sealed class RecyclingSource(int cycles) : IIncrementalRawPatternNoteGenerator
+	{
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			for (int row = 0; row < cycles; row++)
+			{
+				VirtualChannelIdentity id = new(0, (ulong)row + 1);
+				ChannelTarget target = ChannelTarget.Virtual(id);
+				yield return new RawPatternStep.Emit(At(row, target,
+					new StartNoteCommand((ObjectId)90U)));
+				yield return new RawPatternStep.Emit(new NoteEvent(
+					new MusicalTime(TimeSpan.FromMilliseconds(180), row),
+					target, [new NoteCutCommand()]));
+				yield return new RawPatternStep.ReleaseVirtualChannel(id);
+			}
+			yield return new RawPatternStep.Advance(cycles);
+		}
+	}
+
 	private sealed class StepSource(IReadOnlyList<RawPatternStep> steps)
 		: IIncrementalRawPatternNoteGenerator
 	{
