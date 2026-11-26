@@ -115,9 +115,18 @@ public static class ScriptCompiler
 		{
 			if (!assignment.IsKind(SyntaxKind.AddAssignmentExpression)
 				|| assignment.Parent is not ExpressionStatementSyntax
-				|| assignment.Left is not IdentifierNameSyntax
-				|| !IsScriptLocation(assignment.GetLocation())
-				|| model.GetSymbolInfo(assignment.Left).Symbol is not ILocalSymbol local
+				|| assignment.Left is not IdentifierNameSyntax left
+				|| !IsScriptLocation(assignment.GetLocation()))
+				continue;
+			// A readonly using assignment is an erroneous bound
+			// expression. GetSymbolInfo on its left operand need not
+			// expose the successfully looked-up local as Symbol.
+			SymbolInfo leftInfo = model.GetSymbolInfo(left);
+			ILocalSymbol? local = leftInfo.Symbol as ILocalSymbol
+				?? leftInfo.CandidateSymbols.OfType<ILocalSymbol>().FirstOrDefault()
+				?? model.LookupSymbols(left.SpanStart, name: left.Identifier.ValueText)
+					.OfType<ILocalSymbol>().FirstOrDefault();
+			if (local is null
 				|| !SymbolEqualityComparer.Default.Equals(local.Type, groupType)
 				|| noteType is null
 				|| !model.ClassifyConversion(assignment.Right, noteType).IsImplicit
@@ -141,7 +150,7 @@ public static class ScriptCompiler
 		var errors = compilation.GetDiagnostics().Where(d =>
 			d.Severity == DiagnosticSeverity.Error
 			&& !(d.Id == "CS1656" && d.Location.SourceTree == tree
-				&& approvedLefts.Any(span => span.Contains(d.Location.SourceSpan))))
+				&& approvedLefts.Any(span => span.Contains(d.Location.SourceSpan.Start))))
 			.Select(d => ProjectDiagnostic(d, source)).ToArray();
 		if (errors.Length != 0) return unchanged with { Diagnostics = errors };
 
