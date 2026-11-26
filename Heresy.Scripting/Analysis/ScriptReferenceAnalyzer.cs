@@ -226,7 +226,7 @@ public static class ScriptReferenceAnalyzer
 				new ScriptObjectReference(
 					id,
 					new ScriptSourceSpan(
-						invocation.SpanStart,
+						invocation.SpanStart - sourceOffset,
 						invocation.Span.Length)));
 		}
 
