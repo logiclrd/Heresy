@@ -482,6 +482,10 @@ Do not reintroduce completed-task checklists here.
   add compilation/PCM parity tests for any new helpers. Keep this
   separate from a read-only API-reference UI, which must document
   **only the functions currently available**.
+  **Discovery:** [parity design](script-channel-helper-parity-design.md),
+  tracked in [issue #71](https://github.com/logiclrd/Heresy/issues/71).
+  Owner approval of the API/lifetime/flattened-source contracts precedes
+  implementation; the design is not a promise of current script helpers.
 
 - [x] **Broaden restricted-C# Script Pattern and Script Sequence API
   under the owner-approved code-isolation policy (issue #58).** Permit
