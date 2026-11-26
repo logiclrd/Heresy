@@ -842,25 +842,55 @@ public static class ScriptCompiler
 		List<ScriptAnalysisDiagnostic> diagnostics)
 	{
 		var handleType = compilation.GetTypeByMetadataName(typeof(VirtualNote).FullName!);
+		var groupType = compilation.GetTypeByMetadataName(typeof(NoteGroup).FullName!);
 		var patternType = compilation.GetTypeByMetadataName(typeof(PatternScriptProgram).FullName!);
+
+		bool IsUsing(VariableDeclarationSyntax declaration)
+			=> declaration.Parent is UsingStatementSyntax
+				|| declaration.Parent is LocalDeclarationStatementSyntax local
+					&& local.UsingKeyword.RawKind != 0;
+
+		bool IsOwningGroupTransfer(AssignmentExpressionSyntax transfer)
+		{
+			if (transfer.Parent is not ExpressionStatementSyntax
+				|| model.GetOperation(transfer) is not ICompoundAssignmentOperation
+					{ OperatorMethod: { } op }
+				|| !ScriptPatternEmissionPolicy.IsNoteGroupTransfer(op, compilation)
+				|| model.GetSymbolInfo(transfer.Left).Symbol is not ILocalSymbol destination)
+				return false;
+			// Prove the ordinary lexical using-group case. A group alias,
+			// reassigned local, or complex control flow remains conservative.
+			return destination.DeclaringSyntaxReferences.Any(reference =>
+				reference.GetSyntax() is VariableDeclaratorSyntax
+				{
+					Parent: VariableDeclarationSyntax declaration,
+					Initializer.Value: InvocationExpressionSyntax creation,
+				}
+				&& IsUsing(declaration)
+				&& model.GetSymbolInfo(creation).Symbol is IMethodSymbol factory
+				&& factory.Name == "NewNoteGroup"
+				&& SymbolEqualityComparer.Default.Equals(factory.ContainingType, patternType));
+		}
+
 		foreach (InvocationExpressionSyntax call in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
 		{
 			if (model.GetSymbolInfo(call).Symbol is not IMethodSymbol method
-				|| method.Name != "NoteVirtual"
-				|| !SymbolEqualityComparer.Default.Equals(method.ContainingType, patternType)
-				|| !SymbolEqualityComparer.Default.Equals(method.ReturnType, handleType))
+				|| !SymbolEqualityComparer.Default.Equals(method.ContainingType, patternType))
+				continue;
+			bool handle = method.Name == "NoteVirtual"
+				&& SymbolEqualityComparer.Default.Equals(method.ReturnType, handleType);
+			bool group = method.Name == "NewNoteGroup"
+				&& SymbolEqualityComparer.Default.Equals(method.ReturnType, groupType);
+			if (!handle && !group) continue;
+			if (handle && call.Parent is AssignmentExpressionSyntax directTransfer
+				&& ReferenceEquals(directTransfer.Right, call)
+				&& IsOwningGroupTransfer(directTransfer))
 				continue;
 			if (call.Parent is EqualsValueClauseSyntax initializer
 				&& initializer.Parent is VariableDeclaratorSyntax variable
 				&& variable.Parent is VariableDeclarationSyntax declaration)
 			{
-				if (declaration.Parent is UsingStatementSyntax
-					|| declaration.Parent is LocalDeclarationStatementSyntax localUsing
-						&& localUsing.UsingKeyword.RawKind != 0)
-					continue;
-				// Conservative normal-flow proof for a straightforward local
-				// followed by direct Dispose. Aliases and branching require
-				// a using scope (or the future owning-group transfer proof).
+				if (IsUsing(declaration)) continue;
 				if (declaration.Parent is LocalDeclarationStatementSyntax local
 					&& local.Parent is BlockSyntax block
 					&& model.GetDeclaredSymbol(variable) is ILocalSymbol owned)
@@ -868,13 +898,26 @@ public static class ScriptCompiler
 					bool disposed = false;
 					foreach (StatementSyntax next in block.Statements.Skip(block.Statements.IndexOf(local) + 1))
 					{
-						if (next is not ExpressionStatementSyntax { Expression: InvocationExpressionSyntax action })
+						if (next is not ExpressionStatementSyntax expression)
+							break;
+						if (expression.Expression is AssignmentExpressionSyntax transfer
+							&& IsOwningGroupTransfer(transfer))
+						{
+							if (handle && SymbolEqualityComparer.Default.Equals(
+								model.GetSymbolInfo(transfer.Right).Symbol, owned))
+							{
+								disposed = true;
+								break;
+							}
+							continue;
+						}
+						if (expression.Expression is not InvocationExpressionSyntax action)
 							break;
 						if (action.Expression is MemberAccessExpressionSyntax access
 							&& SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(access.Expression).Symbol, owned)
 							&& model.GetSymbolInfo(action).Symbol is IMethodSymbol target
 							&& target.Name == "Dispose"
-							&& SymbolEqualityComparer.Default.Equals(target.ContainingType, handleType))
+							&& SymbolEqualityComparer.Default.Equals(target.ContainingType, method.ReturnType))
 						{
 							disposed = true;
 							break;
@@ -888,7 +931,9 @@ public static class ScriptCompiler
 				}
 			}
 			diagnostics.Add(new ScriptAnalysisDiagnostic("HRS2101", ScriptDiagnosticSeverity.Warning,
-				"VirtualNote ownership termination is not proven; use a using scope or explicitly Dispose the handle.",
+				handle
+					? "VirtualNote ownership termination is not proven; use a using scope, Dispose or transfer to an owning group."
+					: "NoteGroup ownership termination is not proven; use a using scope or explicitly Dispose the group.",
 				MapSpan(call.GetLocation(), source)));
 		}
 	}
