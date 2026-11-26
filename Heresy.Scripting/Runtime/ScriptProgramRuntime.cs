@@ -80,6 +80,8 @@ public abstract class PatternScriptProgram
 	private double _lastRawRow;
 	private bool _collectingRelaxed;
 	private SequenceCallsite? _editorActionCallsite;
+	private VirtualChannelLeaseAllocator? _virtualLeases;
+	private Queue<VirtualChannelIdentity>? _releasedVirtualChannels;
 
 	protected PatternScriptProgram(
 		SequencingContext context,
@@ -102,6 +104,29 @@ public abstract class PatternScriptProgram
 		_output = output;
 		_rowCount = rowCount;
 		_channelCount = channelCount;
+	}
+
+	// Trusted ownership runtime only. No numeric lease API is exposed to
+	// authored source. The handle/group implementation will own these
+	// leases; the streaming wrapper publishes releases at yield boundaries.
+	internal VirtualChannelIdentity AcquireVirtualChannelLease()
+		=> (_virtualLeases ??= new()).Acquire();
+
+	internal bool ReleaseVirtualChannelLease(VirtualChannelIdentity identity)
+	{
+		if (_virtualLeases?.Release(identity) != true)
+			return false;
+		if (_output is IncrementalPatternEventReceiver)
+			(_releasedVirtualChannels ??= new()).Enqueue(identity);
+		return true;
+	}
+
+	internal bool TryTakeVirtualChannelRelease(out VirtualChannelIdentity identity)
+	{
+		if (_releasedVirtualChannels is not null)
+			return _releasedVirtualChannels.TryDequeue(out identity);
+		identity = default;
+		return false;
 	}
 
 	internal void Execute() => ExecuteScript();
