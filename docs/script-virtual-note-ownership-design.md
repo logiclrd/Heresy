@@ -1,6 +1,6 @@
 # Script Pattern virtual-note ownership redesign (#54)
 
-Status: approved owner contract; internal identity and allocator implementation in progress.
+Status: approved owner contract; internal identity and retirement protocol committed, awaiting slice 2b CI.
 Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
 [Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
 this document records the implementation choices and boundaries. No public
@@ -124,23 +124,47 @@ tombstone. The endpoint does not change the existing generation-zero
 filter policy, cut sound, or imply that a lease release is itself enough
 to retire a filter.
 
-**Outstanding before the script API switch (slice 2b):** connect the
-producer and scheduler final-use proof. Candidate protocol: a trusted
-non-musical release sideband, ordered after the last raw event emitted
-for that lease, plus outstanding-event accounting at the cursor /
-renderer hand-off. Count only references that can actually still be
-delivered: lookahead, row buffering, delayed-wall events, and the one
-prefetched output event; rejected/consumed/canceled references must not
-remain counted. The retirement signal must cross the hand-off only
-after the final event is applied, never at scheduler prefetch. In strict
-mode the sideband must work with disposal/finally and no later musical
-emissions. In relaxed mode release can be ordered after the last sorted
-raw event for a generation, but a delayed wall deadline still prevents
-retirement until it resolves. Starting-row skips, pattern restarts,
-eager paths, end-of-invocation cleanup, subtree cancellation and private
-rewind must be addressed. This is a proposed protocol, not an implemented
-or proven scheduler feature. No public VirtualNote / NoteGroup API until
-the complete lifecycle works.
+### Producer/scheduler retirement protocol (slice 2b)
+
+A trusted `RawPatternStep.ReleaseVirtualChannel` is an enumeration-order
+sideband, not a musical position, command or progress marker. The invocation
+runtime has a lazy allocator and release queue. Strict compilation drains
+successful releases after yielded actions/cooperation (including dropped
+backwards emissions), and again after normal iterator completion, since
+disposal/finally itself cannot yield. Relaxed replay projects releases
+immediately after each identity's last **sorted** raw reference, independent
+of authored disposal order. Legacy targets produce no markers.
+
+The cursor accounts only accepted, validated generated virtual events
+entering row preparation. A raw lookahead cannot be overtaken by a later
+release marker; skipped/filtered events never acquire an accounting entry.
+A marker or producer completion closes the generation. A reference moves
+from the prepared row into the fixed-wall deadline queue, or departs when
+resolved/dropped. Generated virtual operations are already restricted to
+the non-repeating, non-tracker-synthetic subset, and cannot be introduced
+by replay-safe tracker producers. A completed cursor remains referenced
+by its deferred deadlines until drained. Cancellation abandons accepted
+references after dropping the cursor's pending deadlines; no historical
+generation tombstones are kept. A producer must never emit for a released
+identity (the forthcoming wrapper ownership checks enforce this contract).
+
+The final-use notification is forwarded by Pattern cursor identity to
+PreparedIncrementalAudioSource. It is held until the current or prefetched
+Emit (including an editor-deferred Emit) has been applied/discarded.
+Producer-only stop drops future work without requesting audible cuts;
+the renderer retains already sounding voices and tails. Natural completion,
+subtree cancellation and fresh private timelines do not reuse old renderer
+identities. The standalone row processor ignores non-musical markers; the
+eager raw path returns schedules, not renderer final-use callbacks.
+
+Regression coverage includes explicit/implicit closure, a delayed action
+past the final row, starting-row skips, cancellation, release queue and
+sorted replay projection, silent-filter survival through a delayed note
+start, and discarded prefetch reclamation. The public scripting surface
+still uses numeric IDs; the trusted internal lease APIs and test raw
+producers exercise the foundation. Actual handle/group ownership validation,
+cleanup warnings, full generation-qualified private mixdown/rewind and
+eager/export parity remain acceptance work after the public API switch.
 
 Tests in this foundation exercise one million allocations at peak eight
 leases, old-generation deferred Cut/Past with a new generation and
