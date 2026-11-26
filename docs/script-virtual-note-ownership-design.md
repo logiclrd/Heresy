@@ -182,6 +182,21 @@ are not part of the final API. The new handle offers Note, Volume, Off,
 Cut, SourceFrame, Displacement, Past, NoteFilter and ChannelFilter.
 No ambiguous Filter alias or virtual resonant-filter capability is added.
 
+A Pattern or Sequence used as the source of a virtual note must specify
+`mixdown: true`, both for the initial NoteVirtual and any subsequent Note
+that selects such a source. Flattened children require a physical parent
+channel under the existing recursive timeline contract; the handle redesign
+does not implicitly change the requested mixdown mode. Direct Sample,
+Synth and Instrument sources do not require this flag solely because the
+note is virtual. The diagnostic now identifies the explicit mixdown option.
+
+The first combined CI run found six scripting failures caused by top-level
+using declarations parsing differently at standalone submission scope. The
+reference analyzer now falls back to a valid block interpretation and maps
+references back to original offsets. Compiler statement audits and rewrites
+use the actual method-body context. The fix adds reference-span and private
+mixdown retrigger regressions; exact-head CI remains required.
+
 A handle validates the live allocator lease before every musical
 operation. Dispose invalidates all aliases, releases immediately and
 never emits a musical event. Invocation cleanup invalidates and reclaims
