@@ -343,6 +343,54 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void GeneratedVirtualMemoryIsIsolatedAndRetiredIndependentlyOfPcm()
+	{
+		ObjectId source = (ObjectId)10U;
+		ObjectId missing = (ObjectId)11U;
+		float[] waveform = new float[128];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false, Sample(waveform, 1000))));
+		VirtualChannelIdentity oldId = new(7, 1);
+		VirtualChannelIdentity newId = new(7, 2);
+		ChannelTarget old = ChannelTarget.Virtual(oldId);
+		ChannelTarget replacement = ChannelTarget.Virtual(newId);
+		// Control without a voice, and a failed start, must not retain
+		// a DSP channel nor replace the explicitly remembered volume.
+		session.ApplyScopedEvent(101, old, [new SetNoteVolumeCommand(0.25)]);
+		session.ApplyScopedEvent(101, old, [new StartNoteCommand(missing, Volume: 0.9)]);
+		session.Render(0, 20, new float[20]);
+		Assert.That(session.RetainedScopedVirtualChannelCount, Is.Zero);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.EqualTo(1));
+
+		// A different owner and a recycled slot have independent defaults.
+		session.ApplyScopedEvent(202, old, [new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(101, replacement, [new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(101, old, [new StartNoteCommand(source)]);
+		float[] output = new float[20];
+		session.Render(20, output.Length, output);
+		Assert.That(output[19], Is.EqualTo(2.25f).Within(1e-6f));
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.EqualTo(3));
+
+		// Final use is non-musical. The current voice keeps playing,
+		// but an old generation's remembered state is immediately gone.
+		session.RetireScopedVirtualChannel(101, oldId);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.EqualTo(2));
+		session.Render(40, output.Length, output);
+		Assert.That(output[19], Is.EqualTo(2.25f).Within(1e-6f));
+		// Raw broadcasts may control audible voices but cannot resurrect
+		// retired scalar state. This is not a new authored broadcast API.
+		session.ApplyScopedEvent(101, ChannelTarget.AllVirtualInScope,
+			[new SetNoteVolumeCommand(0.5)]);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.EqualTo(2));
+		session.RetireScopedVirtualChannel(202, oldId);
+		session.RetireScopedVirtualChannel(101, newId);
+		session.Render(60, 200, new float[200]);
+		Assert.That(session.RetainedScopedVirtualChannelCount, Is.Zero);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.Zero);
+	}
+
+	[Test]
 	public void ScopedVirtualRepeatedStartsHonorNnaContinueAndBroadcastBoundaries()
 	{
 		ObjectId source = (ObjectId)10U;
