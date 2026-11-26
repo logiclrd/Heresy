@@ -888,11 +888,10 @@ public static class ScriptCompiler
 	private static IReadOnlyList<ScriptAnalysisDiagnostic>
 		ValidateRestrictedSyntax(string source, bool permitManagedData = false)
 	{
-		SyntaxTree tree =
-			CSharpSyntaxTree.ParseText(
-				source,
-				ScriptParseOptions);
-		SyntaxNode root = tree.GetRoot();
+		SyntaxNode root = permitManagedData
+			? ParseAuthoredBody(source)
+			: CSharpSyntaxTree.ParseText(source, ScriptParseOptions).GetRoot();
+		int sourceOffset = permitManagedData ? AuthoredBodyOffset : 0;
 		List<ScriptAnalysisDiagnostic> diagnostics = [];
 
 		foreach (SyntaxTrivia trivia
@@ -902,7 +901,7 @@ public static class ScriptCompiler
 			{
 				AddRestrictedDiagnostic(
 					diagnostics,
-					trivia.Span,
+					new ScriptSourceSpan(Math.Max(0, trivia.SpanStart - sourceOffset), trivia.Span.Length),
 					"Preprocessor directives are not available in Heresy scripts.");
 			}
 		}
@@ -979,7 +978,7 @@ public static class ScriptCompiler
 			{
 				AddRestrictedDiagnostic(
 					diagnostics,
-					node.Span,
+					new ScriptSourceSpan(Math.Max(0, node.SpanStart - sourceOffset), node.Span.Length),
 					reason);
 			}
 		}
