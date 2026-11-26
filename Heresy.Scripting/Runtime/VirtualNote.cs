@@ -24,9 +24,22 @@ public sealed class VirtualNote : IDisposable
     {
         if (!_disposed && _owner.OwnsVirtualChannelLease(_identity))
             return true;
-        _owner.ReportVirtualOwnershipIssue("Ignored operation on a disposed or no-longer-owned VirtualNote.");
+        _owner.ReportVirtualOwnershipIssue("Ignored operation on a disposed, transferred or no-longer-owned VirtualNote.");
         return false;
     }
+
+    // Transfer is a two-phase operation: validate ownership first,
+    // reserve destination storage, then invalidate this wrapper.
+    // No lease release/reacquisition occurs during transfer.
+    internal bool TryGetTransferIdentity(PatternScriptProgram destination,
+        out VirtualChannelIdentity identity)
+    {
+        identity = _identity;
+        return ReferenceEquals(_owner, destination)
+            && !_disposed && _owner.OwnsVirtualChannelLease(_identity);
+    }
+
+    internal void MarkTransferred() => _disposed = true;
 
     public void Dispose()
     {
