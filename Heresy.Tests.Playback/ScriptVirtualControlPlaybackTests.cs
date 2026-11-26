@@ -185,6 +185,57 @@ public sealed class ScriptVirtualControlPlaybackTests
         });
     }
 
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
+    public void VirtualVolumeSurvivesSilentGap(bool relaxed, bool changeWhileSilent)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: false);
+        string lookup = $"_O({sample.Value})";
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        string idleChange = changeWhileSilent ? "note.Volume(1, 0.125);\n" : "";
+        double remembered = changeWhileSilent ? 0.125 : 0.25;
+        ObjectId actualId = AddPattern(document, prefix + $$"""
+            using var note = NoteVirtual(0, {{lookup}}, volume: 0.25);
+            note.Cut(0.5);
+            {{idleChange}}
+            note.Note(2, {{lookup}});
+            note.Cut(3);
+            """);
+        // Explicit start volume is the independent musical reference.
+        ObjectId referenceId = AddPattern(document, prefix + $$"""
+            using var note = NoteVirtual(0, {{lookup}}, volume: 0.25);
+            note.Cut(0.5);
+            note.Note(2, {{lookup}}, volume: {{(changeWhileSilent ? "0.125" : "0.25")}});
+            note.Cut(3);
+            """);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var reference = factory.Create(document, referenceId);
+        using var actual = factory.Create(document, actualId);
+        using var chunks = factory.Create(document, actualId);
+        float[] expected = new float[480], rendered = new float[480], chunked = new float[480];
+        reference.Source.Render(expected.Length, expected);
+        actual.Source.Render(180, rendered.AsSpan(0, 180));
+        Assert.That(actual.Session.RetainedScopedVirtualChannelCount, Is.Zero,
+            "No silent PCM channel should remain active before the next note.");
+        actual.Source.Render(300, rendered.AsSpan(180));
+        for (int pos = 0; pos < chunked.Length;)
+        {
+            int count = Math.Min(17, chunked.Length - pos);
+            chunks.Source.Render(count, chunked.AsSpan(pos, count));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(expected[180], Is.Zero.Within(1e-6f));
+            Assert.That(expected[270], Is.EqualTo(16000f / 32768f * remembered).Within(1e-6));
+            Assert.That(rendered, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(chunked, Is.EqualTo(expected).Within(1e-6f));
+        });
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void OverlappingRecycledGroupsReclaimRenderStateDuringLongRunningPattern(bool relaxed)
