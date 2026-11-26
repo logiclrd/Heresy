@@ -88,8 +88,9 @@ EVENT ORDER
   #order strict       default if omitted; stream events in musical-row order.
   #order relaxed      collect the invocation, then sort events before playback.
 Place at most one #order directive before the first C# statement.
-Strict: emitting helpers must be direct statements or a single local
-NoteVirtual initializer, not callbacks or method groups. Earlier rows emitted after later ones are dropped with a diagnostic.
+Strict: emitting helpers must be direct statements, a single local
+NoteVirtual initializer, or a direct group += NoteVirtual(...) statement,
+not callbacks or method groups. Earlier rows emitted after later ones are dropped with a diagnostic.
 Relaxed: calls may be out of order, inside synchronous lambdas or through
 approved method-group delegates. Equal rows retain original emission order
 for the scheduler; tempo, speed and wall-time offsets are resolved at playback.
@@ -177,6 +178,25 @@ VirtualNote instance methods (shown on a local named note):
     Select/clear the current note Filter or persistent output Filter respectively.
   note.Off(double row, double timeOffsetSeconds = 0.0)
   note.Cut(double row, double timeOffsetSeconds = 0.0)
+
+OWNING NOTE GROUPS
+  NoteGroup NewNoteGroup()
+    Create an empty group. Use using var, a using block or Dispose().
+  using var chord = NewNoteGroup();
+  chord += NoteVirtual(0, _O(35));
+  chord += NoteVirtual(0, _O(35), Semitone(4));
+  chord += NoteVirtual(0, _O(35), Semitone(7));
+  chord.Volume(4, 0.5);
+  chord.Off(8);
+
+  chord += note transfers ownership of an existing handle to the group.
+  The original handle and all its aliases become unusable; disposing
+  that old handle is harmless. The group retains the same logical channel.
+  Group controls: Volume, Off, Cut, NoteFilter, ChannelFilter, SourceFrame,
+  Displacement and Past, with the same arguments as VirtualNote.
+  There is no group Note method. Group actions affect members only.
+  Group Dispose() releases all owned leases without changing scheduled music.
+  Invalid transfers and use-after-disposal produce warnings, not commands.
 
 PHYSICAL FILTERS AND RELEASE/CUT
   NoteFilter(double row, int channel, ObjectId? definitionId = null,
