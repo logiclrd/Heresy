@@ -16,6 +16,7 @@ internal sealed class VirtualChannelRetirementTracker(
 {
     private readonly record struct Entry(int Pending, bool Closed);
     private readonly Dictionary<VirtualChannelIdentity, Entry> _entries = [];
+    internal int Count => _entries.Count;
 
     public void Accept(VirtualChannelIdentity id)
     {
