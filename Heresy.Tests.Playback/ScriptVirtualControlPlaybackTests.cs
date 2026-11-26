@@ -118,6 +118,8 @@ public sealed class ScriptVirtualControlPlaybackTests
         plan.Source.Render(before.Length, before);
         Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
         Assert.That(plan.Timeline.IsInvocationActive(sibling), Is.True);
+        Assert.That(plan.Session.RetainedScopedVirtualMemoryCount, Is.LessThanOrEqualTo(1),
+            "Cancellation retires the abandoned generation's memory even while audio tails remain.");
         float[] after = new float[160];
         plan.Source.Render(after.Length, after);
         Assert.Multiple(() =>
@@ -220,6 +222,8 @@ public sealed class ScriptVirtualControlPlaybackTests
         actual.Source.Render(180, rendered.AsSpan(0, 180));
         Assert.That(actual.Session.RetainedScopedVirtualChannelCount, Is.Zero,
             "No silent PCM channel should remain active before the next note.");
+        Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.EqualTo(1),
+            "The referenceable generation still remembers its volume.");
         actual.Source.Render(300, rendered.AsSpan(180));
         for (int pos = 0; pos < chunked.Length;)
         {
@@ -233,6 +237,8 @@ public sealed class ScriptVirtualControlPlaybackTests
             Assert.That(expected[270], Is.EqualTo(16000f / 32768f * remembered).Within(1e-6));
             Assert.That(rendered, Is.EqualTo(expected).Within(1e-6f));
             Assert.That(chunked, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
+            Assert.That(chunks.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
         });
     }
 
@@ -274,7 +280,7 @@ public sealed class ScriptVirtualControlPlaybackTests
         int totalFrames = (cycles + 3) * framesPerRow;
         float[] expected = new float[totalFrames], actual = new float[totalFrames];
         reference.Source.Render(totalFrames, expected);
-        int peakChannels = 0, peakFilters = 0, peakRetiring = 0, peakDisplaced = 0;
+        int peakChannels = 0, peakFilters = 0, peakRetiring = 0, peakDisplaced = 0, peakMemory = 0;
         int[] chunks = [1, 37, 83, 19, 113];
         for (int pos = 0, index = 0; pos < actual.Length;)
         {
@@ -282,16 +288,19 @@ public sealed class ScriptVirtualControlPlaybackTests
             stream.Source.Render(count, actual.AsSpan(pos, count));
             pos += count;
             peakChannels = Math.Max(peakChannels, stream.Session.RetainedScopedVirtualChannelCount);
+            peakMemory = Math.Max(peakMemory, stream.Session.RetainedScopedVirtualMemoryCount);
             peakFilters = Math.Max(peakFilters, stream.Session.RetainedScopedVirtualFilterCount);
             peakRetiring = Math.Max(peakRetiring, stream.Session.RetiringVirtualFilterCount);
             peakDisplaced = Math.Max(peakDisplaced, stream.Session.VirtualVoices.Count);
         }
-        TestContext.Out.WriteLine($"Peak retained channels={peakChannels}, filters={peakFilters}, retiring={peakRetiring}, displaced={peakDisplaced}");
+        TestContext.Out.WriteLine($"Peak retained channels={peakChannels}, filters={peakFilters}, retiring={peakRetiring}, displaced={peakDisplaced}, memory={peakMemory}");
         Assert.Multiple(() =>
         {
             Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
             Assert.That(actual[50], Is.GreaterThan(0.5f), "The stress test must actually render voices.");
             Assert.That(peakChannels, Is.InRange(3, 12));
+            Assert.That(peakMemory, Is.InRange(1, 12));
+            Assert.That(stream.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
             Assert.That(peakFilters, Is.InRange(2, 12));
             Assert.That(peakRetiring, Is.LessThanOrEqualTo(12));
             Assert.That(peakDisplaced, Is.InRange(1, 6));
