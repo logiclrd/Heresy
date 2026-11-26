@@ -850,26 +850,59 @@ public static class ScriptCompiler
 				|| declaration.Parent is LocalDeclarationStatementSyntax local
 					&& local.UsingKeyword.RawKind != 0;
 
+		bool IsGroupTransfer(AssignmentExpressionSyntax transfer)
+			=> transfer.Parent is ExpressionStatementSyntax
+				&& model.GetOperation(transfer) is ICompoundAssignmentOperation
+					{ OperatorMethod: { } op }
+				&& ScriptPatternEmissionPolicy.IsNoteGroupTransfer(op, compilation);
+
+		bool HasDirectGroupDisposal(VariableDeclarationSyntax declaration,
+			ILocalSymbol destination)
+		{
+			if (IsUsing(declaration)) return true;
+			if (declaration.Parent is not LocalDeclarationStatementSyntax local
+				|| local.Parent is not BlockSyntax block)
+				return false;
+			foreach (StatementSyntax statement in block.Statements.Skip(block.Statements.IndexOf(local) + 1))
+			{
+				if (statement is not ExpressionStatementSyntax expression)
+					return false;
+				if (expression.Expression is AssignmentExpressionSyntax transfer
+					&& IsGroupTransfer(transfer))
+					continue;
+				if (expression.Expression is not InvocationExpressionSyntax call)
+					return false;
+				if (call.Expression is MemberAccessExpressionSyntax access
+					&& SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(access.Expression).Symbol, destination)
+					&& model.GetSymbolInfo(call).Symbol is IMethodSymbol method
+					&& method.Name == "Dispose"
+					&& SymbolEqualityComparer.Default.Equals(method.ContainingType, groupType))
+					return true;
+				if (call.DescendantNodes().Any(n => n is AssignmentExpressionSyntax
+					or AnonymousFunctionExpressionSyntax
+					or ArgumentSyntax { RefKindKeyword.RawKind: not 0 }))
+					return false;
+			}
+			return false;
+		}
+
 		bool IsOwningGroupTransfer(AssignmentExpressionSyntax transfer)
 		{
-			if (transfer.Parent is not ExpressionStatementSyntax
-				|| model.GetOperation(transfer) is not ICompoundAssignmentOperation
-					{ OperatorMethod: { } op }
-				|| !ScriptPatternEmissionPolicy.IsNoteGroupTransfer(op, compilation)
+			if (!IsGroupTransfer(transfer)
 				|| model.GetSymbolInfo(transfer.Left).Symbol is not ILocalSymbol destination)
 				return false;
-			// Prove the ordinary lexical using-group case. A group alias,
-			// reassigned local, or complex control flow remains conservative.
+			// Prove the ordinary lexical using-group or simple explicit
+			// disposal case. Complex flow and group aliases stay conservative.
 			return destination.DeclaringSyntaxReferences.Any(reference =>
 				reference.GetSyntax() is VariableDeclaratorSyntax
 				{
 					Parent: VariableDeclarationSyntax declaration,
 					Initializer.Value: InvocationExpressionSyntax creation,
 				}
-				&& IsUsing(declaration)
 				&& model.GetSymbolInfo(creation).Symbol is IMethodSymbol factory
 				&& factory.Name == "NewNoteGroup"
-				&& SymbolEqualityComparer.Default.Equals(factory.ContainingType, patternType));
+				&& SymbolEqualityComparer.Default.Equals(factory.ContainingType, patternType)
+				&& HasDirectGroupDisposal(declaration, destination));
 		}
 
 		foreach (InvocationExpressionSyntax call in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -891,6 +924,9 @@ public static class ScriptCompiler
 				&& variable.Parent is VariableDeclarationSyntax declaration)
 			{
 				if (IsUsing(declaration)) continue;
+				if (group && model.GetDeclaredSymbol(variable) is ILocalSymbol groupLocal
+					&& HasDirectGroupDisposal(declaration, groupLocal))
+					continue;
 				if (declaration.Parent is LocalDeclarationStatementSyntax local
 					&& local.Parent is BlockSyntax block
 					&& model.GetDeclaredSymbol(variable) is ILocalSymbol owned)
