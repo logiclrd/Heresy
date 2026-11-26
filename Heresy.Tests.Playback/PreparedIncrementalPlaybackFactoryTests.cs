@@ -3298,6 +3298,49 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void VirtualHandleRetriggersPrivatePatternMixdown(bool relaxed)
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav", LongWave(8192)));
+		ObjectId child = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(child, "Private source")
+		{
+			Source = $"Note(0, 0, _O({sample.Value}));",
+			RowCount = 4, ChannelCount = 1,
+		});
+		ObjectId parent = doc.AllocateObjectId();
+		string source = $"using var note = NoteVirtual(0, _O({child.Value}), mixdown: true); "
+			+ $"note.Cut(1); note.Note(2, _O({child.Value}), mixdown: true); note.Cut(3);";
+		doc.Add(new ScriptPatternDefinition(parent, "Virtual parent")
+		{
+			Source = relaxed ? "#order relaxed\n" + source : source,
+			RowCount = 4, ChannelCount = 1,
+		});
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var whole = factory.Create(doc, parent);
+		using var chunked = factory.Create(doc, parent);
+		float[] expected = new float[480], actual = new float[480];
+		whole.Source.Render(expected.Length, expected);
+		for (int pos = 0; pos < actual.Length;)
+		{
+			int count = Math.Min(37, actual.Length - pos);
+			chunked.Source.Render(count, actual.AsSpan(pos, count));
+			pos += count;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+			Assert.That(expected[10], Is.GreaterThan(.1f));
+			Assert.That(expected[180], Is.Zero.Within(1e-6f));
+			Assert.That(expected[250], Is.GreaterThan(.1f));
+			Assert.That(expected[420], Is.Zero.Within(1e-6f));
+			Assert.That(whole.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+		});
+	}
+
 	[TestCase(false, true, false)]
 	[TestCase(true, false, false)]
 	[TestCase(true, true, false)]
