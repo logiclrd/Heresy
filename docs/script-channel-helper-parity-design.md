@@ -1,6 +1,6 @@
 # Script Pattern physical/virtual channel helper parity (#71)
 
-Status: **discovery and proposal; owner approval pending.** No new helper is implemented by this document.
+Status: **owner-approved direction, 2026-11-26; implementation in progress.** The API below is a target contract, not a statement of currently implemented methods.
 Baseline: merged PR #70, main `716c2092dc9d5f085205affb5beaaa3d4a988a14`.
 Tracking: [issue #71](https://github.com/logiclrd/Heresy/issues/71).
 Related: [virtual ownership redesign](script-virtual-note-ownership-design.md),
@@ -42,9 +42,11 @@ virtual Off/Cut broadcasts and global Tempo/Speed remain unchanged.
 | Legacy cutoff only | FilterCutoff | — | — | Add virtual and group |
 | Legacy resonance only | FilterResonance | — | — | Add virtual and group |
 
-Existing source-start parameters, row semantics, optional event Filter IDs
-and `mixdown: true` requirement for virtual Pattern/Sequence starts stay
-unchanged. NoteFilter and ChannelFilter still select or clear song Filter
+Row semantics, optional event Filter IDs and physical start parameters
+stay unchanged. Remove the virtual start `mixdown` parameter from both
+NoteVirtual and VirtualNote.Note: recursively sourced virtual notes always
+use private mixdown, inferred from the resolved source type. Direct Sample,
+Synth and Instrument starts preserve ordinary direct-source behavior. NoteFilter and ChannelFilter still select or clear song Filter
 definitions. The proposed Filter(cutoff,resonance) is specifically the same
 normalized legacy resonant low-pass operation as the existing physical
 helper, **not** a shorter alias for either definition-selection method.
@@ -52,6 +54,36 @@ Do not add a one-ID Filter overload. This is an explicit new capability
 proposal, not a reinterpretation of the #54 ownership contract.
 
 ## Proposed signatures (not available until implemented)
+
+Revised virtual start signatures (owner-approved):
+
+```csharp
+VirtualNote NoteVirtual(double row, ObjectId sourceId,
+    double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0,
+    double? volume = null, double timeOffsetSeconds = 0.0,
+    ObjectId? eventFilterDefinitionId = null);
+void Note(double row, ObjectId sourceId,
+    double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0,
+    double? volume = null, double timeOffsetSeconds = 0.0,
+    ObjectId? eventFilterDefinitionId = null); // VirtualNote instance
+```
+
+Do not simply mark all StartNoteCommands Mixdown=true: the flag participates
+in source resolution and OriginSourceId/live Synth preparation. Resolve the
+source in the recursive preparation path before deciding whether to flatten;
+only Pattern/Sequence on an owned virtual target is automatically private.
+Keep direct sound IDs, snapshot/dependency resolution, Instrument tone
+preparation and legacy/live engine commands unchanged. Decide the exact
+internal representation during implementation (explicit typed intent or
+source-aware normalization); no authored command escape hatch. Remove both
+public and generated callsite overload parameters and update every bound
+compiler signature/allow-list and test, including optional/named/positional
+argument binding and delegate references. Existing scripts that pass mixdown
+must delete that argument; do not retain a misleading compatibility switch.
+No persisted Data Pattern schema change. Physical Note retains its existing
+mixdown option. Test direct voice source IDs, live Synth routing, private
+Pattern and Sequence retrigger, both ordering modes and F6. Preserve rejection
+of unsupported raw legacy virtual flattening where applicable.
 
 Physical PatternScriptProgram author-callable methods:
 
@@ -136,7 +168,7 @@ Source locations at the audited baseline:
 No runtime experiment or .NET test execution in this discovery slice.
 The matrix is a source audit, not a claim that newly proposed APIs work.
 
-## Musical semantics to approve
+## Approved musical direction
 
 ### Volume, seeking and note lifecycle
 
@@ -164,10 +196,12 @@ Displacement overrides the currently sounding voice's next displacement
 An idle channel does not seed a future NNA override. A physical flattened
 instigator has an existing logical displacement policy; use that existing
 scope behavior and validate Continue/Off/Fade/Cut, future producer behavior
-and sibling isolation. Past (Cut/Off/Fade) applies only to already displaced
-voices with the matching origin. It does not affect the current replacement,
-unrelated logical owners, or virtual generations. Preserve existing
-private mixdown child lifecycle bookkeeping and release/fade durations.
+and sibling isolation. Past (Cut/Off/Fade) applies to already displaced
+logical notes with the matching origin, whether a single rendered voice,
+a private mixdown, or a flattened source invocation. It does not affect
+the current replacement, unrelated logical owners, or virtual generations.
+Preserve existing private mixdown child lifecycle bookkeeping and release/
+fade durations. See the expanded flattened-source contract below.
 
 ### Spatial and legacy resonant filter controls
 
@@ -198,14 +232,53 @@ descendant or seek an entire flattened subtree; there is no single bound
 seekable voice to seek. Use an explicit mixdown for single-voice seek.
 Physical Past currently matches displaced rendered voices by host and
 logical owner; there is no equivalent past-flattened-instigator registry
-in the inspected incremental timeline. Recommendation: preserve that
-existing rendered-voice contract (including previously displaced ordinary
-or mixdown voices), do not broadcast to former flattened descendants or
-change tracker S7x semantics as an incidental parity change. Full
-past-flattened-subtree control needs a separate scope/lifetime design.
-Test that none of these operations touches a sibling/descendant through
-an accidentally shared physical host. Existing physical Pan, Surround
-and legacy Filter do not become new flattened-subtree effects.
+in the inspected incremental timeline. **Owner decision 2026-11-26:** Past
+must target the displaced logical note, including a flattened Pattern or
+Sequence, rather than the individual note events it emits. This supersedes
+the initial discovery proposal to defer that capability.
+
+A replacement (ordinary, mixdown or flattened) displaces the previously
+current flattened instigator according to its existing NNA policy. Track
+that former logical note by its unique source scope and parent logical
+physical-channel identity (playback owner, mapped host), not by child host,
+source object ID, or cursor-local channel number. Continue leaves its
+producer and all descendants running; Off/Fade stop future production and
+release/fade existing descendants; Cut stops production and cuts them.
+A later Past on that parent channel targets all still-live displaced
+logical notes of that origin, including descendants of old flattened
+instigators whose producers have already completed but whose rendered
+voices remain audible. The current flattened scope and its descendants
+must not be targeted. Nested descendants, scoped virtual handles, migrated
+NNA voices, and private recursive children inherit scope ownership; use the
+existing scope-aware lifecycle dispatch rather than indiscriminate host
+broadcasts. A child-channel Past remains local to that child's logical
+channel and does not affect other descendants of its parent's current
+source.
+
+Resolve at the actual wall deadline. Both sequencing (stop future producers
+and pending event emission) and renderer/private mixdown lifecycle must
+participate. Existing renderer scope controllers are retired at producer
+completion while descendants may still reference them; a registry that
+only tracks active timeline frames would lose past notes with audible tails.
+Conversely, keeping every historical scope ID until the song ends is not
+acceptable. Design explicit producer and audible-descendant retirement
+signals or equivalent bounded ownership before implementation. Distinguish
+displacement from an ordinary Off/Cut on the current source. Do not double
+apply a release/fade via both direct voice origin matching and scope
+ancestry, or use the NNA-specific fade duration in place of ordinary Past
+Fade without an explicit semantic decision/test. Preserve raw tracker S7x
+compatibility for ordinary voices; resolved physical Past should consistently
+use logical-note semantics, with regression coverage for Data Patterns too.
+The exact internal protocol remains to be designed in a dedicated slice.
+
+Test two or more displaced flattened invocations, a current replacement,
+same host in a sibling owner, a child-owned displaced voice, delayed
+Past across row boundaries, producer naturally completed but audible tails,
+already-released/fading descendants, nested mixdown and flattened sources,
+all three actions, and bounded retirement under repeated replacement.
+Existing physical Pan, Surround and legacy Filter do not become new
+flattened-subtree effects. Seek and SourceFrame retain the single-voice
+boundary described above.
 
 ## Important lifetime finding: idle virtual state
 
@@ -297,18 +370,27 @@ are not replaced.
    existing commands; input validation, exact author-callable surface,
    strict/relaxed raw/PCM tests, deferred actions targeting replacement,
    native sample/private mixdown seeking, physical owner-specific NNA/Past
-   and flattened source Volume/Displacement and intentional Seek/Past
-   boundary. Preserve tracker Oxx/S7x tests. If source-level discrepancies
+   and flattened source Volume/Displacement and the intentional Seek
+   boundary. Stage flattened logical Past separately (2b): design and
+   implement producer + renderer retirement and scope-qualified action,
+   verify ordinary tracker S7x and both physical/virtual origin isolation.
+   Preserve tracker Oxx/S7x tests. If source-level discrepancies
    are uncovered, resolve against these approved semantics before widening
    capability.
-3. **Reverse parity.** Six methods each on handle/group, shared argument
+3. **Virtual start simplification (2c).** Remove mixdown from the virtual
+   start APIs, infer private recursion only for recursive sources, and
+   migrate compiler bindings, scripts, test fixtures and help. Keep direct
+   source resolution and live editing behavior, physical mixdown, legacy
+   engine commands, and exact F6 provenance. This may land separately from
+   flattened Past; no dependency on new spatial controls.
+4. **Reverse parity.** Six methods each on handle/group, shared argument
    validation, targeted virtual dispatch/admission; demonstrate persistent
    spatial/surround/legacy-filter state across silence, partial parameter
    updates, NNA isolation, private mixdown outer voice behavior, group
    equality with explicit handles and unrelated sibling isolation,
    disposal and deferred old-generation safety. Include seconds vs frames
    seek and positive offsets for every new method.
-4. **Integration and final acceptance.** Strict/relaxed F6 source spans,
+5. **Integration and final acceptance.** Strict/relaxed F6 source spans,
    method-group equality and unauthorized metadata refusals; mono/stereo/
    multichannel PCM, actual realtime/F6/export parity, chunk invariance,
    nested private and flattened hierarchies, final-use stress. Update
@@ -316,8 +398,9 @@ are not replaced.
    methods land. Exact-head Release/ARM64 CI, owner desktop audition
    and explicit approval before merge.
 
-No production changes in discovery. Outstanding decisions: approve full
-reverse parity including the explicitly legacy Filter name, the
-remembered-control lifetime semantics, and the deliberate limitation
-on Past for former flattened instigators. This document does not promise
-new global/overall volume or arbitrary tracker-effect API.
+Owner approved the revised logical Past and inferred virtual mixdown
+on 2026-11-26 and authorized proceeding. Full parity and the remembered
+scalar state approach remain the implementation baseline. The detailed
+flattened Past lifetime protocol and fade handling must be established
+and tested before widening behavior. This document does not promise new
+global/overall volume or arbitrary tracker-effect API.
