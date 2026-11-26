@@ -1,6 +1,6 @@
 # Script Pattern virtual-note ownership redesign (#54)
 
-Status: single-handle and initial owning-group implementation committed, awaiting exact-head CI and final acceptance.
+Status: single-handle and group APIs accepted; final F6 provenance and acceptance work underway.
 Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
 [Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
 this document records the implementation choices and boundaries. The single-handle and initial group APIs have been implemented; final acceptance remains.
@@ -326,6 +326,41 @@ ARM64 validation, but its final build was canceled by subsequent pushes.
 Exact-head CI and manual group audition are required; final F6 timeline,
 bound-instance delegate fallback, stress, private rewind and export
 acceptance remain.
+
+### Final F6 provenance hardening (slice 5a)
+
+Slice 4 exact-head CI #45759112216 passed all 4,627 tests and ARM64;
+owner also confirmed original using/+= syntax in desktop audition.
+
+Pattern emitter authorization and rewrites now match full authored spans
+rather than start offsets. This distinguishes nested invocation nodes
+sharing a start, such as NoteVirtual(...).Dispose() and
+NoteVirtual(...).Off(...), without injecting metadata into non-emitting
+members. Sequence Play rewriting remains unchanged.
+
+Relaxed F6 recognizes bound VirtualNote and NoteGroup method-group
+references as well as unqualified Pattern helper references. For an
+unambiguous single reference site with a nameable delegate type, convert
+the original receiver/method to its actual delegate once and wrap it
+with a fallback provenance scope. Explicit authored delegate invocations
+still take precedence. A weak receiver-keyed cache reuses adapters for
+equal original delegates so repeated evaluation of the same site,
+multicast combination/removal, and receiver reassignment do not alter
+musical behavior. Ordinary playback does not create this cache.
+The existing multiple-reference-site limitation remains deliberate:
+do not give equal original delegates different adapter targets; explicit
+authored calls still trace correctly. Unnameable synthesized delegate
+types are also left unchanged rather than risk changing the conversion.
+Generated-only cache/scope helpers remain forbidden in authored scripts.
+
+Compiler tests cover receiver capture, equality and removal of repeated
+bound groups, direct invocation precedence, exact nested spans and the
+trusted fallback scope. Playback timeline tests compare traced vs
+ordinary PCM in strict and relaxed modes, assert a single activation
+span for each group fanout, delayed-wall activation at the actual due
+time, and sustained-origin clearing only for the group members.
+CI is required for these new tests; final ownership stress, private
+rewind, export parity and desktop F6 acceptance remain.
 
 ## Compiler integration after #58 and #69
 
