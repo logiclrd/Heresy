@@ -1,6 +1,6 @@
 # Script Pattern virtual-note ownership redesign (#54)
 
-Status: single-handle and group APIs accepted; final F6 provenance and acceptance work underway.
+Status: public API and F6 acceptance complete; final sustained stress, rewind and export acceptance underway.
 Base: merged #69, main `1cfad6012107fdfc1d6bf48de8d993a133b86a67`.
 [Issue #54](https://github.com/logiclrd/Heresy/issues/54) is authoritative;
 this document records the implementation choices and boundaries. The single-handle and initial group APIs have been implemented; final acceptance remains.
@@ -361,6 +361,45 @@ span for each group fanout, delayed-wall activation at the actual due
 time, and sustained-origin clearing only for the group members.
 CI is required for these new tests; final ownership stress, private
 rewind, export parity and desktop F6 acceptance remain.
+
+### Sustained ownership stress (slice 5b)
+
+Slice 5a exact-head CI #45760181855 passed all 4,635 tests, Release
+build and ARM64. Owner manually verified the relaxed group F6 audition.
+
+Retain the earlier million-lease allocator test (peak eight slots).
+Add strict and relaxed compiled-script stress with 4,096 lexical
+group scopes, four notes each, volume and delayed cut fanout. Consume
+raw steps without accumulating the schedule in the test; require
+16,384 distinct monotonically generated starts, 32,768 controls,
+16,384 releases, four allocated slots, no controls after release,
+and at most five outstanding identities at a raw-stream boundary.
+Relaxed collection itself remains intentionally buffered.
+A stale-alias stress case invokes 10,000 invalid controls and repeated
+Dispose, verifies only the correct replacement event is emitted and
+the warning count is complete but diagnostic storage is capped
+at 32 individual messages plus one suppression message.
+
+Core timeline stress lazily emits 4,096 generations of one recycled
+slot, each with a 180-ms delayed cut on a 120-ms row. Verify exactly
+one final-use callback per identity at the delayed deadline, including
+the last deadline beyond the final row. On-demand retirement-entry
+count includes active and deferred-only cursors; assert peak bounded
+by the overlap horizon and zero after drain.
+
+Production PCM stress renders 1,024 group scopes in a single
+invocation (2,048 distinct leases, 3,072 starts with retriggers)
+in strict and relaxed modes. Each scope includes displaced Continue
+voices, finite output echo filters, and deferred Past/Cut commands
+after the next group has already started using recycled slots.
+Compare uninterrupted PCM with varied chunk sizes and assert
+non-vacuous audio, bounded retained channel/filter/retiring/NNA
+counts sampled throughout playback, zero residual state after
+tail decay, and no unexpected ownership/filter diagnostics. The
+observability properties are read on demand, not per audio sample.
+Tests use deterministic state bounds rather than machine-dependent
+wall-clock or GC thresholds; no performance improvement is claimed.
+Exact-head CI for this slice is still required.
 
 ## Compiler integration after #58 and #69
 
