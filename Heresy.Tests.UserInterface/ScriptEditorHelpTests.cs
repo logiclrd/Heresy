@@ -44,6 +44,19 @@ public sealed class ScriptEditorHelpTests
     }
 
     [Test]
+    public void PatternReferenceExplainsExclusiveGroupOwnership()
+    {
+        string reference = ScriptEditorHelp.PatternReference;
+        Assert.That(reference, Does.Contain("NewNoteGroup()"));
+        Assert.That(reference, Does.Contain("chord += NoteVirtual("));
+        Assert.That(reference, Does.Contain("original handle and all its aliases"));
+        Assert.That(reference, Does.Contain("There is no group Note method"));
+        Assert.That(reference, Does.Contain("Group actions affect members only"));
+        Assert.That(reference, Does.Contain("without changing scheduled music"));
+        Assert.That(reference, Does.Not.Contain("chord.Note("));
+    }
+
+    [Test]
     public void PatternReferenceExplainsOrderingModesAndTheirTradeoffs()
     {
         string reference = ScriptEditorHelp.PatternReference;
