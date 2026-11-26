@@ -99,6 +99,107 @@ public sealed class RelaxedDelegateCallsiteTests
     }
 
     [Test]
+    public void BoundGroupReferencesCaptureReceiverOnceAndPreserveEquality()
+    {
+        const string source = """
+            #order relaxed
+            using var chord = NewNoteGroup();
+            chord += NoteVirtual(0, _O(17));
+            chord += NoteVirtual(0, _O(18));
+            using var other = NewNoteGroup();
+            other += NoteVirtual(0, _O(19));
+            Func<NoteGroup, Action<double, double>> bind = g => g.Cut;
+            var first = bind(chord);
+            var equal = bind(chord);
+            var distinct = bind(other);
+            if (first == equal && first != distinct)
+                first.Invoke(2, 0);
+            var combined = first + distinct;
+            combined -= equal;
+            combined(4, 0);
+            """;
+        AssertTrace(source, new[] {
+            "NoteVirtual(0, _O(17))", "NoteVirtual(0, _O(18))", "NoteVirtual(0, _O(19))",
+            "first.Invoke(2, 0)", "first.Invoke(2, 0)", "combined(4, 0)",
+        });
+    }
+
+    [Test]
+    public void BoundHandleDelegateKeepsOriginalReceiverEvenAfterLocalReassignment()
+    {
+        const string source = """
+            #order relaxed
+            using var first = NoteVirtual(0, _O(17));
+            using var second = NoteVirtual(0, _O(18));
+            var current = first;
+            Action<double, double> stop = current.Off;
+            current = second;
+            stop(2, 0);
+            current.Cut(4);
+            """;
+        AssertTrace(source, new[] {
+            "NoteVirtual(0, _O(17))", "NoteVirtual(0, _O(18))", "stop(2, 0)", "current.Cut(4)",
+        });
+        var traced = Render(source, true);
+        Assert.That(traced[2].Target, Is.EqualTo(traced[0].Target));
+        Assert.That(traced[3].Target, Is.EqualTo(traced[1].Target));
+    }
+
+    [Test]
+    public void NestedInstanceCallsWithTheSameStartUseTheirOwnExactSpan()
+    {
+        const string source = """
+            #order relaxed
+            NoteVirtual(0, _O(17)).Dispose();
+            NoteVirtual(2, _O(18)).Off(4);
+            """;
+        AssertTrace(source, new[] { "NoteVirtual(0, _O(17))",
+            "NoteVirtual(2, _O(18))", "NoteVirtual(2, _O(18)).Off(4)" });
+    }
+
+    [Test]
+    public void BoundAdapterFallbackAndOuterInvocationPrecedenceAreIndependent()
+    {
+        NoteScheduleBuilder output = new();
+        var probe = new BoundScopeProbe(output);
+        probe.Run();
+        var events = output.Freeze().ToArray();
+        Assert.That(events.Select(n => n.EditorCallsite), Is.EqualTo(new SequenceCallsite?[]
+        {
+            null, null, new(100, 5), new(100, 5),
+            new(200, 5), new(200, 5), null,
+        }));
+    }
+
+    private sealed class BoundScopeProbe(NoteScheduleBuilder output)
+        : PatternScriptProgram(new SequencingContext(), output, 8, 1)
+    {
+        protected override void ExecuteScript() { }
+
+        public void Run()
+        {
+            var group = NewNoteGroup();
+            using var scope = group;
+            group += NoteVirtual(0, (ObjectId)17U);
+            group += NoteVirtual(0, (ObjectId)18U);
+            Action<double, double> Bind(Action<double, double> method) =>
+                __HeresyBindTrace(method, target => (row, offset) =>
+                {
+                    var previous = __HeresyPushFallbackCallsite(new SequenceCallsite(100, 5));
+                    try { target(row, offset); }
+                    finally { __HeresyRestoreDelegateCallsite(previous); }
+                });
+            var first = Bind(group.Cut);
+            Assert.That(Bind(group.Cut), Is.EqualTo(first));
+            first(2, 0);
+            var outer = __HeresyPushDelegateCallsite(new SequenceCallsite(200, 5));
+            try { first(4, 0); }
+            finally { __HeresyRestoreDelegateCallsite(outer); }
+            Note(6, 0, (ObjectId)19U);
+        }
+    }
+
+    [Test]
     public void ValueReturningDelegateShortCircuitAndOrdinaryMemberNamedInvokeAreNotDisturbed()
     {
         const string source = """
@@ -114,6 +215,8 @@ public sealed class RelaxedDelegateCallsiteTests
     }
 
     [TestCase("__HeresyPushDelegateCallsite(default(SequenceCallsite));")]
+    [TestCase("__HeresyPushFallbackCallsite(default(SequenceCallsite));")]
+    [TestCase("Action action = () => {}; __HeresyBindTrace(action, a => a);")]
     [TestCase("__HeresyRestoreDelegateCallsite(null);")]
     [TestCase("Action action = () => {}; __HeresyWrapDelegate(action, a => a);")]
     public void GeneratedOnlyDelegateTraceHelpersCannotBeAuthored(string code)
