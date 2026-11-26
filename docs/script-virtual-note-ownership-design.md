@@ -111,8 +111,8 @@ filter completion keys and buses, and private mixdown tracking use the
 full identity. `VirtualChannelLeaseAllocator` owns a sparse live-slot
 map, free stack, next-slot counter and invocation-wide generation counter.
 It rejects stale releases and checks slot/generation exhaustion before
-mutation. No historical generation map is needed. The scripting runtime
-does not allocate these leases yet; cross-invocation wrapper/allocator
+mutation. No historical generation map is needed. At slice 2a the scripting runtime
+did not allocate these leases yet; cross-invocation wrapper/allocator
 ownership must be checked at transfer, not inferred from equal local IDs.
 
 The renderer now has a non-musical `RetireScopedVirtualChannel` final-use
@@ -176,9 +176,7 @@ Actual CI status is tracked on the PR.
 
 The draft branch now supports `NoteVirtual(row, sourceId, ...)` returning
 a sealed `VirtualNote`, with private owner and generation-qualified
-identity. The older numeric helpers remain temporarily callable to
-permit incremental migration of the existing regression fixtures; they
-are not part of the final API. The new handle offers Note, Volume, Off,
+identity. The older numeric helpers were temporarily callable during fixture migration; slice 3b removes them. The new handle offers Note, Volume, Off,
 Cut, SourceFrame, Displacement, Past, NoteFilter and ChannelFilter.
 No ambiguous Filter alias or virtual resonant-filter capability is added.
 
@@ -223,9 +221,7 @@ fallback and group-specific callsite coverage remain final F6 work.
 
 Added compile/runtime tests exercise the complete single-note method
 set, eager/streamed parity, slot reuse, invalid aliases, using
-cancellation, warnings and original source spans. They have not yet
-passed CI. Slice 3b will migrate all numeric-script tests and examples
-and remove old numeric entrypoints before NoteGroup work. Full production
+cancellation, warnings and original source spans. Initial CI found parser defects; slice 3b migrates numeric-script tests and examples and removes old numeric entrypoints before NoteGroup work. Full production
 mixdown/rewind and export checks remain outstanding.
 
 ### Numeric script API removal (slice 3b)
