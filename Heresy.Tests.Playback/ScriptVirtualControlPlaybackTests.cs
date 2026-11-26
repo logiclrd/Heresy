@@ -235,7 +235,7 @@ public sealed class ScriptVirtualControlPlaybackTests
             peakRetiring = Math.Max(peakRetiring, stream.Session.RetiringVirtualFilterCount);
             peakDisplaced = Math.Max(peakDisplaced, stream.Session.VirtualVoices.Count);
         }
-        TestContext.WriteLine($"Peak retained channels={peakChannels}, filters={peakFilters}, retiring={peakRetiring}, displaced={peakDisplaced}");
+        TestContext.Out.WriteLine($"Peak retained channels={peakChannels}, filters={peakFilters}, retiring={peakRetiring}, displaced={peakDisplaced}");
         Assert.Multiple(() =>
         {
             Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
