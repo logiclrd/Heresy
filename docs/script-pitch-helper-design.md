@@ -1,10 +1,10 @@
 # Script pitch-multiplier helpers — discovery and proposed API
 
-**Status:** Owner-approved design (2026-11-21). The four helpers have been implemented in the separate draft implementation branch; they become available to users when that PR is accepted and merged. This document preserves the original discovery rationale and numerical contract.
+**Status:** All four owner-approved pitch conversion helpers are implemented. This document preserves the original discovery rationale and numerical contract (2026-11-21). The audited baseline and proposed implementation steps below are historical; see [current programmability](script-programmability.md) for the active compiler contract, strict/relaxed modes and owned virtual-note API.
 
 **Scope:** the intuitive pitch-multiplier helper TODO in [todo.md](todo.md). Separate from Script Pattern physical/virtual control parity, the Script Instrument tone-authoring redesign, and tiered Undo/Redo.
 
-## Audited current behavior
+## Audited baseline behavior (before implementation)
 
 - `PatternScriptProgram.Note` and `NoteVirtual` both accept `double pitchMultiplier = 1.0`, followed by the separate `playbackSpeedMultiplier`. Each accepts only a **positive finite** ratio. A call emits a scheduled event, and streaming note/control calls must remain **direct statements**.
 - A Script Instrument has three *single-expression* programs: `Source` selects a declared tone index, `PitchExpression` returns an additional scaling ratio for that tone's fixed pitch, and `NnaExpression` returns an `InstrumentNnaAction`. All receive the **incoming** `pitchMultiplier` relative to C4 = 1.0. This input is not a musical semitone offset; it is already a frequency ratio.
@@ -30,7 +30,7 @@ Approved signatures, implemented in the separate implementation branch as unqual
 
 **Names are for approval.** Singular `Semitone`, `Cent`, `Octave` describe a conversion of an *amount* rather than a class of notes. `SemitoneOffset` explicitly signals an inverse producing an offset, not a multiplier. No unqualified `Note` or `Pitch` alias: those names already have other script meanings.
 
-### Examples (compile on the implementation branch)
+### Examples (current API)
 
 ```csharp
 // Script Pattern: same ratios for physical and virtual channels.
@@ -49,7 +49,7 @@ pitchMultiplier >= Semitone(12)
     ? InstrumentNnaAction.Cut : InstrumentNnaAction.Inherit
 ```
 
-These examples **do not** change `playbackSpeedMultiplier`, source selection, channel ownership, or Note's direct-statement-yield requirements.
+These examples **do not** change `playbackSpeedMultiplier`, source selection, channel ownership, or the current strict-mode emission/yield requirements.
 
 ## Mathematical and validation contract
 
