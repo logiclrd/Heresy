@@ -1,4 +1,8 @@
 using System.Collections.Generic;
+using System.Linq;
+
+using Heresy.Core.Objects;
+using Heresy.Core.Timing;
 
 using Heresy.Core.Sequencing;
 using Heresy.Scripting.Runtime;
@@ -58,6 +62,52 @@ public sealed class VirtualChannelLeaseAllocatorTests
             Assert.That(allocator.ReusableCount, Is.EqualTo(peak));
             Assert.That(allocator.SlotCount, Is.EqualTo((ulong)peak));
         });
+    }
+
+    [Test]
+    public void RelaxedReplayReleasesOnlyAfterLastSortedReference()
+    {
+        var a = new VirtualChannelIdentity(0, 1);
+        var b = new VirtualChannelIdentity(0, 2);
+        var old = ChannelTarget.Virtual(a);
+        var replacement = ChannelTarget.Virtual(b);
+        NoteEvent At(double row, ChannelTarget target) =>
+            new(new MusicalTime(System.TimeSpan.Zero, row), target, [new NoteCutCommand()]);
+        NoteEvent[] sorted = [
+            At(0, replacement), At(1, old),
+            At(2, ChannelTarget.Virtual(9)), At(32, old),
+        ];
+        var steps = RelaxedVirtualChannelReplay.Enumerate(sorted).ToArray();
+        Assert.That(steps, Is.EqualTo(new RawPatternStep[] {
+            new RawPatternStep.Emit(sorted[0]),
+            new RawPatternStep.ReleaseVirtualChannel(b),
+            new RawPatternStep.Emit(sorted[1]),
+            new RawPatternStep.Emit(sorted[2]),
+            new RawPatternStep.Emit(sorted[3]),
+            new RawPatternStep.ReleaseVirtualChannel(a),
+        }));
+    }
+
+    [Test]
+    public void StreamingRuntimeQueuesOnlySuccessfulLeaseReleases()
+    {
+        var program = new LeaseProbe(new IncrementalPatternEventReceiver());
+        var first = program.AcquireVirtualChannelLease();
+        Assert.That(program.ReleaseVirtualChannelLease(first), Is.True);
+        var second = program.AcquireVirtualChannelLease();
+        Assert.That(program.ReleaseVirtualChannelLease(first), Is.False);
+        Assert.That(program.ReleaseVirtualChannelLease(second), Is.True);
+        Assert.That(program.TryTakeVirtualChannelRelease(out var released), Is.True);
+        Assert.That(released, Is.EqualTo(first));
+        Assert.That(program.TryTakeVirtualChannelRelease(out released), Is.True);
+        Assert.That(released, Is.EqualTo(second));
+        Assert.That(program.TryTakeVirtualChannelRelease(out _), Is.False);
+    }
+
+    private sealed class LeaseProbe(INoteReceiver output)
+        : PatternScriptProgram(new SequencingContext(), output, 1, 1)
+    {
+        protected override void ExecuteScript() { }
     }
 
     [Test]
