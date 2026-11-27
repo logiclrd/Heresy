@@ -235,8 +235,8 @@ PHYSICAL-CHANNEL CONTROLS
     Cut, Continue, Off or Fade on the next displacement of the current note.
   Past(double row, int channel, TrackerPastNoteAction action,
        double timeOffsetSeconds = 0.0)
-    Cut, Off or Fade displaced voices of this channel, excluding its current note.
-    Logical Past for displaced flattened invocations is pending.
+    Cut, Off or Fade displaced logical notes of this channel, not its current note.
+    A former flattened source stops producing and its descendants are controlled.
   Seek(double row, int channel, double playbackSeconds,
        double timeOffsetSeconds = 0.0)
     Seek physical playback in seconds, not source frames.
