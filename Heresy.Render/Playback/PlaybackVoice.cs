@@ -884,8 +884,11 @@ public sealed class PlaybackVoice
 		_outputHistoryFrames = 0;
 	}
 
-	internal void ApplyNoteOff(long absoluteFrame, int sampleRate)
+	internal void ApplyNoteOff(long absoluteFrame, int sampleRate,
+		long elapsedReleaseFrames = 0)
 	{
+		if (elapsedReleaseFrames < 0)
+			throw new ArgumentOutOfRangeException(nameof(elapsedReleaseFrames));
 		if (absoluteFrame < StartFrame)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
@@ -921,12 +924,16 @@ public sealed class PlaybackVoice
 			relativeFrame,
 			sampleRate);
 
-		_volumeEnvelope?.NoteOff(absoluteFrame);
-		_pitchEnvelope?.NoteOff(absoluteFrame);
-		_panningEnvelope?.NoteOff(absoluteFrame);
-		_filterEnvelope?.NoteOff(absoluteFrame);
+		SoundState.ElapsedReleaseFrames = elapsedReleaseFrames;
+		_volumeEnvelope?.NoteOff(absoluteFrame, elapsedReleaseFrames);
+		_pitchEnvelope?.NoteOff(absoluteFrame, elapsedReleaseFrames);
+		_panningEnvelope?.NoteOff(absoluteFrame, elapsedReleaseFrames);
+		_filterEnvelope?.NoteOff(absoluteFrame, elapsedReleaseFrames);
 		foreach (EnvelopePlaybackState envelope in _eventFilterParameterEnvelopes.Values)
-			envelope.NoteOff(absoluteFrame);
+			envelope.NoteOff(absoluteFrame, elapsedReleaseFrames);
+		if (elapsedReleaseFrames != 0)
+			foreach (EnvelopePlaybackState envelope in _enclosingFilterParameterEnvelopes.Values)
+				envelope.NoteOff(absoluteFrame, elapsedReleaseFrames);
 	}
 
 	/// <summary>Only enabled, configured sustain loops participate in an
