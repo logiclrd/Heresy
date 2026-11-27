@@ -463,8 +463,11 @@ playback speed, and pitch transposes child notes rather than accelerating
 their clock. Seconds round upward to the native frame grid. A nontrivial
 seek reconstructs the child session and discards preroll at the outer
 note's instantaneous pitch, then uses live outer pitch from the target
-onward. Outer explicit Off/Fade/Cut closes further private seeking;
-a new Note is needed to start the producer again. Replaying private
+onward. A seek during outer Off or Fade reconstructs the selected
+child content with the already elapsed release/fade age and stops
+future child events again. It does not renew the outer lifecycle.
+Cut or retirement leaves no bound voice to seek; a new Note is needed
+to restart production. Replaying private
 sources can be expensive; the existing bounded diagnostic reports the
 actual native target, including zero on rewind. No PCM or event journal
 is retained. A finite source sought beyond its end stops at the deadline.
