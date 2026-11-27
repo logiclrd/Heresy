@@ -25,7 +25,8 @@ public sealed record PatternGenerationTraceEvent(NoteEvent Note, bool DroppedInS
 }
 
 public sealed record PatternGenerationTraceInvocation(long Id, SequenceCallsite SourceSpan,
-    string Method, long? EnclosingScopeId, long? ParentInvocationId, long? GroupId, long AtTraceOrdinal);
+    string Method, long? EnclosingScopeId, long? ParentInvocationId, long? GroupId, long AtTraceOrdinal,
+    bool IsReferenceFallback);
 
 public sealed record PatternGenerationTraceGroup(long Id, SequenceCallsite? CreationSpan,
     long? EnclosingScopeId, long AtTraceOrdinal);
@@ -86,7 +87,7 @@ public sealed record PatternGenerationTraceResult(
             if (entry.InvocationId is long id && id >= 0 && id < Invocations.Count)
             {
                 var invocation = Invocations[(int)id];
-                if (invocation.Method == "NoteVirtual" && invocation.SourceSpan.Length > 0)
+                if (invocation.Method == "NoteVirtual" && !invocation.IsReferenceFallback && invocation.SourceSpan.Length > 0)
                     span = invocation.SourceSpan;
             }
             origins.Add(new(entry.Note.Target.VirtualIdentity, entry.OccurrenceId,
@@ -139,7 +140,7 @@ public sealed class PatternGenerationTraceBudget
 
     internal void RecordInvocationFailure()
     {
-        if (_invocationFailure is null && _invocation?.Record is { SourceSpan.Length: > 0 } invocation)
+        if (_invocationFailure is null && _invocation?.Record is { SourceSpan.Length: > 0, IsReferenceFallback: false } invocation)
             _invocationFailure = new(invocation.SourceSpan, CurrentScopeId, invocation.Id, true);
     }
 
@@ -161,12 +162,12 @@ public sealed class PatternGenerationTraceBudget
         return id;
     }
 
-    internal IDisposable EnterInvocation(SequenceCallsite span, string method, NoteGroup? group)
+    internal IDisposable EnterInvocation(SequenceCallsite span, string method, NoteGroup? group, bool referenceFallback = false)
     {
         long? groupId = group is null ? null : RegisterGroup(group, null);
         ReserveRecords(1);
         var record = new PatternGenerationTraceInvocation(_invocations.Count, span, method,
-            CurrentScopeId, CurrentInvocationId, groupId, _nextOrdinal);
+            CurrentScopeId, CurrentInvocationId, groupId, _nextOrdinal, referenceFallback);
         _invocations.Add(record);
         var scope = new InvocationScope(this, _invocation, record);
         _invocation = scope;
@@ -282,13 +283,13 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
 
     private IDisposable? _pendingInvocation;
 
-    protected IDisposable __HeresyEnterTraceInvocation(SequenceCallsite span, string method, NoteGroup? group)
-        => _traceBudget.EnterInvocation(span, method, group);
+    protected IDisposable __HeresyEnterTraceInvocation(SequenceCallsite span, string method, NoteGroup? group, bool referenceFallback = false)
+        => _traceBudget.EnterInvocation(span, method, group, referenceFallback);
 
     // Delegate receivers/arguments have already been evaluated by the
     // typed adapter. A single actual bound target is authoritative;
     // never attribute a multicast delegate to its last target alone.
-    protected IDisposable __HeresyEnterTraceDelegate(SequenceCallsite span, Delegate target)
+    protected IDisposable __HeresyEnterTraceDelegate(SequenceCallsite span, Delegate target, bool referenceFallback = false)
     {
         var method = target.Method;
         bool single = target.GetInvocationList().Length == 1;
@@ -297,7 +298,7 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
             || method.DeclaringType == typeof(VirtualNote)
             || method.DeclaringType == typeof(PatternScriptProgram))
             ? method.Name : "Delegate";
-        return _traceBudget.EnterInvocation(span, name, group);
+        return _traceBudget.EnterInvocation(span, name, group, referenceFallback);
     }
 
     protected void __HeresyRecordTraceFailure() => _traceBudget.RecordInvocationFailure();
