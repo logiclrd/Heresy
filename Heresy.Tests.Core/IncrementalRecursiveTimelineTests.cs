@@ -1166,6 +1166,50 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(context.ScopedMemory.ActiveScopeCount, Is.Zero);
 	}
 
+	[TestCase(TrackerPastNoteAction.Cut)]
+	[TestCase(TrackerPastNoteAction.Off)]
+	[TestCase(TrackerPastNoteAction.Fade)]
+	public void PastStopsFormerFlattenedProducersOnlyInMatchingLogicalOwner(
+		TrackerPastNoteAction action)
+	{
+		DataPatternDefinition root = Pattern(1, 6);
+		root.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)2U);
+		root.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote((ObjectId)3U);
+		DataPatternDefinition first = Pattern(2, 6);
+		DataPatternDefinition sibling = Pattern(3, 6);
+		// Both instigating channels map to host 1, but have different
+		// logical playback owners and independent current/past notes.
+		PatternCell a = first.Grid.GetOrCreateCell(0, 1);
+		a.Note = new StartPatternNote((ObjectId)4U);
+		a.Effects.Add(new TrackerNewNoteActionPatternEffect(NoteDisplacementAction.Continue));
+		PatternCell b = sibling.Grid.GetOrCreateCell(0, 0);
+		b.Note = new StartPatternNote((ObjectId)5U);
+		b.Effects.Add(new TrackerNewNoteActionPatternEffect(NoteDisplacementAction.Continue));
+		first.Grid.GetOrCreateCell(1, 1).Note = new StartPatternNote((ObjectId)6U);
+		sibling.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote((ObjectId)91U);
+		first.Grid.GetOrCreateCell(2, 1).Effects.Add(new TrackerPastNoteActionPatternEffect(action));
+		DataPatternDefinition oldFirst = Pattern(4, 5);
+		oldFirst.Grid.GetOrCreateCell(3, 0).Note = new StartPatternNote((ObjectId)92U);
+		DataPatternDefinition oldSibling = Pattern(5, 5);
+		oldSibling.Grid.GetOrCreateCell(3, 0).Note = new StartPatternNote((ObjectId)93U);
+		DataPatternDefinition currentFirst = Pattern(6, 4);
+		currentFirst.Grid.GetOrCreateCell(2, 0).Note = new StartPatternNote((ObjectId)94U);
+		SequencingContext context = new();
+		using IncrementalRecursiveTimeline timeline = new(context,
+			new Resolver(root, first, sibling, oldFirst, oldSibling, currentFirst));
+		timeline.AddRoot(root.Id);
+		var starts = Drain(timeline).SelectMany(e => e.Commands)
+			.OfType<StartNoteCommand>().Select(c => c.SourceId).ToArray();
+		Assert.Multiple(() =>
+		{
+			Assert.That(starts, Does.Not.Contain((ObjectId)92U));
+			Assert.That(starts, Does.Contain((ObjectId)93U));
+			Assert.That(starts, Does.Contain((ObjectId)94U));
+			Assert.That(timeline.RetainedDisplacedSourceProducerCount, Is.Zero);
+			Assert.That(context.ScopedMemory.ActiveScopeCount, Is.Zero);
+		});
+	}
+
 	[TestCase(0.5, 2.0, 1.0)]
 	[TestCase(2.0, 2.0, 4.0)]
 	[TestCase(0.5, 0.5, 0.25)]
