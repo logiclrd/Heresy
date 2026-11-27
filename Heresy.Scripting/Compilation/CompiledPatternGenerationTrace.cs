@@ -4,6 +4,7 @@ using System.Diagnostics;
 
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
+using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
 using Heresy.Scripting.Runtime;
 
@@ -17,16 +18,33 @@ public enum PatternGenerationTraceStatus
     Truncated,
 }
 
-public sealed record PatternGenerationTraceEvent(NoteEvent Note, bool DroppedInStrictMode)
+public sealed record PatternGenerationTraceEvent(NoteEvent Note, bool DroppedInStrictMode,
+    long TraceOrdinal, long? EnclosingScopeId)
 {
     public long OccurrenceId => Note.EmissionOrder;
 }
+
+public enum PatternGenerationTraceMarkerKind
+{
+    LoopEnter,
+    LoopExit,
+    IterationBegin,
+    IterationEnd,
+}
+
+/// <summary>Scope IDs are the opening marker's ordinal, local to one trace.
+/// An iteration index is zero-based execution count, not a loop variable.
+/// Closing markers describe scope unwinding, not successful completion.</summary>
+public sealed record PatternGenerationTraceMarker(
+    long TraceOrdinal, long ScopeId, long? ParentScopeId,
+    PatternGenerationTraceMarkerKind Kind, SequenceCallsite SourceSpan, int? IterationIndex);
 
 /// <summary>One isolated generation attempt, including a retained prefix on failure.
 /// Not a playback schedule.</summary>
 public sealed record PatternGenerationTraceResult(
     ObjectId PatternId, string Source, int RowCount, int ChannelCount, bool Relaxed,
     IReadOnlyList<PatternGenerationTraceEvent> Events,
+    IReadOnlyList<PatternGenerationTraceMarker> Markers,
     PatternGenerationTraceStatus Status, string? Detail,
     IReadOnlyList<SequencingDiagnostic> Diagnostics);
 
@@ -43,6 +61,12 @@ public sealed class PatternGenerationTraceBudget
     private readonly TimeSpan _duration;
     private readonly int _maximumRecords;
     private int _records;
+    private long _nextOrdinal;
+    private TraceScope? _scope;
+    private readonly List<PatternGenerationTraceMarker> _markers = [];
+
+    internal IReadOnlyList<PatternGenerationTraceMarker> Markers => _markers.AsReadOnly();
+    internal long? CurrentScopeId => _scope?.Id;
 
     internal PatternGenerationTraceBudget(SequencingCancellation cancellation,
         int maximumRecords, TimeSpan duration)
@@ -59,12 +83,63 @@ public sealed class PatternGenerationTraceBudget
             throw new PatternGenerationTraceLimitException("Diagnostic execution time limit reached.");
     }
 
-    internal void ReserveRecord()
+    private void ReserveRecords(int count)
     {
         Checkpoint();
-        if (_records >= _maximumRecords)
+        if (count > _maximumRecords - _records)
             throw new PatternGenerationTraceLimitException("Diagnostic record limit reached.");
-        _records++;
+        _records += count;
+    }
+
+    internal long ReserveEvent()
+    {
+        ReserveRecords(1);
+        return _nextOrdinal++;
+    }
+
+    internal IDisposable EnterLoop(SequenceCallsite source)
+        => EnterScope(source, iterationIndex: null);
+
+    internal IDisposable EnterIteration()
+    {
+        TraceScope loop = _scope ?? throw new InvalidOperationException("No diagnostic loop scope.");
+        if (loop.IterationIndex.HasValue)
+            throw new InvalidOperationException("Expected diagnostic loop scope, not iteration.");
+        return EnterScope(loop.Source, loop.NextIteration++);
+    }
+
+    private IDisposable EnterScope(SequenceCallsite source, int? iterationIndex)
+    {
+        // Reserve both markers together. Closing a scope must never throw a
+        // cancellation/retention exception or mask the authored failure.
+        ReserveRecords(2);
+        TraceScope scope = new(this, _scope, _nextOrdinal++, source, iterationIndex);
+        _scope = scope;
+        _markers.Add(new(scope.Id, scope.Id, scope.Parent?.Id,
+            iterationIndex.HasValue ? PatternGenerationTraceMarkerKind.IterationBegin
+                : PatternGenerationTraceMarkerKind.LoopEnter, source, iterationIndex));
+        return scope;
+    }
+
+    private sealed class TraceScope(PatternGenerationTraceBudget owner, TraceScope? parent,
+        long id, SequenceCallsite source, int? iterationIndex) : IDisposable
+    {
+        internal TraceScope? Parent { get; } = parent;
+        internal long Id { get; } = id;
+        internal SequenceCallsite Source { get; } = source;
+        internal int? IterationIndex { get; } = iterationIndex;
+        internal int NextIteration { get; set; }
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            owner._markers.Add(new(owner._nextOrdinal++, Id, Parent?.Id,
+                IterationIndex.HasValue ? PatternGenerationTraceMarkerKind.IterationEnd
+                    : PatternGenerationTraceMarkerKind.LoopExit, Source, IterationIndex));
+            owner._scope = Parent;
+        }
     }
 }
 
@@ -80,6 +155,8 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
         => _traceBudget = traceBudget;
 
     protected void __HeresyDiagnosticCheckpoint() => _traceBudget.Checkpoint();
+    protected IDisposable __HeresyEnterTraceLoop(SequenceCallsite span) => _traceBudget.EnterLoop(span);
+    protected IDisposable __HeresyEnterTraceIteration() => _traceBudget.EnterIteration();
 }
 
 /// <summary>Factory for isolated diagnostic generation. Deliberately does
@@ -145,8 +222,9 @@ public sealed class CompiledPatternGenerationTrace
                     if (iterator.Current is RawPatternStep.Emit emission)
                     {
                         bool dropped = emission.Row < lastRow;
-                        budget.ReserveRecord();
-                        events.Add(new(emission.Note.WithEmissionOrder(events.Count), dropped));
+                        long ordinal = budget.ReserveEvent();
+                        events.Add(new(emission.Note.WithEmissionOrder(events.Count), dropped,
+                            ordinal, budget.CurrentScopeId));
                         if (dropped)
                             context.Diagnostics.ReportDroppedOutOfOrderNote(emission.Row, lastRow);
                         else
@@ -184,7 +262,7 @@ public sealed class CompiledPatternGenerationTrace
         }
         if (detail is { Length: > 2048 }) detail = detail[..2048];
         return new(_patternId, _source, _rowCount, _channelCount, _relaxed,
-            events.AsReadOnly(), status, detail, Array.AsReadOnly(context.Diagnostics.Drain()));
+            events.AsReadOnly(), budget.Markers, status, detail, Array.AsReadOnly(context.Diagnostics.Drain()));
     }
 
     private PatternScriptProgram CreateProgram(SequencingContext context, INoteReceiver receiver,
@@ -199,8 +277,9 @@ public sealed class CompiledPatternGenerationTrace
         public void Append(NoteEvent noteEvent)
         {
             ArgumentNullException.ThrowIfNull(noteEvent);
-            budget.ReserveRecord();
-            events.Add(new(noteEvent.WithEmissionOrder(events.Count), false));
+            long ordinal = budget.ReserveEvent();
+            events.Add(new(noteEvent.WithEmissionOrder(events.Count), false,
+                ordinal, budget.CurrentScopeId));
         }
     }
 }
