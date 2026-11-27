@@ -125,6 +125,8 @@ public sealed class PatternGenerationTraceBudget
     internal IReadOnlyList<PatternGenerationTraceTransfer> Transfers => _transfers.AsReadOnly();
     internal long? CurrentInvocationId => _invocation?.Record.Id;
     internal long? CurrentGroupId => _invocation?.Record.GroupId;
+    internal SequenceCallsite? CurrentKnownInvocationSpan
+        => _invocation?.Record.SourceSpan is { Length: > 0 } span ? span : null;
     private PatternGenerationTraceLocation? _lastContext;
     private PatternGenerationTraceLocation? _invocationFailure;
     internal PatternGenerationTraceLocation? FailureContext => _invocationFailure ?? _lastContext;
@@ -312,6 +314,9 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
         _pendingInvocation?.Dispose();
         _pendingInvocation = null;
     }
+
+    protected NoteGroup __HeresyTraceNewGroupFromDelegate(SequenceCallsite fallback)
+        => __HeresyTraceNewGroup(_traceBudget.CurrentKnownInvocationSpan ?? fallback);
 
     protected NoteGroup __HeresyTraceNewGroup(SequenceCallsite span)
     {
