@@ -436,7 +436,8 @@ public sealed class PlaybackSession
 		bool Include(PlaybackVoice? voice)
 		{
 			if (voice is null) return true;
-			long? bound = GetEffectiveVoiceEndFrameExclusive(voice, _nextFrame);
+			long? bound = GetEffectiveVoiceEndFrameExclusive(voice, _nextFrame,
+				projectStoppedChildren: true);
 			if (!bound.HasValue) return false;
 			end = Math.Max(end, bound.Value);
 			return true;
@@ -4393,12 +4394,17 @@ public sealed class PlaybackSession
 
 	private long? GetEffectiveVoiceEndFrameExclusive(
 		PlaybackVoice voice,
-		long absoluteFrame)
+		long absoluteFrame,
+		bool projectStoppedChildren = false)
 	{
 		long? soundEndRelative =
 			voice.Sound.GetEndFrameExclusive(
 				_context,
 				voice.SoundState);
+		if (projectStoppedChildren && voice.Sound is IInheritedLifecycleSound privateChild
+			&& privateChild.GetKnownStoppedEndFrameExclusive() is long childEnd)
+			soundEndRelative = soundEndRelative.HasValue
+				? Math.Min(soundEndRelative.Value, childEnd) : childEnd;
 		if (voice.SoundState.NaturalEndFrameExclusive is long naturalEnd)
 			soundEndRelative = soundEndRelative.HasValue
 				? Math.Min(soundEndRelative.Value, naturalEnd) : naturalEnd;
