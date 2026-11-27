@@ -206,9 +206,10 @@ public sealed class PatternGenerationTraceTests
         Assert.That(ordinaryType.BaseType, Is.EqualTo(typeof(PatternScriptProgram)));
         Assert.That(f6Type.BaseType, Is.EqualTo(typeof(PatternScriptProgram)));
         Assert.That(diagnosticType.BaseType, Is.EqualTo(typeof(DiagnosticPatternScriptProgram)));
-        Assert.That(CallsDiagnosticCheckpoint(ordinaryType), Is.False);
-        Assert.That(CallsDiagnosticCheckpoint(f6Type), Is.False);
-        Assert.That(CallsDiagnosticCheckpoint(diagnosticType), Is.True);
+        Assert.That(DiagnosticCalls(ordinaryType), Is.Empty);
+        Assert.That(DiagnosticCalls(f6Type), Is.Empty);
+        Assert.That(DiagnosticCalls(diagnosticType), Is.SupersetOf(new[] {
+            "__HeresyDiagnosticCheckpoint", "__HeresyEnterTraceLoop", "__HeresyEnterTraceIteration" }));
     }
 
     private static Type GeneratedType(object factory)
@@ -217,8 +218,9 @@ public sealed class PatternGenerationTraceTests
 
     // Decode method tokens only at actual IL instruction boundaries, including
     // compiler-generated iterator MoveNext and lambda methods.
-    private static bool CallsDiagnosticCheckpoint(Type type)
+    private static System.Collections.Generic.HashSet<string> DiagnosticCalls(Type type)
     {
+        System.Collections.Generic.HashSet<string> calls = [];
         var opcodes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
             .Where(f => f.FieldType == typeof(OpCode)).Select(f => (OpCode)f.GetValue(null)!)
             .GroupBy(op => op.Value).ToDictionary(g => g.Key, g => g.First());
@@ -235,8 +237,8 @@ public sealed class PatternGenerationTraceTests
                 if (op.OperandType == OperandType.InlineMethod)
                 {
                     var called = method.Module.ResolveMethod(BitConverter.ToInt32(il, i));
-                    if (called?.DeclaringType == typeof(DiagnosticPatternScriptProgram) &&
-                        called.Name == "__HeresyDiagnosticCheckpoint") return true;
+                    if (called?.DeclaringType == typeof(DiagnosticPatternScriptProgram))
+                        calls.Add(called.Name);
                 }
                 i += op.OperandType switch
                 {
@@ -249,6 +251,6 @@ public sealed class PatternGenerationTraceTests
                 };
             }
         }
-        return false;
+        return calls;
     }
 }
