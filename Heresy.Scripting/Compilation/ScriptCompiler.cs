@@ -1658,6 +1658,22 @@ public static class ScriptCompiler
 		}
 	}
 
+	private const string DiagnosticLoopAnnotation = "HeresyDiagnosticLoop";
+
+	private static BlockSyntax AnnotateDiagnosticLoops(BlockSyntax body, PatternUsingLowering lowering)
+	{
+		var loops = body.DescendantNodes().OfType<StatementSyntax>()
+			.Where(node => node is ForStatementSyntax or ForEachStatementSyntax
+				or WhileStatementSyntax or DoStatementSyntax).ToArray();
+		return body.ReplaceNodes(loops, (original, rewritten) =>
+		{
+			var span = lowering.Original(new ScriptSourceSpan(
+				original.SpanStart - AuthoredBodyOffset, original.Span.Length));
+			return rewritten.WithAdditionalAnnotations(new SyntaxAnnotation(
+				DiagnosticLoopAnnotation, TraceCallsite(span)));
+		});
+	}
+
 	private static string InstrumentIncrementalPattern(string source,
 		IReadOnlySet<ScriptSourceSpan> emitterSpans, bool instrumentActionCallsites,
 		PatternUsingLowering lowering, bool diagnostic = false)
@@ -1666,6 +1682,7 @@ public static class ScriptCompiler
 		// rather than treating top-level locals as script fields. The
 		// synthetic opening brace shifts original offsets by exactly one.
 		BlockSyntax body = ParseAuthoredBody(source);
+		if (diagnostic) body = AnnotateDiagnosticLoops(body, lowering);
 		body = (BlockSyntax)new StrictPatternEmitterRewriter(
 			emitterSpans, instrumentActionCallsites, AuthoredBodyOffset, lowering).Visit(body)!;
 		body = (BlockSyntax)new LoopCheckpointRewriter(cooperative: true, diagnostic: diagnostic).Visit(body)!;
@@ -1677,6 +1694,7 @@ public static class ScriptCompiler
 		bool diagnostic = false)
 	{
 		SyntaxNode root = ParseAuthoredBody(source);
+		if (diagnostic) root = AnnotateDiagnosticLoops((BlockSyntax)root, lowering);
 		string prefix = "__heresyTrace";
 		var identifiers = root.DescendantTokens()
 			.Where(t => t.IsKind(SyntaxKind.IdentifierToken))
@@ -1718,7 +1736,7 @@ public static class ScriptCompiler
 		}
 
 		root = new RelaxedPatternEmitterCallsiteRewriter(emitterSpans, delegates,
-			replacements, boundReplacements, prefix, lowering).Visit(root) ?? root;
+			replacements, boundReplacements, prefix, lowering, diagnostic).Visit(root) ?? root;
 		root = new LoopCheckpointRewriter(diagnostic: diagnostic).Visit(root) ?? root;
 		// Local adapter declarations are compiler-owned, after the original
 		// authored source, and never included in the canonical API audit.
@@ -1804,7 +1822,7 @@ public static class ScriptCompiler
 		IReadOnlyDictionary<ScriptSourceSpan, DelegateTraceSite> delegates,
 		IReadOnlyDictionary<ScriptSourceSpan, string> methodGroups,
 		IReadOnlyDictionary<ScriptSourceSpan, BoundTraceSite> boundGroups,
-		string prefix, PatternUsingLowering lowering) : CSharpSyntaxRewriter
+		string prefix, PatternUsingLowering lowering, bool diagnostic) : CSharpSyntaxRewriter
 	{
 		private static ScriptSourceSpan Span(SyntaxNode node)
 			=> new(node.SpanStart - AuthoredBodyOffset, node.Span.Length);
@@ -1830,12 +1848,13 @@ public static class ScriptCompiler
 			// Evaluate the real method-group conversion first, exactly once.
 			// Cache the adapter against that delegate, not against the source
 			// spelling or the variable that formerly held its receiver.
-			string adapter = $"base.__HeresyBindTrace(({delegateType}){rewritten.WithoutTrivia()}, "
+			string receiverText = diagnostic ? prefix + "ReceiverPlaceholder" : rewritten.WithoutTrivia().ToFullString();
+			string adapter = $"base.__HeresyBindTrace(({delegateType}){receiverText}, "
 				+ $"{target} => ({parameters}) => {{ "
 				+ $"var {previous} = base.__HeresyPushFallbackCallsite({TraceCallsite(lowering.Original(span))}); "
 				+ $"try {{ {returnPrefix}{target}({arguments}); }} "
 				+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }} }})";
-			return SyntaxFactory.ParseExpression(adapter).WithTriviaFrom(node);
+			return ParseAdapter(adapter, rewritten).WithTriviaFrom(node);
 		}
 
 		public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node)
@@ -1861,12 +1880,12 @@ public static class ScriptCompiler
 				string returnPrefix = method.ReturnsVoid ? ""
 					: method.ReturnsByRef || method.ReturnsByRefReadonly ? "return ref " : "return ";
 				string adapter =
-					$"base.__HeresyWrapDelegate({receiver.WithoutTrivia().ToFullString()}, "
+					$"base.__HeresyWrapDelegate({(diagnostic ? prefix + "ReceiverPlaceholder" : receiver.WithoutTrivia().ToFullString())}, "
 					+ $"{target} => ({parameters}) => {{ "
 					+ $"var {previous} = base.__HeresyPushDelegateCallsite({TraceCallsite(lowering.Original(span))}); "
 					+ $"try {{ {returnPrefix}{target}({arguments}); }} "
 					+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }} }})";
-				return rewritten.WithExpression(SyntaxFactory.ParseExpression(adapter)
+				return rewritten.WithExpression(ParseAdapter(adapter, receiver)
 					.WithTriviaFrom(rewritten.Expression));
 			}
 			if (!emitterSpans.Contains(span))
@@ -1876,6 +1895,15 @@ public static class ScriptCompiler
 				SyntaxFactory.ParseExpression(TraceCallsite(lowering.Original(span))));
 			return rewritten.WithArgumentList(rewritten.ArgumentList.WithArguments(
 				rewritten.ArgumentList.Arguments.Insert(0, callsite)));
+		}
+
+		private ExpressionSyntax ParseAdapter(string adapter, ExpressionSyntax receiver)
+		{
+			ExpressionSyntax parsed = SyntaxFactory.ParseExpression(adapter);
+			if (!diagnostic) return parsed;
+			var placeholder = parsed.DescendantNodes().OfType<IdentifierNameSyntax>()
+				.Single(n => n.Identifier.ValueText == prefix + "ReceiverPlaceholder");
+			return parsed.ReplaceNode(placeholder, receiver.WithoutTrivia());
 		}
 
 		private static string ParameterModifier(RefKind kind, bool declaration)
@@ -2339,8 +2367,7 @@ public static class ScriptCompiler
 				(ForStatementSyntax)(
 					base.VisitForStatement(node)
 						?? node);
-			return visited.WithStatement(
-				Guard(visited.Statement));
+			return WrapLoop(visited.WithStatement(Guard(visited.Statement)), node);
 		}
 
 		public override SyntaxNode? VisitForEachStatement(
@@ -2348,7 +2375,7 @@ public static class ScriptCompiler
 		{
 			ForEachStatementSyntax visited =
 				(ForEachStatementSyntax)(base.VisitForEachStatement(node) ?? node);
-			return visited.WithStatement(Guard(visited.Statement));
+			return WrapLoop(visited.WithStatement(Guard(visited.Statement)), node);
 		}
 
 		public override SyntaxNode? VisitWhileStatement(
@@ -2362,8 +2389,7 @@ public static class ScriptCompiler
 				(WhileStatementSyntax)(
 					base.VisitWhileStatement(node)
 						?? node);
-			return visited.WithStatement(
-				Guard(visited.Statement));
+			return WrapLoop(visited.WithStatement(Guard(visited.Statement)), node);
 		}
 
 		public override SyntaxNode? VisitDoStatement(
@@ -2373,8 +2399,22 @@ public static class ScriptCompiler
 				(DoStatementSyntax)(
 					base.VisitDoStatement(node)
 						?? node);
-			return visited.WithStatement(
-				Guard(visited.Statement));
+			return WrapLoop(visited.WithStatement(Guard(visited.Statement)), node);
+		}
+
+		private StatementSyntax WrapLoop(StatementSyntax loop, StatementSyntax original)
+		{
+			if (!diagnostic) return loop;
+			string span = original.GetAnnotations(DiagnosticLoopAnnotation).Single().Data
+				?? throw new InvalidOperationException("Diagnostic loop source annotation missing.");
+			return WrapScope(loop, "base.__HeresyEnterTraceLoop(" + span + ")");
+		}
+
+		private static StatementSyntax WrapScope(StatementSyntax statement, string expression)
+		{
+			var scope = (UsingStatementSyntax)SyntaxFactory.ParseStatement("using (" + expression + ") {}");
+			return scope.WithStatement(SyntaxFactory.Block(statement.WithoutTrivia()))
+				.WithTriviaFrom(statement);
 		}
 
 		private StatementSyntax Guard(
@@ -2388,11 +2428,12 @@ public static class ScriptCompiler
 			if (diagnostic)
 			{
 				StatementSyntax trace = SyntaxFactory.ParseStatement("base.__HeresyDiagnosticCheckpoint();");
-				if (body is BlockSyntax diagnosticBlock)
-					return diagnosticBlock.WithStatements(diagnosticBlock.Statements
-						.Insert(0, checkpoint).Insert(0, trace));
-				return SyntaxFactory.Block(trace, checkpoint, body.WithoutLeadingTrivia())
-					.WithTriviaFrom(body);
+				StatementSyntax guarded = body is BlockSyntax diagnosticBlock
+					? diagnosticBlock.WithStatements(diagnosticBlock.Statements
+						.Insert(0, checkpoint).Insert(0, trace))
+					: SyntaxFactory.Block(trace, checkpoint, body.WithoutLeadingTrivia())
+						.WithTriviaFrom(body);
+				return WrapScope(guarded, "base.__HeresyEnterTraceIteration()");
 			}
 			if (body is BlockSyntax block)
 			{
