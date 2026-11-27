@@ -429,7 +429,8 @@ public sealed class PlaybackSession
 	public long? GetKnownStoppedAudioEndFrameExclusive()
 	{
 		if (_nextEventIndex < _schedule.Count || _displacedOutputTails.Count != 0
-			|| _outputSpeakerFilters?.HasTail == true || AnyChannelOutputFilterHasTail())
+			|| _outputSpeakerFilters is not null || _physicalOutputFilters.Count != 0
+			|| _targetedVirtualOutputFilters.Count != 0 || _scopedVirtualOutputFilters.Count != 0)
 			return null;
 		long end = _nextFrame;
 		bool Include(PlaybackVoice? voice)
@@ -1005,7 +1006,7 @@ public sealed class PlaybackSession
 	/// boundary, without moving the child's note onset or source playhead.
 	/// The fade duration is still selected from each bound voice's policy.</summary>
 	public void RequestFadeOfActiveVoices(bool newNoteDisplacement, long elapsedFadeFrames,
-		bool reconstructing = false)
+		bool reconstructing = false, bool includeTargetEvents = true)
 	{
 		if (elapsedFadeFrames < 0)
 			throw new ArgumentOutOfRangeException(nameof(elapsedFadeFrames));
@@ -1019,7 +1020,7 @@ public sealed class PlaybackSession
 				elapsedFadeFrames);
 			if (reconstructing && voice.Sound is IInheritedLifecycleSound recursive)
 				recursive.InheritFade(_nextFrame - voice.StartFrame, elapsedFadeFrames,
-					newNoteDisplacement);
+					newNoteDisplacement, includeTargetEvents);
 		}
 		foreach (PlaybackChannelState channel in _channels.Values)
 			Fade(channel.CurrentVoice);
@@ -1035,7 +1036,7 @@ public sealed class PlaybackSession
 
 	/// <summary>End input with an inherited elapsed release, including
 	/// recursively stopping private descendants at the selected boundary.</summary>
-	public void EndInput(long elapsedReleaseFrames, bool reconstructing)
+	public void EndInput(long elapsedReleaseFrames, bool reconstructing, bool includeTargetEvents = true)
 	{
 		if (elapsedReleaseFrames < 0)
 			throw new ArgumentOutOfRangeException(nameof(elapsedReleaseFrames));
@@ -1054,7 +1055,7 @@ public sealed class PlaybackSession
 			if (voice is null) return;
 			voice.ApplyNoteOff(_nextFrame, SampleRate, elapsedReleaseFrames);
 			if (reconstructing && voice.Sound is IInheritedLifecycleSound recursive)
-				recursive.InheritRelease(_nextFrame - voice.StartFrame, elapsedReleaseFrames);
+				recursive.InheritRelease(_nextFrame - voice.StartFrame, elapsedReleaseFrames, includeTargetEvents);
 		}
 
 		foreach (PlaybackChannelState channel in _channels.Values)
