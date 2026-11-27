@@ -34,7 +34,6 @@ public static class FlattenedSourceEffectPolicy
 			or TrackerTremoloWaveformPatternEffect
 			or TrackerPanbrelloWaveformPatternEffect
 			or TrackerGlissandoControlPatternEffect
-			or TrackerPastNoteActionPatternEffect
  			or TrackerEnvelopeControlPatternEffect
 			or TrackerVolumeColumnPatternEffect
 				{ Kind: TrackerVolumeColumnEffectKind.PitchSlideDown
@@ -67,7 +66,6 @@ public static class FlattenedSourceEffectPolicy
 			or ApplyTrackerPanbrelloWaveformCommand
 			or SetPanbrelloWaveformCommand
 			or ApplyTrackerGlissandoControlCommand
-			or ApplyTrackerPastNoteActionCommand or ApplyPastNoteActionCommand
  			or ApplyTrackerEnvelopeControlCommand or SetEnvelopeEnabledCommand
 			or ApplyTrackerVolumeColumnCommand
 				{ Kind: TrackerVolumeColumnEffectKind.PitchSlideDown
