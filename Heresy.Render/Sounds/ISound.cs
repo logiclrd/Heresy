@@ -65,3 +65,11 @@ public interface ISound
 /// it merely because its end frame is not known yet.
 /// </summary>
 public interface IStreamingFiniteSound : ISound { }
+
+/// <summary>Private recursive sound receiving a parent's reconstructed
+/// lifecycle at an exact source boundary. Not an authored script API.</summary>
+public interface IInheritedLifecycleSound : ISound
+{
+	void InheritRelease(long invocationFrame, long elapsedReleaseFrames);
+	void InheritFade(long invocationFrame, long elapsedFadeFrames, bool newNoteDisplacement);
+}
