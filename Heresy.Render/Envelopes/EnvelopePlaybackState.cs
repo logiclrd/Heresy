@@ -137,16 +137,36 @@ public sealed class EnvelopePlaybackState
 	}
 
 	public void NoteOff(long absoluteFrame)
+		=> NoteOff(absoluteFrame, elapsedReleaseFrames: 0);
+
+	/// <summary>
+	/// Begin release from the held position at this boundary, consuming
+	/// an already elapsed number of active release frames immediately.
+	/// This is a reconstruction operation: the elapsed release may be
+	/// older than this particular envelope's held age. No absolute frame
+	/// or release origin is backdated, and historical queries preceding
+	/// the boundary retain their original values. Subsequent pause/resume
+	/// follows the existing active-clock rules. Like ordinary Note Off,
+	/// this is a one-shot transition.
+	/// </summary>
+	public void NoteOff(long absoluteFrame, long elapsedReleaseFrames)
 	{
+		if (elapsedReleaseFrames < 0)
+			throw new ArgumentOutOfRangeException(nameof(elapsedReleaseFrames));
 		EnsureChronologicalMutation(absoluteFrame);
 		long activeFrame = GetActiveFrame(absoluteFrame);
-		Observe(absoluteFrame, activeFrame);
-
 		if (_noteOffActiveFrame.HasValue)
+		{
+			Observe(absoluteFrame, activeFrame);
 			return;
+		}
 
+		long releasedFrame = checked(activeFrame + elapsedReleaseFrames);
+		if (elapsedReleaseFrames != 0)
+			_segments.Add(new TimelineSegment(absoluteFrame, releasedFrame, Enabled));
 		_noteOffAbsoluteFrame = absoluteFrame;
 		_noteOffActiveFrame = activeFrame;
+		Observe(absoluteFrame, releasedFrame);
 	}
 
 	private long GetActiveFrame(long absoluteFrame)
