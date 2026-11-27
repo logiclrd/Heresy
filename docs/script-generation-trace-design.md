@@ -425,3 +425,42 @@ headers, source anchors, unexecuted and nested invocation navigation,
 CRLF and stale/invalid selection. Slice 3c scripting passed 541/541
 (#46084603761); Core/File/Render and ARM64 passed, Release superseded before
 full completion. Exact-head full CI including the new model tests is pending.
+
+
+## Slice 5: editor integration
+
+The Script Pattern editor has an explicit Generation Trace action alongside
+its restricted-C# source heading. The Script Sequence editor does not get
+this action. The existing editable pane remains instantiated and its
+TextDocument, undo stack, applied source, save state, and F6 highlighting
+remain independent of the diagnostic view. The trace view is a separate
+full-height pane: order selector and virtualized ListBox on the left,
+resizable divider, read-only source TextEditor on the right. It reuses
+the canonical reference-token generator, syntax colorizer, and source-span
+background renderer in independent instances. Selection changes scroll to
+the first highlighted source span without modifying the live source.
+
+The editor copies the current draft and applied row/channel layout into
+an isolated ScriptPatternDefinition; it does not apply pending layout text
+or save the source. A per-view cancellable worker compiles, captures, and
+precomputes all three projections. Compilation itself is not preemptible;
+a cancellation requested during compilation is observed at capture entry.
+Cancel retains the captured prefix; Back to Source or detachment invalidates
+the worker's publication identity, clears the old trace, and requests stop.
+A replacement run is independent; stale completion cannot replace it.
+No transport calls or implicit commits occur. Exact source comparison
+prevents navigation into a changed draft. Double-click uses the read-only
+TextEditor's canonical GetPositionFromPoint/Document.GetOffset mapping;
+the existing model chooses the innermost authored invocation or a caret
+offset. Whitespace without a text hit returns to the source with no new
+caret target. The editable pane is not reconstructed.
+
+Four new headless UI tests cover draft capture without save/audition,
+read-only independent document, order selection, navigation and undo,
+stale source, compiler failure, sequence exclusion, cancellation and
+superseded worker publication. The existing Save placement test now
+inspects the editable pane within the two-view host. Slice 4's run
+#46084891808 passed all 4,855 tests (UI 1,595, scripting 541) and ARM64;
+the Release workflow itself was superseded after the tests. Full
+Slice 5 exact-head CI and actual Linux/Windows pointer/scroll/token
+navigation and visual acceptance remain outstanding.
