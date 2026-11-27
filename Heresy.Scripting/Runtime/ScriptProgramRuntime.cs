@@ -507,6 +507,16 @@ public abstract class PatternScriptProgram
 		=> EmitWithEditorCallsite(callsite,
 			() => SourceFrame(row, channel, sourceFrameOffset, timeOffsetSeconds));
 
+	protected void SourceFrameRelative(SequenceCallsite callsite, double row, int channel,
+		long deltaFrames, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => SourceFrameRelative(row, channel, deltaFrames, timeOffsetSeconds));
+
+	protected void SeekRelative(SequenceCallsite callsite, double row, int channel,
+		double deltaSeconds, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => SeekRelative(row, channel, deltaSeconds, timeOffsetSeconds));
+
 	protected void Displacement(SequenceCallsite callsite, double row, int channel,
 		NoteDisplacementAction action, double timeOffsetSeconds = 0.0)
 		=> EmitWithEditorCallsite(callsite,
@@ -710,7 +720,17 @@ public abstract class PatternScriptProgram
 		if (sourceFrameOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(sourceFrameOffset));
 		Append(row, ChannelTarget.Physical(channel),
-			new SetSourceFrameOffsetCommand(sourceFrameOffset), timeOffsetSeconds);
+			new SeekSourceFrameCommand(sourceFrameOffset), timeOffsetSeconds);
+	}
+
+	/// <summary>Move the current playhead by a signed native frame delta.</summary>
+	protected void SourceFrameRelative(double row, int channel, long deltaFrames,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		Append(row, ChannelTarget.Physical(channel),
+			new SeekSourceFrameCommand(deltaFrames, Relative: true), timeOffsetSeconds);
 	}
 
 	/// <summary>Override the current logical note's next-note action.</summary>
@@ -750,6 +770,16 @@ public abstract class PatternScriptProgram
 		Append(row, ChannelTarget.Physical(channel),
 			CreateSeekCommand(playbackSeconds),
 			timeOffsetSeconds);
+	}
+
+	/// <summary>Move the playhead by a signed time delta at execution rate.</summary>
+	protected void SeekRelative(double row, int channel, double deltaSeconds,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		Append(row, ChannelTarget.Physical(channel),
+			CreateSeekCommand(deltaSeconds, relative: true), timeOffsetSeconds);
 	}
 
 	/// <summary>Set physical-channel spatial position. These are absolute
@@ -815,13 +845,22 @@ public abstract class PatternScriptProgram
 
 	// Shared validation and command construction for physical and owned
 	// virtual controls. These internal factories are not authored APIs.
-	internal static SetPlaybackOffsetCommand CreateSeekCommand(double playbackSeconds)
+	internal static SeekPlaybackTimeCommand CreateSeekCommand(double playbackSeconds,
+		bool relative = false)
 	{
 		if (!double.IsFinite(playbackSeconds)
-			|| playbackSeconds < 0
-			|| playbackSeconds > TimeSpan.MaxValue.TotalSeconds)
+			|| (!relative && playbackSeconds < 0)
+			|| playbackSeconds > TimeSpan.MaxValue.TotalSeconds
+			|| playbackSeconds < TimeSpan.MinValue.TotalSeconds)
 			throw new ArgumentOutOfRangeException(nameof(playbackSeconds));
-		return new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(playbackSeconds));
+		try
+		{
+			return new SeekPlaybackTimeCommand(TimeSpan.FromSeconds(playbackSeconds), relative);
+		}
+		catch (OverflowException)
+		{
+			throw new ArgumentOutOfRangeException(nameof(playbackSeconds));
+		}
 	}
 
 	internal static SetSpatialPositionCommand CreatePanCommand(double x, double y, double z)

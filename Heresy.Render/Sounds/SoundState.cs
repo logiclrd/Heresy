@@ -49,8 +49,15 @@ public abstract class SoundState
 			if (value < TimeSpan.Zero)
 				throw new ArgumentOutOfRangeException(nameof(value));
 			_playbackOffset = value;
+			OnPlaybackOffsetChanged();
 		}
 	}
+
+	// A legacy offset assignment supersedes a sound-specific seek anchor.
+	protected virtual void OnPlaybackOffsetChanged() { }
+
+	protected internal void ClearNaturalEndObservation()
+		=> _naturalEndFrameExclusive = null;
 
 	public Vector3 Position
 	{

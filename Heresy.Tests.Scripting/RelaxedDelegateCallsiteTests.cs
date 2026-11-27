@@ -176,7 +176,7 @@ public sealed class RelaxedDelegateCallsiteTests
         Assert.That(events[3].Target, Is.EqualTo(events[1].Target));
         Assert.That(events[4].Target, Is.EqualTo(events[1].Target));
         Assert.That(events[3].Commands.Single(), Is.EqualTo(new SetResonantFilterCommand(0.4, 0.2)));
-        Assert.That(events[4].Commands.Single(), Is.EqualTo(new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(0.2))));
+        Assert.That(events[4].Commands.Single(), Is.EqualTo(new SeekPlaybackTimeCommand(TimeSpan.FromSeconds(0.2))));
     }
 
     [Test]

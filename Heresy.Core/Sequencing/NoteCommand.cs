@@ -274,6 +274,14 @@ public sealed record SetPlaybackFrequencyCommand(double Frequency) : NoteCommand
 /// <summary>Moves the current source directly to a new playback time offset.</summary>
 public sealed record SetPlaybackOffsetCommand(TimeSpan Offset) : NoteCommand;
 
+/// <summary>Script playhead seek at the resolved event deadline. Time is
+/// converted at the bound sound's instantaneous playback rate.</summary>
+public sealed record SeekPlaybackTimeCommand(TimeSpan Time, bool Relative = false) : NoteCommand;
+
+/// <summary>Script playhead seek in native source frames; a relative
+/// operation uses the current unwrapped fractional playhead.</summary>
+public sealed record SeekSourceFrameCommand(long Frame, bool Relative = false) : NoteCommand;
+
 /// <summary>
 /// Raw tracker-style vibrato operation. Parameter packs speed in the high
 /// nibble and depth in the low nibble. Zero nibbles use channel effect memory.

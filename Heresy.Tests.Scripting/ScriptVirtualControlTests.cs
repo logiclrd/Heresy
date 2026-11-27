@@ -62,7 +62,7 @@ public sealed class ScriptVirtualControlTests
             Assert.That(actual[1].Commands.Single(),
                 Is.EqualTo(new SetNoteVolumeCommand(0.25)));
             Assert.That(actual[2].Commands.Single(),
-                Is.EqualTo(new SetSourceFrameOffsetCommand(256)));
+                Is.EqualTo(new SeekSourceFrameCommand(256)));
             Assert.That(actual[2].Offset.TimeOffset,
                 Is.EqualTo(TimeSpan.FromMilliseconds(10)));
             Assert.That(actual.Skip(3).Select(e => e.Commands.Single()),
@@ -101,7 +101,7 @@ public sealed class ScriptVirtualControlTests
         Type[] types = [
             typeof(StartNoteCommand),
             typeof(SetNoteVolumeCommand),
-            typeof(SetSourceFrameOffsetCommand),
+            typeof(SeekSourceFrameCommand),
             typeof(SetCurrentVoiceDisplacementActionCommand),
             typeof(ApplyPastNoteActionCommand),
         ];
@@ -171,6 +171,8 @@ public sealed class ScriptVirtualControlTests
         string[] calls =
         [
             "Seek(1, 0.2, timeOffsetSeconds: 0.01)",
+            "SeekRelative(1, -0.1, timeOffsetSeconds: 0.01)",
+            "SourceFrameRelative(1, -13, timeOffsetSeconds: 0.01)",
             "Pan(1, -0.75, 0.25, 2, timeOffsetSeconds: 0.02)",
             "Surround(1, true, timeOffsetSeconds: 0.03)",
             "Filter(1, 0.4, 0.2, timeOffsetSeconds: 0.04)",
@@ -179,7 +181,9 @@ public sealed class ScriptVirtualControlTests
         ];
         NoteCommand[] commands =
         [
-            new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(0.2)),
+            new SeekPlaybackTimeCommand(TimeSpan.FromSeconds(0.2)),
+            new SeekPlaybackTimeCommand(TimeSpan.FromSeconds(-0.1), true),
+            new SeekSourceFrameCommand(-13, true),
             new SetSpatialPositionCommand(new Vector3(-0.75f, 0.25f, 2)),
             new SetSurroundCommand(true),
             new SetResonantFilterCommand(0.4, 0.2),

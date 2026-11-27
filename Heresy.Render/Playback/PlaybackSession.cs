@@ -1884,6 +1884,11 @@ public sealed class PlaybackSession
                         null, virtualChannelId, scopedOwner, eventFrame, channel);
                     break;
 
+				case SeekPlaybackTimeCommand:
+				case SeekSourceFrameCommand:
+					ApplyScriptSeek(channel, command, eventFrame);
+					break;
+
 				case SetPlaybackOffsetCommand offsetSeconds:
 					if (channel.CurrentVoice is not null)
 						channel.CurrentVoice.SoundState.PlaybackOffset = offsetSeconds.Offset;
@@ -1950,6 +1955,43 @@ public sealed class PlaybackSession
 	/// Apply native source-frame seeking to whichever voice is current at the
 	/// event deadline, whether hosted on a physical or scoped virtual channel.
 	/// </summary>
+	private void ApplyScriptSeek(PlaybackChannelState channel, NoteCommand command, long eventFrame)
+	{
+		if (channel.CurrentVoice is not PlaybackVoice voice) return;
+		if (voice.Sound is IPlaybackSeekableSound seekable)
+		{
+			long frame = checked(eventFrame - voice.StartFrame);
+			// Same frame as the first post-event PCM sample. Native
+			// parametric pitch changes must already be reflected in R.
+			voice.SynchronizeNativeParametric(eventFrame);
+			switch (command)
+			{
+				case SeekPlaybackTimeCommand time:
+					seekable.SeekTime(_context, voice.SoundState, frame, time.Time, time.Relative);
+					break;
+				case SeekSourceFrameCommand source:
+					seekable.SeekFrame(_context, voice.SoundState, frame, source.Frame, source.Relative);
+					break;
+			}
+			return;
+		}
+
+		// Transitional compatibility until the private recursive slice:
+		// retain its previous absolute-offset behavior, not relative seeks.
+		// Procedural/non-seekable sounds have no playhead capability.
+		if (voice.Sound is not ISourceFrameSeekableSound) return;
+		switch (command)
+		{
+			case SeekPlaybackTimeCommand { Relative: false } time:
+				voice.SoundState.PlaybackOffset = time.Time;
+				break;
+			case SeekSourceFrameCommand { Relative: false } source:
+				ApplyNativeSourceFrameOffset(channel,
+					new SetSourceFrameOffsetCommand(source.Frame), "Script native offset");
+				break;
+		}
+	}
+
 	private void ApplyNativeSourceFrameOffset(
 		PlaybackChannelState channel,
 		SetSourceFrameOffsetCommand offset,
@@ -2285,6 +2327,11 @@ public sealed class PlaybackSession
 				channel.CurrentVoice?.SetPlaybackFrequency(
 					eventFrame, frequency.Frequency,
 					frequency.LocalPitchContextMultiplier);
+				break;
+
+			case SeekPlaybackTimeCommand:
+			case SeekSourceFrameCommand:
+				ApplyScriptSeek(channel, command, eventFrame);
 				break;
 
 			case SetPlaybackOffsetCommand playbackOffset:

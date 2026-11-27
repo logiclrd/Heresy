@@ -59,7 +59,7 @@ public sealed class IncrementalDirectControlScriptTests
                     new SetResonantFilterCommand(0.2, 0.4),
                     new SetResonantFilterCutoffCommand(0.6),
                     new SetResonantFilterResonanceCommand(0.7),
-                    new SetPlaybackOffsetCommand(TimeSpan.FromMilliseconds(75)),
+                    new SeekPlaybackTimeCommand(TimeSpan.FromMilliseconds(75)),
                     new SetSurroundCommand(true),
                 }));
         });

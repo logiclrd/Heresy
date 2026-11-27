@@ -882,7 +882,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						// voice present at the actual wall deadline, not the row.
 						or SetCurrentVoiceDisplacementActionCommand
 						or ApplyPastNoteActionCommand
-						or SetPlaybackOffsetCommand or SetSpatialPositionCommand or SetSurroundCommand
+						or SetPlaybackOffsetCommand or SeekPlaybackTimeCommand or SeekSourceFrameCommand or SetSpatialPositionCommand or SetSurroundCommand
 						or SetResonantFilterCommand or SetResonantFilterCutoffCommand
 						or SetResonantFilterResonanceCommand)
 						&& (virtualTarget || c is not (SelectPatternSourceCommand
@@ -932,7 +932,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 								or SetNoteFilterAssignmentsCommand
 								or SetCurrentVoiceDisplacementActionCommand
 								or ApplyPastNoteActionCommand
-								or SetPlaybackOffsetCommand or SetSpatialPositionCommand or SetSurroundCommand
+								or SetPlaybackOffsetCommand or SeekPlaybackTimeCommand or SeekSourceFrameCommand or SetSpatialPositionCommand or SetSurroundCommand
 								or SetResonantFilterCommand or SetResonantFilterCutoffCommand
 								or SetResonantFilterResonanceCommand
 							: command is NoteOffCommand or NoteCutCommand
@@ -975,7 +975,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or ApplyTrackerPanning8BitCommand
 						or ApplyTrackerVolumeColumnPanningCommand
 						or SetSurroundCommand or SetSpatialPositionCommand
-						or SetPlaybackOffsetCommand
+						or SetPlaybackOffsetCommand or SeekPlaybackTimeCommand or SeekSourceFrameCommand
 						or SetPlaybackFrequencyCommand
 						or SetResonantFilterCommand
 						or SetResonantFilterCutoffCommand
