@@ -140,10 +140,10 @@ public sealed class PatternGenerationLoopTraceTests
         Assert.That(failed.Status, Is.EqualTo(PatternGenerationTraceStatus.Failed));
         Assert.That(failed.Events.Count, Is.EqualTo(1));
         AssertBalanced(failed);
-        var limited = Capture(header + "for (int i = 0; i < 3; i++) Note(i, 0, _O(17));", 5);
+        var limited = Capture(header + "for (int i = 0; i < 3; i++) Note(i, 0, _O(17));", 6);
         Assert.That(limited.Status, Is.EqualTo(PatternGenerationTraceStatus.Truncated));
         Assert.That(limited.Events.Count, Is.EqualTo(1));
-        Assert.That(limited.Markers.Count + limited.Events.Count, Is.EqualTo(5));
+        Assert.That(limited.Markers.Count + limited.Events.Count + limited.Invocations.Count, Is.EqualTo(6));
         AssertBalanced(limited);
     }
 
