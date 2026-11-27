@@ -34,7 +34,7 @@ internal sealed record PrivateRecursivePlayback(
 /// lifecycle queues, replay journals or cooked PCM buffers are retained.
 /// </summary>
 internal sealed class PreparedRecursiveMixdownSound :
-	IStreamingFiniteSound, ISourceFrameSeekableSound, IPlaybackSeekableSound, IFirPreparationSound, IDisposable
+	IStreamingFiniteSound, ISourceFrameSeekableSound, IPlaybackSeekableSound, IFirPreparationSound, IInheritedLifecycleSound, IDisposable
 {
 	private const int ScratchFrames = 256;
 	private readonly record struct SeekAnchor(long OuterFrame, long ChildFrame, double PrerollPitch);
@@ -61,8 +61,15 @@ internal sealed class PreparedRecursiveMixdownSound :
 	private long _observedEndFrame = -1;
 	private long _cutFrame = -1;
 	private bool _disposed;
-	// Explicit outer release/fade/cut is irreversible by a script seek.
-	private bool _seekClosed;
+	// Lifecycle ages are in the uninterrupted outer invocation clock.
+	// A seek replaces the child timeline, never these clocks.
+	private long _releaseFrame = -1;
+	private long _releaseElapsedAtStart;
+	private long _fadeFrame = -1;
+	private long _fadeElapsedAtStart;
+	private bool _newNoteDisplacement;
+	private long? _lifecycleEndFrame;
+	private bool IsProducerStopped => _releaseFrame >= 0 || _fadeFrame >= 0 || _cutFrame >= 0;
 
 	public PreparedRecursiveMixdownSound(
 		PrivateRecursivePlayback playback,
@@ -186,12 +193,23 @@ internal sealed class PreparedRecursiveMixdownSound :
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (invocationFrame < 0) throw new ArgumentOutOfRangeException(nameof(invocationFrame));
-		// Do not restart a producer explicitly stopped by outer lifecycle.
-		if (_seekClosed) return;
+		// Cut/retirement cannot be undone. Release and Fade can still
+		// address content, but their already elapsed ages survive the seek.
+		if (_cutFrame >= 0 || (IsProducerStopped && _playback.Session.IsAudioQuiescent)
+			|| (_lifecycleEndFrame.HasValue && invocationFrame >= _lifecycleEndFrame.Value))
+			return;
 		long current = ChildFrameAt(state, invocationFrame);
 		long target = ClampFrame(relative ? (Int128)current + amount : amount);
 		if (target == current) return;
 		_playback.Source.CheckCancellation();
+		if (IsProducerStopped && _playback.Session.GetKnownStoppedAudioEndFrameExclusive() is long oldEnd)
+		{
+			long bound = ClampFrame((Int128)invocationFrame
+				+ Math.Max(0, oldEnd - _playback.Source.NextFrame));
+			_lifecycleEndFrame = _lifecycleEndFrame.HasValue
+				? Math.Min(_lifecycleEndFrame.Value, bound) : bound;
+			if (invocationFrame >= _lifecycleEndFrame.Value) return;
+		}
 		double prerollPitch = state.PitchTrajectory.GetMultiplier(invocationFrame);
 		PrivateRecursivePlayback fresh = _reconstruct(_pitchMultiplier, _playbackSpeedMultiplier);
 		_playback.Dispose();
@@ -208,7 +226,13 @@ internal sealed class PreparedRecursiveMixdownSound :
 		// following Off/Cut at the same frame must see the sought state.
 		// No retained PCM, event history or obsolete descendant registry.
 		float[] scratch = ArrayPool<float>.Shared.Rent(ScratchFrames * _channels);
-		try { RenderUntil(target, Span<float>.Empty, target, scratch, checkCancellation: true); }
+		try
+		{
+			RenderUntil(target, Span<float>.Empty, target, scratch, checkCancellation: true,
+				reconstructing: true);
+			if (IsProducerStopped && _playback.Source.NextFrame == target)
+				RestoreLifecycle(invocationFrame);
+		}
 		finally { ArrayPool<float>.Shared.Return(scratch); }
 	}
 
@@ -223,6 +247,8 @@ internal sealed class PreparedRecursiveMixdownSound :
 					+ Math.Max(0, _observedEndFrame - anchor.ChildFrame));
 			if (_cutFrame >= 0)
 				mappedEnd = mappedEnd.HasValue ? Math.Min(mappedEnd.Value, _cutFrame) : _cutFrame;
+			if (_lifecycleEndFrame is long lifecycleEnd)
+				mappedEnd = mappedEnd.HasValue ? Math.Min(mappedEnd.Value, lifecycleEnd) : lifecycleEnd;
 			return mappedEnd;
 		}
 		long cut = _cutFrame >= origin ? _cutFrame : -1;
@@ -242,14 +268,14 @@ internal sealed class PreparedRecursiveMixdownSound :
 	public void ScheduleRelease(long parentFrame)
 	{
 		AdvanceToParentFrame(parentFrame);
-		_seekClosed = true;
+		long outerFrame = parentFrame - ParentStartFrame;
+		if (_releaseFrame < 0) _releaseFrame = outerFrame;
 		_playback.Source.EndInput();
 	}
 
 	public void ScheduleCut(long parentFrame)
 	{
 		AdvanceToParentFrame(parentFrame);
-		_seekClosed = true;
 		_cutFrame = parentFrame - ParentStartFrame;
 		_observedEndFrame = _playback.Source.NextFrame;
 	}
@@ -258,14 +284,69 @@ internal sealed class PreparedRecursiveMixdownSound :
 		bool newNoteDisplacement = false)
 	{
 		AdvanceToParentFrame(parentFrame);
-		// Unlike Off, Fade ends future note production without forcing a
-		// release/cut of already sounding private voices. A source-level
-		// S76 or NNA Fade uses the new-note fade duration; S72 past-note
-		// Fade uses the ordinary note-fade duration.
-		_seekClosed = true;
+		_fadeFrame = parentFrame - ParentStartFrame;
+		_fadeElapsedAtStart = 0;
+		_newNoteDisplacement = newNoteDisplacement;
 		_playback.Source.StopProducing();
-		_playback.Source.Session.RequestFadeOfActiveVoices(
-			newNoteDisplacement);
+		_playback.Source.Session.RequestFadeOfActiveVoices(newNoteDisplacement);
+	}
+
+	// A rebuilt nested voice can be younger than the ancestor's release.
+	// Anchor its transition at its own selected source boundary and carry
+	// the independent elapsed age, rather than backdating its onset.
+	public void InheritRelease(long invocationFrame, long elapsedReleaseFrames)
+	{
+		if (_cutFrame >= 0 || _releaseFrame >= 0) return;
+		PrepareInheritedBoundary(invocationFrame);
+		_releaseFrame = invocationFrame;
+		_releaseElapsedAtStart = elapsedReleaseFrames;
+		_playback.Source.EndInput(elapsedReleaseFrames, reconstructing: true);
+	}
+
+	public void InheritFade(long invocationFrame, long elapsedFadeFrames, bool newNoteDisplacement)
+	{
+		if (_cutFrame >= 0 || _fadeFrame >= 0) return;
+		PrepareInheritedBoundary(invocationFrame);
+		_fadeFrame = invocationFrame;
+		_fadeElapsedAtStart = elapsedFadeFrames;
+		_newNoteDisplacement = newNoteDisplacement;
+		_playback.Source.StopProducing();
+		_playback.Session.RequestFadeOfActiveVoices(newNoteDisplacement, elapsedFadeFrames,
+			reconstructing: true);
+	}
+
+	private void PrepareInheritedBoundary(long invocationFrame)
+	{
+		if (_boundState is not { } state) return;
+		long target = ChildFrameAt(state, invocationFrame);
+		if (target > _playback.Source.NextFrame)
+		{
+			float[] scratch = ArrayPool<float>.Shared.Rent(ScratchFrames * _channels);
+			try { RenderUntil(target, Span<float>.Empty, target, scratch, checkCancellation: true); }
+			finally { ArrayPool<float>.Shared.Return(scratch); }
+		}
+		if (_playback.Source.NextFrame == target)
+			_playback.Source.ApplyEventsAtCurrentFrame();
+	}
+
+	private void RestoreLifecycle(long invocationFrame)
+	{
+		_playback.Source.ApplyEventsAtCurrentFrame();
+		long releaseAge = _releaseFrame < 0 ? 0
+			: ClampFrame((Int128)_releaseElapsedAtStart + invocationFrame - _releaseFrame);
+		long fadeAge = _fadeFrame < 0 ? 0
+			: ClampFrame((Int128)_fadeElapsedAtStart + invocationFrame - _fadeFrame);
+		void Release() => _playback.Source.EndInput(releaseAge, reconstructing: true);
+		void Fade()
+		{
+			_playback.Source.StopProducing();
+			_playback.Session.RequestFadeOfActiveVoices(_newNoteDisplacement, fadeAge,
+				reconstructing: true);
+		}
+		// Preserve the ordering of independent Off and Fade transitions.
+		if (_fadeFrame >= 0 && (_releaseFrame < 0 || _fadeFrame < _releaseFrame)) Fade();
+		if (_releaseFrame >= 0) Release();
+		if (_fadeFrame >= 0 && _releaseFrame >= 0 && _fadeFrame >= _releaseFrame) Fade();
 	}
 
 	private void AdvanceToParentFrame(long parentFrame)
@@ -333,24 +414,31 @@ internal sealed class PreparedRecursiveMixdownSound :
 	}
 
 	private long ChildCutFrame()
-		=> _boundState is { Anchor: not null } state
-			? _cutFrame < 0 ? -1 : ChildFrameAt(state, _cutFrame)
-			: _cutFrame >= _renderOriginFrame ? _cutFrame - _renderOriginFrame : -1;
+	{
+		long cut = _cutFrame;
+		if (_lifecycleEndFrame is long end)
+			cut = cut < 0 ? end : Math.Min(cut, end);
+		return _boundState is { Anchor: not null } state
+			? cut < 0 ? -1 : ChildFrameAt(state, cut)
+			: cut >= _renderOriginFrame ? cut - _renderOriginFrame : -1;
+	}
 
 	private void RenderUntil(long exclusiveEnd,
-		Span<float> destination, long outputStart, float[] scratch, bool checkCancellation = false)
+		Span<float> destination, long outputStart, float[] scratch, bool checkCancellation = false,
+		bool reconstructing = false)
 	{
 		while (_playback.Source.NextFrame < exclusiveEnd)
 		{
 			if (checkCancellation) _playback.Source.CheckCancellation();
 			long now = _playback.Source.NextFrame;
-			long cut = ChildCutFrame();
+			long cut = reconstructing ? -1 : ChildCutFrame();
 			if (cut >= 0 && now >= cut)
 			{
 				_observedEndFrame = now;
 				return;
 			}
-			if (_playback.Source.Session.IsQuiescent)
+			if (_playback.Source.Session.IsQuiescent
+				|| (!reconstructing && IsProducerStopped && _playback.Session.IsAudioQuiescent))
 			{
 				_observedEndFrame = now;
 				return;
