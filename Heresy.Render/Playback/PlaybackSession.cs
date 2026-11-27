@@ -973,7 +973,8 @@ public sealed class PlaybackSession
 	/// <summary>Apply an inherited, already-progressing fade at the current
 	/// boundary, without moving the child's note onset or source playhead.
 	/// The fade duration is still selected from each bound voice's policy.</summary>
-	public void RequestFadeOfActiveVoices(bool newNoteDisplacement, long elapsedFadeFrames)
+	public void RequestFadeOfActiveVoices(bool newNoteDisplacement, long elapsedFadeFrames,
+		bool reconstructing = false)
 	{
 		if (elapsedFadeFrames < 0)
 			throw new ArgumentOutOfRangeException(nameof(elapsedFadeFrames));
@@ -985,6 +986,9 @@ public sealed class PlaybackSession
 				newNoteDisplacement ? voice.Configuration.NewNoteFadeDuration
 					: voice.Configuration.NoteFadeDuration,
 				elapsedFadeFrames);
+			if (reconstructing && voice.Sound is IInheritedLifecycleSound recursive)
+				recursive.InheritFade(_nextFrame - voice.StartFrame, elapsedFadeFrames,
+					newNoteDisplacement);
 		}
 		foreach (PlaybackChannelState channel in _channels.Values)
 			Fade(channel.CurrentVoice);
@@ -996,8 +1000,14 @@ public sealed class PlaybackSession
 			Fade(voice);
 	}
 
-	public void EndInput()
+	public void EndInput() => EndInput(0, reconstructing: false);
+
+	/// <summary>End input with an inherited elapsed release, including
+	/// recursively stopping private descendants at the selected boundary.</summary>
+	public void EndInput(long elapsedReleaseFrames, bool reconstructing)
 	{
+		if (elapsedReleaseFrames < 0)
+			throw new ArgumentOutOfRangeException(nameof(elapsedReleaseFrames));
 		if (_inputEnded)
 			return;
 
@@ -1008,11 +1018,17 @@ public sealed class PlaybackSession
 				"Playback input cannot end before every scheduled event has been reached.");
 		}
 
+		void Release(PlaybackVoice? voice)
+		{
+			if (voice is null) return;
+			voice.ApplyNoteOff(_nextFrame, SampleRate, elapsedReleaseFrames);
+			if (reconstructing && voice.Sound is IInheritedLifecycleSound recursive)
+				recursive.InheritRelease(_nextFrame - voice.StartFrame, elapsedReleaseFrames);
+		}
+
 		foreach (PlaybackChannelState channel in _channels.Values)
 		{
-			channel.CurrentVoice?.ApplyNoteOff(
-				_nextFrame,
-				_context.Configuration.SampleRate);
+			Release(channel.CurrentVoice);
 			CullFinishedCurrentVoice(
 				channel,
 				_nextFrame);
@@ -1020,9 +1036,7 @@ public sealed class PlaybackSession
 
 		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
 		{
-			channel.CurrentVoice?.ApplyNoteOff(
-				_nextFrame,
-				_context.Configuration.SampleRate);
+			Release(channel.CurrentVoice);
 			CullFinishedCurrentVoice(
 				channel,
 				_nextFrame);
@@ -1030,15 +1044,12 @@ public sealed class PlaybackSession
 
 		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
 		{
-			channel.CurrentVoice?.ApplyNoteOff(
-				_nextFrame, _context.Configuration.SampleRate);
+			Release(channel.CurrentVoice);
 			CullFinishedCurrentVoice(channel, _nextFrame);
 		}
 		foreach (PlaybackVoice voice in _virtualVoices)
 		{
-			voice.ApplyNoteOff(
-				_nextFrame,
-				_context.Configuration.SampleRate);
+			Release(voice);
 		}
 
 		_inputEnded = true;
