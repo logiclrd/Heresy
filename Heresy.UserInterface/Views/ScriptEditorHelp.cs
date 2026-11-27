@@ -176,6 +176,8 @@ VirtualNote instance methods (shown on a local named note):
   note.Surround(double row, bool enabled, double timeOffsetSeconds = 0.0)
     Absolute 3D position and discrete surround; Pan disables surround.
     Enabling surround centers position; disabling it does not restore old pan.
+    Private mixdowns preserve their child speaker feeds (outer Pan does not remap them).
+    Outer stereo surround and resonant filtering still apply.
   note.Filter(double row, double cutoff, double resonance,
               double timeOffsetSeconds = 0.0)
   note.FilterCutoff(double row, double cutoff, double timeOffsetSeconds = 0.0)

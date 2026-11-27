@@ -145,6 +145,10 @@ public sealed class ScriptVirtualControlTests
     [TestCase("using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.SourceFrame(i, 10)) { }")]
     [TestCase("using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.Displacement(i, NoteDisplacementAction.Continue)) { }")]
     [TestCase("using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.Past(i, TrackerPastNoteAction.Cut)) { }")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.Seek(i, 0.2)) { }")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); for (int i = 0; i < 1; note.Pan(i, 0.5)) { }")]
+    [TestCase("using var group = NewNoteGroup(); for (int i = 0; i < 1; group.Filter(i, 0.4, 0.2)) { }")]
+    [TestCase("using var group = NewNoteGroup(); for (int i = 0; i < 1; group.Surround(i, true)) { }")]
     public void VirtualControlsAreOnlyValidAsDirectScriptStatements(string source)
     {
         ScriptPatternDefinition definition = new((ObjectId)1U, "Nested")
@@ -266,6 +270,22 @@ public sealed class ScriptVirtualControlTests
             .OfType<RawPatternStep.Emit>().ToArray();
         Assert.That(events, Has.Length.EqualTo(1));
         Assert.That(context.Diagnostics.VirtualOwnershipWarnings, Is.EqualTo(6));
+    }
+
+    [TestCase("CreateSeekCommand(0.2);")]
+    [TestCase("CreatePanCommand(0, 0, 0);")]
+    [TestCase("ValidateUnitInterval(0.5, \"value\");")]
+    [TestCase("using var group = NewNoteGroup(); group.Note(0, _O(17));")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Filter(0, _O(18));")]
+    public void ParityDoesNotExposeInternalFactoriesOrUnapprovedOverloads(string source)
+    {
+        ScriptPatternDefinition definition = new((ObjectId)1U, "API boundary")
+        { RowCount = 2, ChannelCount = 1, Source = source };
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(definition,
+            instrumentActionCallsites: true).Success, Is.False);
+        definition.Source = "#order relaxed\n" + source;
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(definition,
+            instrumentActionCallsites: true).Success, Is.False);
     }
 
     [Test]

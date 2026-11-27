@@ -146,6 +146,40 @@ public sealed class RelaxedDelegateCallsiteTests
     }
 
     [Test]
+    public void NewControlsPreserveBoundDelegateIdentityAndInvocationSpans()
+    {
+        const string source = """
+            #order relaxed
+            using var first = NoteVirtual(0, _O(17));
+            using var second = NoteVirtual(0, _O(18));
+            var current = first;
+            Action<double, double, double, double, double> pan = current.Pan;
+            Action<double, double, double, double, double> same = current.Pan;
+            current = second;
+            if (pan == same)
+                pan(1, -0.5, 0, 0, 0);
+            using var group = NewNoteGroup();
+            group += current;
+            Action<double, double, double, double> filter = group.Filter;
+            Action<double, double, double, double> equal = group.Filter;
+            if (filter == equal)
+                filter.Invoke(2, 0.4, 0.2, 0.01);
+            Action<double, double, double> seek = group.Seek;
+            seek(3, 0.2, 0);
+            """;
+        AssertTrace(source, new[] {
+            "NoteVirtual(0, _O(17))", "NoteVirtual(0, _O(18))",
+            "pan(1, -0.5, 0, 0, 0)", "filter.Invoke(2, 0.4, 0.2, 0.01)", "seek(3, 0.2, 0)",
+        });
+        var events = Render(source, true);
+        Assert.That(events[2].Target, Is.EqualTo(events[0].Target));
+        Assert.That(events[3].Target, Is.EqualTo(events[1].Target));
+        Assert.That(events[4].Target, Is.EqualTo(events[1].Target));
+        Assert.That(events[3].Commands.Single(), Is.EqualTo(new SetResonantFilterCommand(0.4, 0.2)));
+        Assert.That(events[4].Commands.Single(), Is.EqualTo(new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(0.2))));
+    }
+
+    [Test]
     public void NestedInstanceCallsWithTheSameStartUseTheirOwnExactSpan()
     {
         const string source = """

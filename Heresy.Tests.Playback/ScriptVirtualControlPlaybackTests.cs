@@ -503,6 +503,12 @@ public sealed class ScriptVirtualControlPlaybackTests
                 group += lead;
                 group.ChannelFilter(row + 0.25, _O({{filter.Value}}));
                 group.Volume(row + 0.5, 0.25);
+                group.Pan(row + 0.5, 0.7, -0.2);
+                group.Filter(row + 0.5, 0.55, 0.2);
+                group.Surround(row + 0.75, true, timeOffsetSeconds: 0.05);
+                group.FilterCutoff(row + 0.75, 0.7, timeOffsetSeconds: 0.05);
+                group.FilterResonance(row + 0.75, 0.1, timeOffsetSeconds: 0.05);
+                group.Seek(row + 0.75, 0.2, timeOffsetSeconds: 0.05);
                 group.Past(row + 0.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.06);
                 group.Cut(row + 0.75, timeOffsetSeconds: 0.06);
             }

@@ -464,28 +464,16 @@ Do not reintroduce completed-task checklists here.
   also routes Script Envelope and both independent Script Instrument
   Save groups; draft keyboard-shortcuts PR, awaiting acceptance.
 
-- [ ] **Audit Script Pattern physical/virtual channel helper parity.**
-  The current owned `VirtualNote` API exposes `Volume`,
-  `SourceFrame`, `Displacement` and `Past`
-  without direct physical-channel counterparts. The existing
-  physical `Seek` is measured in playback **seconds**, whereas
-  `note.SourceFrame` uses native source **frames**, so an apparent
-  name mapping is not semantic parity. Examine whether `Volume`
-  (physical), source-frame seek, per-voice displacement policy,
-  and past-note action helpers should be exposed for physical
-  channels; also audit reverse asymmetries (physical spatial,
-  tracker-filter and control APIs absent for virtual channels).
-  Decide deliberately which differences express real channel
-  semantics and which are missing conveniences. Preserve runtime
-  validation, direct-statement yielding, snapshots, scope and
-  deterministic scheduling. Document accepted intentional gaps and
-  add compilation/PCM parity tests for any new helpers. Keep this
-  separate from a read-only API-reference UI, which must document
-  **only the functions currently available**.
-  **Discovery:** [parity design](script-channel-helper-parity-design.md),
-  tracked in [issue #71](https://github.com/logiclrd/Heresy/issues/71).
-  Owner approval of the API/lifetime/flattened-source contracts precedes
-  implementation; the design is not a promise of current script helpers.
+- [ ] **Script Pattern physical/virtual channel helper parity (#71).**
+  All planned helpers implemented in [PR #72](https://github.com/logiclrd/Heresy/pull/72):
+  physical Volume, SourceFrame, Displacement and Past; virtual/group
+  Seek, Pan, Surround, Filter, FilterCutoff and FilterResonance.
+  Flattened Past targets displaced logical source trees; generated virtual
+  recursive starts infer private mixdown. Scalar channel memory persists
+  through silence until final use. Existing private speaker routing and
+  single-voice seek boundaries are preserved. Final integration CI and
+  desktop owner audition/merge approval remain outstanding.
+  See [parity design and acceptance](script-channel-helper-parity-design.md).
 
 - [x] **Broaden restricted-C# Script Pattern and Script Sequence API
   under the owner-approved code-isolation policy (issue #58).** Permit

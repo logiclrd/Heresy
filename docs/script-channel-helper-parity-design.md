@@ -221,10 +221,16 @@ independent of event Filter and persistent output Filter selection and
 history. No new DSP algorithm or surround routing model is proposed.
 Verify mono/stereo/5.1 behavior through existing renderer routes.
 
-For private mixdown sources, apply spatial/filter controls to the outer
-voice's output, not separately to its children; do not add a hidden
-flattening mode. NNA and past-note handling use the existing private
-renderer control path.
+For private mixdown sources, target the outer voice, not separately its
+children. Existing private sounds render directly into configured speaker
+feeds; outer Pan remembers position but does not redistribute those feeds.
+Outer stereo surround phase inversion and per-speaker resonant filtering
+are applied by PlaybackSession. This is an intentional parity boundary,
+not a new spatial remapping algorithm. A slice 3 regression incorrectly
+expected unequal stereo feeds after outer Pan; the test now checks the
+existing symmetric child output, non-silence, stereo surround, and full
+physical-versus-virtual PCM equality. NNA and past-note handling use the
+existing private renderer control path.
 
 ### Intentional flattened-source boundary
 
@@ -443,7 +449,62 @@ are not replaced.
 
 Owner approved the revised logical Past and inferred virtual mixdown
 on 2026-11-26 and authorized proceeding. Full parity and the remembered
-scalar state approach remain the implementation baseline. The detailed
-flattened Past lifetime protocol and fade handling must be established
-and tested before widening behavior. This document does not promise new
+scalar state approach remain the implementation baseline. The implemented flattened Past lifetime protocol and fade handling passed
+slice 2b verification. Final integration retains the same scope and
+source-type boundaries. This document does not promise new
 global/overall volume or arbitrary tracker-effect API.
+
+
+## Final integration and owner acceptance (slice 4)
+
+- Extend the independent realtime, editor-F6 and offline render fixture
+  to include flattened physical and private virtual siblings, delayed
+  logical Past, physical native-frame seek, virtual seconds/native seek,
+  group spatial/surround/resonant controls, output Filters, recycled
+  generations and repeated Sequence visits. Test 1, 2, 6 and 8 outputs,
+  strict/relaxed combinations, frozen snapshots and irregular PCM blocks.
+- Exercise all six new methods during the 1,024-cycle retained-state
+  stress, including delayed operations against old identities after reuse.
+- Audit exact bound method identities, relaxed method-group receiver and
+  equality preservation, original F6 invocation spans, strict statement
+  boundaries, internal factory refusals, absence of group Note and of an
+  object-ID overload for legacy Filter. Existing canonical verifier and
+  typed emitter policies remain the authority; no new host capabilities.
+- The final CI result and desktop owner acceptance are separate gates.
+  Do not merge while either is outstanding.
+
+### Desktop audition
+
+Use a known sustained Sample or Synth and a Script Pattern at least 16
+rows long. Substitute real object IDs. With stereo output, listen to the
+individual note and group travel, cutoff/resonance sweeps, release and
+retriggers. Confirm F6 highlights each complete invocation. Repeat with
+`#order relaxed` at the top. Save/reopen and check the editor reference.
+
+```csharp
+using var note = NoteVirtual(0, _O(35), volume: 0.35);
+note.Pan(0, -0.8);
+note.Filter(0, 0.4, 0.2);
+note.Cut(2);
+note.Pan(3, 0.8);
+note.FilterResonance(3, 0.5);
+note.Note(4, _O(35));
+note.Surround(6, true);
+note.Pan(8, -0.4);
+note.Off(10);
+using var chord = NewNoteGroup();
+chord += NoteVirtual(12, _O(35), volume: 0.2);
+chord += NoteVirtual(12, _O(35), Semitone(7), volume: 0.2);
+chord.Pan(12, 0.7);
+chord.Filter(12, 0.3, 0.4);
+chord.FilterCutoff(13, 0.8);
+chord.Cut(15);
+```
+
+The retrigger at row 4 should remember gain, the new pan, the old cutoff
+and the new resonance. Surround centers and phase-encodes stereo; the
+next Pan disables it. To audition logical Past, use a longer recursive
+Pattern containing sustained/later notes, and compare two invocations
+started at rows 0 and 4 with Continue on the first. Past(Cut) at row 8
+must stop the former invocation and its descendants without stopping the
+current one. A virtual recursive start requires no mixdown argument.

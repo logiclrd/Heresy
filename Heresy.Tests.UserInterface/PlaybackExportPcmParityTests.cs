@@ -81,6 +81,19 @@ public sealed class PlaybackExportPcmParityTests
 			tracedFrames: 700, expectedLogicalFrames: 1440);
 	}
 
+	[TestCase(1, false, true)]
+	[TestCase(2, true, false)]
+	[TestCase(6, false, false)]
+	[TestCase(8, true, true)]
+	public void FullChannelParityWithFlattenedAndPrivateSourcesMatchesF6AndExport(
+		int channels, bool relaxedParent, bool relaxedChild)
+	{
+		SongDocument song = CreateRecycledPrivateVirtualSong(
+			relaxedParent, relaxedChild, out ObjectId parent, parityControls: true);
+		AssertParity(song, channels, 1000, tracedPattern: parent,
+			tracedFrames: 700, expectedLogicalFrames: 1440);
+	}
+
 	private static void AssertParity(SongDocument document,
 		int channels, int sampleRate, ObjectId? tracedPattern = null,
 		int tracedFrames = 0, int? expectedLogicalFrames = null)
@@ -364,7 +377,7 @@ public sealed class PlaybackExportPcmParityTests
 	}
 
 	private static SongDocument CreateRecycledPrivateVirtualSong(
-		bool relaxedParent, bool relaxedChild, out ObjectId parent)
+		bool relaxedParent, bool relaxedChild, out ObjectId parent, bool parityControls = false)
 	{
 		SongDocument document = new();
 		ObjectId sample = document.AllocateObjectId();
@@ -387,6 +400,21 @@ public sealed class PlaybackExportPcmParityTests
 			second.Volume(1.5, 0.5);
 			second.Cut(3);
 			""";
+		if (parityControls)
+		{
+			childSource = childSource.Replace("first.ChannelFilter(0.25,", """
+				first.Pan(0, -0.8, 0.2, 0.3);
+				first.Filter(0, 0.4, 0.2);
+				first.Seek(0.125, 0.1, timeOffsetSeconds: 0.02);
+				first.Surround(0.25, true);
+				first.ChannelFilter(0.25,
+				""", StringComparison.Ordinal).Replace("second.Volume(1.5,", """
+				second.Pan(1, 0.6);
+				second.FilterCutoff(1.25, 0.6);
+				second.FilterResonance(1.5, 0.15);
+				second.Volume(1.5,
+				""", StringComparison.Ordinal);
+		}
 		document.Add(new ScriptPatternDefinition(child, "Private generations")
 		{
 			RowCount = 6, ChannelCount = 1,
@@ -415,6 +443,42 @@ public sealed class PlaybackExportPcmParityTests
 			replacement += NoteVirtual(2, _O({privateSequence.Value}), volume: 0.25);
 			replacement.Cut(4);
 			""";
+		if (parityControls)
+		{
+			ObjectId flattened = document.AllocateObjectId();
+			document.Add(new ScriptPatternDefinition(flattened, "Flattened sibling")
+			{
+				RowCount = 2, ChannelCount = 1,
+				Source = (relaxedChild ? "#order relaxed\n" : "") + $"""
+					Note(0, 0, _O({sample.Value}), volume: 0.25);
+					Note(1.75, 0, _O({sample.Value}), volume: 0.25);
+					""",
+			});
+			// The physical subtree shares the parent clock; the virtual
+			// private Sequence keeps its independent clock and PCM state.
+			parentSource = parentSource.Replace("lead.SourceFrame(0.5,", $"""
+				Note(0, 0, _O({flattened.Value}));
+				Volume(0.25, 0, 0.6);
+				Displacement(0.25, 0, NoteDisplacementAction.Continue);
+				lead.Filter(0.25, 0.4, 0.2);
+				lead.SourceFrame(0.5,
+				""", StringComparison.Ordinal).Replace("lead.Displacement(1,", $"""
+				Note(1, 0, _O({flattened.Value}));
+				lead.Displacement(1,
+				""", StringComparison.Ordinal).Replace("old += lead;", """
+				Past(1.25, 0, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.02);
+				old += lead;
+				old.FilterResonance(1.5, 0.1);
+				""", StringComparison.Ordinal).Replace("replacement.Cut(4);", $"""
+				Note(3, 0, _O({sample.Value}), volume: 0.25);
+				SourceFrame(3.25, 0, 100);
+				Pan(3.25, 0, -0.5);
+				replacement.Seek(3.25, 0.06);
+				replacement.Surround(3.5, true);
+				Cut(4, 0);
+				replacement.Cut(4);
+				""", StringComparison.Ordinal);
+		}
 		document.Add(new ScriptPatternDefinition(parent, "Seeking virtual mixdowns")
 		{
 			RowCount = 6, ChannelCount = 1,

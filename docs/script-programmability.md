@@ -300,7 +300,8 @@ Invalid transfers warn without revoking valid ownership. A start evaluated
 on the right-hand side before an invalid transfer remains scheduled.
 
 A group forwards `Volume`, `Off`, `Cut`, `SourceFrame`, `Displacement`,
-`Past`, `NoteFilter` and `ChannelFilter` to its own members with the same
+`Past`, `NoteFilter`, `ChannelFilter`, `Seek`, `Pan`, `Surround`,
+`Filter`, `FilterCutoff` and `FilterResonance` to its own members with the same
 arguments as the handle. There is no group `Note` method and no broadcast
 or separate engine channel behind the group. Dispose releases all leases
 without stopping music. Strict streaming yields once per member before
@@ -416,6 +417,11 @@ note.Past(row, TrackerPastNoteAction.Cut,
   use. They initialize retriggers without copying DSP histories. Already
   displaced voices keep their captured state. Private recursive sources
   receive these controls on the outer bound voice, not on individual descendants.
+  A private mixdown already produces the configured speaker feeds, so its
+  outer Pan updates state without redistributing that PCM; outer stereo
+  Surround (right-channel phase inversion) and the per-speaker resonant
+  filter still apply. Direct sources audibly respond to Pan. This is the
+  same pre-existing behavior for physical and virtual mixdown notes.
 - **Displacement:** The strongly typed `NoteDisplacementAction`
   accepts `Cut`, `Continue`, `Off`, or `Fade`. It overrides
   the **current** voice's behavior on the next start for the same
