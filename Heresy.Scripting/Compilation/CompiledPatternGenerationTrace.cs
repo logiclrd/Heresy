@@ -19,10 +19,19 @@ public enum PatternGenerationTraceStatus
 }
 
 public sealed record PatternGenerationTraceEvent(NoteEvent Note, bool DroppedInStrictMode,
-    long TraceOrdinal, long? EnclosingScopeId)
+    long TraceOrdinal, long? EnclosingScopeId, long? InvocationId, long? GroupId)
 {
     public long OccurrenceId => Note.EmissionOrder;
 }
+
+public sealed record PatternGenerationTraceInvocation(long Id, SequenceCallsite SourceSpan,
+    string Method, long? EnclosingScopeId, long? ParentInvocationId, long? GroupId);
+
+public sealed record PatternGenerationTraceGroup(long Id, SequenceCallsite? CreationSpan,
+    long? EnclosingScopeId);
+
+public sealed record PatternGenerationTraceTransfer(SequenceCallsite SourceSpan,
+    long GroupId, VirtualChannelIdentity? Channel, bool Succeeded, long? EnclosingScopeId);
 
 public enum PatternGenerationTraceMarkerKind
 {
@@ -45,6 +54,9 @@ public sealed record PatternGenerationTraceResult(
     ObjectId PatternId, string Source, int RowCount, int ChannelCount, bool Relaxed,
     IReadOnlyList<PatternGenerationTraceEvent> Events,
     IReadOnlyList<PatternGenerationTraceMarker> Markers,
+    IReadOnlyList<PatternGenerationTraceInvocation> Invocations,
+    IReadOnlyList<PatternGenerationTraceGroup> Groups,
+    IReadOnlyList<PatternGenerationTraceTransfer> Transfers,
     PatternGenerationTraceStatus Status, string? Detail,
     IReadOnlyList<SequencingDiagnostic> Diagnostics);
 
@@ -67,6 +79,57 @@ public sealed class PatternGenerationTraceBudget
 
     internal IReadOnlyList<PatternGenerationTraceMarker> Markers => _markers.AsReadOnly();
     internal long? CurrentScopeId => _scope?.Id;
+    private readonly List<PatternGenerationTraceInvocation> _invocations = [];
+    private readonly List<PatternGenerationTraceGroup> _groups = [];
+    private readonly List<PatternGenerationTraceTransfer> _transfers = [];
+    private readonly Dictionary<NoteGroup, long> _groupIds = new(ReferenceEqualityComparer.Instance);
+    private InvocationScope? _invocation;
+    internal IReadOnlyList<PatternGenerationTraceInvocation> Invocations => _invocations.AsReadOnly();
+    internal IReadOnlyList<PatternGenerationTraceGroup> Groups => _groups.AsReadOnly();
+    internal IReadOnlyList<PatternGenerationTraceTransfer> Transfers => _transfers.AsReadOnly();
+    internal long? CurrentInvocationId => _invocation?.Record.Id;
+    internal long? CurrentGroupId => _invocation?.Record.GroupId;
+
+    internal long RegisterGroup(NoteGroup group, SequenceCallsite? span)
+    {
+        if (_groupIds.TryGetValue(group, out long id)) return id;
+        ReserveRecords(1);
+        id = _groups.Count;
+        _groupIds.Add(group, id);
+        _groups.Add(new(id, span, CurrentScopeId));
+        return id;
+    }
+
+    internal IDisposable EnterInvocation(SequenceCallsite span, string method, NoteGroup? group)
+    {
+        long? groupId = group is null ? null : RegisterGroup(group, null);
+        ReserveRecords(1);
+        var record = new PatternGenerationTraceInvocation(_invocations.Count, span, method,
+            CurrentScopeId, CurrentInvocationId, groupId);
+        _invocations.Add(record);
+        var scope = new InvocationScope(this, _invocation, record);
+        _invocation = scope;
+        return scope;
+    }
+
+    internal void ReserveTransfer() => ReserveRecords(1);
+
+    internal void RecordTransfer(SequenceCallsite span, long groupId,
+        VirtualChannelIdentity? channel, bool succeeded)
+        => _transfers.Add(new(span, groupId, channel, succeeded, CurrentScopeId));
+
+    private sealed class InvocationScope(PatternGenerationTraceBudget owner,
+        InvocationScope? parent, PatternGenerationTraceInvocation record) : IDisposable
+    {
+        internal PatternGenerationTraceInvocation Record { get; } = record;
+        private bool _disposed;
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            owner._invocation = parent;
+        }
+    }
 
     internal PatternGenerationTraceBudget(SequencingCancellation cancellation,
         int maximumRecords, TimeSpan duration)
@@ -154,6 +217,46 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
         : base(context, output, rowCount, channelCount)
         => _traceBudget = traceBudget;
 
+    private IDisposable? _pendingInvocation;
+
+    protected IDisposable __HeresyEnterTraceInvocation(SequenceCallsite span, string method, NoteGroup? group)
+        => _traceBudget.EnterInvocation(span, method, group);
+
+    protected void __HeresyBeginTraceInvocation(SequenceCallsite span, string method, NoteGroup? group)
+    {
+        if (_pendingInvocation is not null)
+            throw new InvalidOperationException("Diagnostic invocation did not drain.");
+        _pendingInvocation = _traceBudget.EnterInvocation(span, method, group);
+    }
+
+    protected void __HeresyEndTraceInvocation()
+    {
+        _pendingInvocation?.Dispose();
+        _pendingInvocation = null;
+    }
+
+    protected NoteGroup __HeresyTraceNewGroup(SequenceCallsite span)
+    {
+        using var invocation = _traceBudget.EnterInvocation(span, "NewNoteGroup", null);
+        NoteGroup group = NewNoteGroup();
+        _traceBudget.RegisterGroup(group, span);
+        return group;
+    }
+
+    protected void __HeresyTraceTransfer(SequenceCallsite span, NoteGroup group, VirtualNote note)
+    {
+        // Preserve evaluation order: receiver and note arguments have
+        // already evaluated, including a possible pending strict start.
+        ArgumentNullException.ThrowIfNull(group);
+        long groupId = _traceBudget.RegisterGroup(group, null);
+        _traceBudget.ReserveTransfer();
+        VirtualChannelIdentity? identity = note is not null
+            && note.TryGetTransferIdentity(this, out var channel) ? channel : null;
+        int before = group.DiagnosticLeaseCount;
+        group += note!;
+        _traceBudget.RecordTransfer(span, groupId, identity, group.DiagnosticLeaseCount > before);
+    }
+
     protected void __HeresyDiagnosticCheckpoint() => _traceBudget.Checkpoint();
     protected IDisposable __HeresyEnterTraceLoop(SequenceCallsite span) => _traceBudget.EnterLoop(span);
     protected IDisposable __HeresyEnterTraceIteration() => _traceBudget.EnterIteration();
@@ -224,7 +327,7 @@ public sealed class CompiledPatternGenerationTrace
                         bool dropped = emission.Row < lastRow;
                         long ordinal = budget.ReserveEvent();
                         events.Add(new(emission.Note.WithEmissionOrder(events.Count), dropped,
-                            ordinal, budget.CurrentScopeId));
+                            ordinal, budget.CurrentScopeId, budget.CurrentInvocationId, budget.CurrentGroupId));
                         if (dropped)
                             context.Diagnostics.ReportDroppedOutOfOrderNote(emission.Row, lastRow);
                         else
@@ -262,7 +365,8 @@ public sealed class CompiledPatternGenerationTrace
         }
         if (detail is { Length: > 2048 }) detail = detail[..2048];
         return new(_patternId, _source, _rowCount, _channelCount, _relaxed,
-            events.AsReadOnly(), budget.Markers, status, detail, Array.AsReadOnly(context.Diagnostics.Drain()));
+            events.AsReadOnly(), budget.Markers, budget.Invocations, budget.Groups, budget.Transfers,
+            status, detail, Array.AsReadOnly(context.Diagnostics.Drain()));
     }
 
     private PatternScriptProgram CreateProgram(SequencingContext context, INoteReceiver receiver,
@@ -279,7 +383,7 @@ public sealed class CompiledPatternGenerationTrace
             ArgumentNullException.ThrowIfNull(noteEvent);
             long ordinal = budget.ReserveEvent();
             events.Add(new(noteEvent.WithEmissionOrder(events.Count), false,
-                ordinal, budget.CurrentScopeId));
+                ordinal, budget.CurrentScopeId, budget.CurrentInvocationId, budget.CurrentGroupId));
         }
     }
 }
