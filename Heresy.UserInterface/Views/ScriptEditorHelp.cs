@@ -173,8 +173,9 @@ VirtualNote instance methods (shown on a local named note):
                            double timeOffsetSeconds = 0.0)
   note.Seek(double row, double playbackSeconds, double timeOffsetSeconds = 0.0)
   note.SeekRelative(double row, double deltaSeconds, double timeOffsetSeconds = 0.0)
-    Sample time converts at the current playback rate; relative deltas are signed.
+    Sample time converts at the current instantaneous playback rate; relative deltas are signed.
     Relative targets clamp to zero; absolute seeks replace the previous target.
+    Relative seeks use the unwrapped playhead even inside loops.
     Private Pattern/Sequence seeks use the instantiated child timeline and\n    may reconstruct/replay it. After outer release/fade, private seeks are ignored.\n    Unsupported sources ignore seeks.
   note.Pan(double row, double x, double y = 0, double z = 0,
            double timeOffsetSeconds = 0.0)

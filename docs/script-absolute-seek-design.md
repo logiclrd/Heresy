@@ -314,3 +314,20 @@ finite-end/sibling isolation case. Slice 3 still needs inherited pitch,
 recursive descendants, editor/export integration and additional stress.
 No local execution; exact-head CI required. Explicit owner review of the
 preroll/release choices is still needed before merge.
+
+## Slice 3 — integration and hardening
+
+Extended existing realtime/F6/offline 1/2/6/8-speaker parity fixtures to
+include absolute and relative operations inside private descendants and
+on the outer group/physical channel, with mixed strict/relaxed ordering.
+Extended recycled-generation/canceled-deadline stress with signed deltas.
+Added direct Sample fractional and ping-pong traversal cases; extended
+nested private registration/reclamation tests to the actual absolute
+command route while keeping all legacy Oxx-style tests. Added explicit
+inherited pitch preroll/live transition tests at one and two recursive
+levels and exact relaxed delegate callsites for both relative helpers.
+Public help/programming docs and replay hint docs describe the actual
+implementation. Sample coordinates remain double precision (including
+fractional interpolation); extreme long-range coordinates cannot represent
+every integer exactly. No claim of arbitrary precision or unlimited
+private replay. CI and desktop acceptance required before merge.

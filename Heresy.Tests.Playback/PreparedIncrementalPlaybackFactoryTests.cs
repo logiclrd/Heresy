@@ -3552,12 +3552,16 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		});
 	}
 
-	[TestCase(false, false)]
-	[TestCase(false, true)]
-	[TestCase(true, false)]
-	[TestCase(true, true)]
+	[TestCase(false, false, false)]
+	[TestCase(false, true, false)]
+	[TestCase(true, false, false)]
+	[TestCase(true, true, false)]
+	[TestCase(false, false, true)]
+	[TestCase(false, true, true)]
+	[TestCase(true, false, true)]
+	[TestCase(true, true, true)]
 	public void RewoundPrivateSequenceReplaysRecycledGenerationsWithoutTouchingSibling(
-		bool relaxedMiddle, bool relaxedLeaf)
+		bool relaxedMiddle, bool relaxedLeaf, bool absoluteSeek)
 	{
 		SongDocument doc = new();
 		ObjectId sample = doc.AllocateObjectId();
@@ -3646,7 +3650,13 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		ISourceFrameSeekableSound seekable = (ISourceFrameSeekableSound)outer.Sound;
 		// Frame 150 lies after the recycled start but before the old
 		// generation's delayed Cut/Past at frame 180.
-		seekable.SetSourceFrameOffset(outer.SoundState, 149);
+		if (absoluteSeek)
+		{
+			plan.Source.ApplyLiveEvent(ChannelTarget.Physical(0), [new SeekSourceFrameCommand(150)]);
+			Assert.That(abandoned.NextFrame, Is.EqualTo(1L), "Forward absolute seek rebuilds rather than mutating the old child.");
+			abandoned = PrivateSession(outer);
+		}
+		else seekable.SetSourceFrameOffset(outer.SoundState, 149);
 		float[] ahead = new float[1];
 		plan.Source.Render(1, ahead);
 		Assert.That(ahead[0], Is.EqualTo(reference[150] + reference[1]).Within(1e-6f));
@@ -3659,13 +3669,15 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 
 		// Rewind just one outer sound while its child has deferred
 		// controls, an output filter and a displaced private sound.
-		seekable.SetSourceFrameOffset(outer.SoundState, 0);
+		if (absoluteSeek)
+			plan.Source.ApplyLiveEvent(ChannelTarget.Physical(0), [new SeekSourceFrameCommand(0)]);
+		else seekable.SetSourceFrameOffset(outer.SoundState, 0);
 		float[] actual = new float[reference.Length - 2];
 		plan.Source.Render(1, actual.AsSpan(0, 1));
 		PlaybackSession rebuilt = PrivateSession(outer);
 		Assert.That(rebuilt, Is.Not.SameAs(abandoned));
 		Assert.That(PrivateSession(sibling), Is.SameAs(independent));
-		Assert.That(rebuilt.NextFrame, Is.EqualTo(3L));
+		Assert.That(rebuilt.NextFrame, Is.EqualTo(absoluteSeek ? 1L : 3L));
 		Assert.That(independent.NextFrame, Is.EqualTo(3L));
 		Assert.That(PreparedRegistrationCount(plan), Is.EqualTo(initialRegistrations),
 			"Reconstruction must unregister all abandoned descendant mixdowns.");
@@ -3679,7 +3691,9 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		}
 		Assert.Multiple(() =>
 		{
-			Assert.That(actual, Is.EqualTo(reference.Skip(2).Select(v => 2 * v).ToArray())
+			Assert.That(actual, Is.EqualTo(absoluteSeek
+				? reference.Take(actual.Length).Zip(reference.Skip(2), (left, right) => left + right).ToArray()
+				: reference.Skip(2).Select(v => 2 * v).ToArray())
 				.Within(1e-6f));
 			Assert.That(abandoned.NextFrame, Is.EqualTo(151L),
 				"The abandoned private renderer must never advance again.");

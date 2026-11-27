@@ -198,6 +198,42 @@ public sealed class PlaybackSampleOffsetTests
 		Assert.That(pcm[0], Is.EqualTo(expected));
 	}
 
+	[TestCase(SampleLoopMode.Forward, 1501, -2, 1499, 1000)]
+	[TestCase(SampleLoopMode.PingPong, 1501, -1, 1498, 1497)]
+	[TestCase(SampleLoopMode.PingPong, 2000, -2, 1000, 1001)]
+	public void SeekPreservesLoopTraversalDirection(SampleLoopMode mode, long initial,
+		long delta, int first, int second)
+	{
+		float[] data = new float[1500];
+		for (int i = 0; i < data.Length; i++) data[i] = i;
+		SampleDefinition definition = new((ObjectId)1U, "Loop", new ExternalAssetReference("loop.raw"));
+		definition.Loop = new SampleLoop(mode, 1000, 1500);
+		SampleSound sound = new(definition, new MemorySampleData(1000, 1, data));
+		RenderContext context = Context(1000);
+		SoundState state = sound.CreateState();
+		sound.SeekFrame(context, state, 10, initial, false);
+		sound.SeekFrame(context, state, 10, delta, true);
+		float[] pcm = new float[2];
+		sound.Render(context, state, 10, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { first, second }));
+	}
+
+	[Test]
+	public void RelativeNativeSeekPreservesFractionalPlayheadAndClampsAtZero()
+	{
+		SampleSound sound = RampSample(100, 1000);
+		RenderContext context = Context(2000);
+		SoundState state = sound.CreateState();
+		sound.SeekFrame(context, state, 3, 10, true); // 1.5 + 10
+		float[] pcm = new float[2];
+		sound.Render(context, state, 3, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { 11.5f, 12f }));
+		sound.SeekFrame(context, state, 5, long.MinValue, true);
+		pcm.AsSpan().Clear();
+		sound.Render(context, state, 5, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { 0f, 0.5f }));
+	}
+
 	private static RenderContext Context(int sampleRate)
 		=> new(
 			new RenderConfiguration(

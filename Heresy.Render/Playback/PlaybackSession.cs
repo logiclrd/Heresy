@@ -1948,13 +1948,8 @@ public sealed class PlaybackSession
 		}
 	}
 
-	/// <summary>S7x on a virtual channel applies only to its own
-	/// NNA-migrated notes, including the original cursor's scope. It
-	/// must not touch the replacement voice or a sibling's same ID.</summary>
-	/// <summary>
-	/// Apply native source-frame seeking to whichever voice is current at the
-	/// event deadline, whether hosted on a physical or scoped virtual channel.
-	/// </summary>
+	/// <summary>Resolve an authored absolute/relative seek against the voice
+	/// current at the event deadline, without changing note lifetime.</summary>
 	private void ApplyScriptSeek(PlaybackChannelState channel, NoteCommand command, long eventFrame)
 	{
 		if (channel.CurrentVoice is not PlaybackVoice voice) return;
@@ -1973,11 +1968,10 @@ public sealed class PlaybackSession
 					seekable.SeekFrame(_context, voice.SoundState, frame, source.Frame, source.Relative);
 					break;
 			}
-			return;
 		}
-
 	}
 
+	/// <summary>Legacy native source-frame offset (including tracker Oxx).</summary>
 	private void ApplyNativeSourceFrameOffset(
 		PlaybackChannelState channel,
 		SetSourceFrameOffsetCommand offset,
@@ -1996,6 +1990,7 @@ public sealed class PlaybackSession
 		}
 	}
 
+	/// <summary>S7x targets only displaced voices of this scoped virtual identity.</summary>
 	private void ApplyPastVirtualNoteAction(
 		PlaybackChannelState channel, VirtualChannelIdentity virtualChannelId,
 		long? scopedOwner, TrackerPastNoteAction action, long frame)

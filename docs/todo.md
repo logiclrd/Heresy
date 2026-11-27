@@ -476,8 +476,10 @@ Do not reintroduce completed-task checklists here.
 - [ ] **Correct absolute script Seek and SourceFrame playhead semantics (#73).**
   Desktop tests for #72 confirmed that the current operations set additive,
   origin-relative offsets, not absolute playhead positions at the event
-  deadline. Review seconds/native units, pitch and speed, note age,
-  private recursion and tracker compatibility before changing behavior.
+  deadline. [PR #74](https://github.com/logiclrd/Heresy/pull/74) implements
+  absolute and relative native/time seeks, unwrapped loops, independent
+  Sample and private recursive anchors and legacy tracker compatibility.
+  Integration and desktop acceptance pending.
   See [discovery and proposed design](script-absolute-seek-design.md)
   and [issue #73](https://github.com/logiclrd/Heresy/issues/73).
 

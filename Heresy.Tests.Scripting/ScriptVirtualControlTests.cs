@@ -222,6 +222,8 @@ public sealed class ScriptVirtualControlTests
 
     [TestCase("Seek(0, -1)")]
     [TestCase("Seek(0, 1e300)")]
+    [TestCase("SeekRelative(0, double.NaN)")]
+    [TestCase("SeekRelative(0, -1e300)")]
     [TestCase("Pan(0, 1e300)")]
     [TestCase("Pan(0, 0, double.NaN)")]
     [TestCase("Filter(0, 0.5, 1.1)")]

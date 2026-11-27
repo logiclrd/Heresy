@@ -565,6 +565,44 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		Assert.That(actual.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(1));
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void PrivateSeekFreezesPrerollPitchAndResumesLiveParentPitch(bool nested)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId leaf = AddPattern(document, sample, rows: 5);
+		ObjectId child = nested ? AddPattern(document, leaf, rows: 5, mixdown: true) : leaf;
+		ObjectId parent = AddScript(document, $"""
+			Note(0, 0, _O({child.Value}), mixdown: true);
+			SourceFrame(0.5, 0, 80);
+			""", rows: 5);
+		var factory = new PreparedIncrementalPlaybackFactory(Mono());
+		using var plan = factory.Create(document, parent);
+		float[] pcm = new float[100];
+		plan.Source.Render(30, pcm.AsSpan(0, 30));
+		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
+		PlaybackSession prior = ChildSession(outer);
+		outer.SoundState.PitchTrajectory.SetMultiplier(30, 2);
+		plan.Source.Render(30, pcm.AsSpan(30, 30));
+		plan.Source.Render(30, pcm.AsSpan(60, 30));
+		PlaybackSession rebuilt = ChildSession(outer);
+		Assert.That(rebuilt, Is.Not.SameAs(prior));
+		Assert.That(rebuilt.NextFrame, Is.EqualTo(110L));
+		Assert.That(prior.NextFrame, Is.EqualTo(60L));
+		Assert.That(plan.Session.GetChannelState(0).CurrentVoice, Is.SameAs(outer));
+		// At the target the reconstructed ramp has integrated 80 frames
+		// at the seek-time pitch 2, independent of actual prior parent pitch.
+		const float scale = 20f / 32768;
+		Assert.That(pcm[60], Is.EqualTo(160 * scale).Within(1e-6f));
+		Assert.That(pcm[89], Is.EqualTo(218 * scale).Within(1e-6f));
+		outer.SoundState.PitchTrajectory.SetMultiplier(90, 0.5);
+		plan.Source.Render(10, pcm.AsSpan(90));
+		Assert.That(pcm[90], Is.EqualTo(220 * scale).Within(1e-6f));
+		Assert.That(pcm[91], Is.EqualTo(220.5f * scale).Within(1e-6f));
+		Assert.That(outer.StartFrame, Is.Zero);
+		Assert.That(outer.SoundState.PlaybackOriginFrame, Is.Zero);
+	}
+
 	private static ObjectId AddScript(SongDocument document, string code, int rows)
 	{
 		ObjectId id = document.AllocateObjectId();
