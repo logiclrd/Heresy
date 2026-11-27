@@ -523,9 +523,11 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		Assert.That(actual.Session.RetainedScopedVirtualChannelCount, Is.Zero);
 	}
 
-	[TestCase(false)]
-	[TestCase(true)]
-	public void PrivateSeekDuringReleaseReconstructsContentWithoutRestartingRelease(bool relaxed)
+	[TestCase(false, false)]
+	[TestCase(true, false)]
+	[TestCase(false, true)]
+	[TestCase(true, true)]
+	public void PrivateSeekDuringReleaseReconstructsContentWithoutRestartingRelease(bool relaxed, bool nested)
 	{
 		SongDocument document = CreateDocument(out ObjectId sample);
 		ObjectId envelopeId = document.AllocateObjectId();
@@ -549,6 +551,7 @@ public sealed class RecursiveNativeSeekBoundaryTests
 			Note(2, 0, _O({instrumentId.Value}), volume: 0.5);
 			Note(2.25, 0, _O({instrumentId.Value}));
 			""", rows: 6);
+		if (nested) child = AddPattern(document, child, rows: 6, mixdown: true);
 		ObjectId parent = AddScript(document, prefix + $"""
 			using var note = NoteVirtual(0, _O({child.Value}));
 			note.Off(0.5);
@@ -580,7 +583,7 @@ public sealed class RecursiveNativeSeekBoundaryTests
 			Assert.That(pcm[151], Is.EqualTo(31 * scale * 0.5 * 0.545).Within(1e-6f));
 			Assert.That(pcm[181], Is.EqualTo(scale * 0.395).Within(1e-6f));
 			Assert.That(pcm[259], Is.EqualTo(79 * scale * 0.005).Within(1e-6f));
-			Assert.That(pcm.AsSpan(261).ToArray(), Is.All.Zero.Within(1e-6f));
+			Assert.That(pcm.AsSpan(261).ToArray(), Is.All.EqualTo(0f).Within(1e-6f));
 			Assert.That(whole.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(2));
 			Assert.That(whole.Session.VirtualVoices, Is.Empty);
 		});
