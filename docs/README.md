@@ -58,6 +58,7 @@ tests supersede contradictory old prose.
 | Six pane roots, legacy four-/five-pane migration | [Document panes](document-panes.md) |
 | Implemented node-envelope model, interactive graph and sustain gestures | [Node envelope design](node-envelope-design.md), [Envelope graph](envelope-graph.md) |
 | Eleven-column tone grid, chromatic notation and NNA | [Instrument tone grid](instrument-tone-grid-model.md) |
+| **Proposed:** opt-in Script Pattern generation trace, loop/group provenance, diagnostic-only compiler | [Generation trace design](script-generation-trace-design.md) |
 | **Future exploratory design:** procedural Script Instrument, initialization/reuse and per-note allocation advisory | [Script Instrument rework plan](script-instrument-rework-plan.md) |
 
 ## Documentation maintenance
