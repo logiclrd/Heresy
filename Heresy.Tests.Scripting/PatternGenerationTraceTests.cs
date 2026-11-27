@@ -98,10 +98,10 @@ public sealed class PatternGenerationTraceTests
         string source = (relaxed ? "#order relaxed\n" : "") +
             string.Concat(Enumerable.Range(0, 8).Select(i => $"Note({i}, 0, _O(17));"));
         var program = Compile(source);
-        var limited = program.Capture(maximumRecords: 3);
+        var limited = program.Capture(maximumRecords: 6);
         Assert.That(limited.Status, Is.EqualTo(PatternGenerationTraceStatus.Truncated));
         Assert.That(limited.Events.Select(e => e.OccurrenceId), Is.EqualTo(new long[] { 0, 1, 2 }));
-        Assert.That(program.Capture(maximumRecords: 8).Status, Is.EqualTo(PatternGenerationTraceStatus.Completed));
+        Assert.That(program.Capture(maximumRecords: 16).Status, Is.EqualTo(PatternGenerationTraceStatus.Completed));
     }
 
     [TestCase(false)]
@@ -161,9 +161,99 @@ public sealed class PatternGenerationTraceTests
         AssertMusicalParity(Playback(source), events);
         Assert.That(events.Skip(2).Take(2).Select(e => e.Target), Is.EqualTo(events.Take(2).Select(e => e.Target)));
         Assert.That(events.Skip(2).Take(2).Select(e => e.EditorCallsite), Is.All.EqualTo(events[2].EditorCallsite));
-        var prefix = compiled.Capture(maximumRecords: 3);
+        // One group creation (invocation + group), two starts (invocation + event + transfer),
+        // then one Off invocation and its first member event.
+        var prefix = compiled.Capture(maximumRecords: 10);
         Assert.That(prefix.Status, Is.EqualTo(PatternGenerationTraceStatus.Truncated));
         AssertMusicalParity(events.Take(3).ToArray(), prefix.Events.Select(e => e.Note).ToArray());
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void RepeatedGroupCallsAndRecycledVirtualSlotsHaveDistinctProvenance(bool relaxed)
+    {
+        string source = (relaxed ? "#order relaxed\n" : "") + """
+            for (int i = 0; i < 2; i++)
+            {
+                using var group = NewNoteGroup();
+                var first = NoteVirtual(i * 6, _O(17));
+                group += first;
+                group += first;
+                group += NoteVirtual(i * 6, _O(18));
+                for (int j = 1; j < 3; j++)
+                    group.Off(i * 6 + j);
+            }
+            """;
+        var trace = Compile(source).Capture();
+        Assert.That(trace.Status, Is.EqualTo(PatternGenerationTraceStatus.Completed), trace.Detail);
+        Assert.That(trace.Groups.Count, Is.EqualTo(2));
+        Assert.That(trace.Groups.Select(g => g.CreationSpan), Is.All.EqualTo(trace.Groups[0].CreationSpan));
+        Assert.That(trace.Groups.Select(g => g.Id).Distinct().Count(), Is.EqualTo(2));
+        Assert.That(trace.Transfers.Select(t => t.Succeeded), Is.EqualTo(new[] { true, false, true, true, false, true }));
+        Assert.That(trace.Events.Count, Is.EqualTo(12));
+        var starts = trace.Events.Where(e => e.Note.Commands.Single() is StartNoteCommand).ToArray();
+        Assert.That(starts.Select(e => e.Note.Target.VirtualIdentity).Distinct().Count(), Is.EqualTo(4));
+        Assert.That(starts.Select(e => e.Note.Target.VirtualIdentity.Slot).Distinct().Count(), Is.EqualTo(2));
+        var offs = trace.Events.Where(e => e.Note.Commands.Single() is NoteOffCommand).ToArray();
+        Assert.That(offs.GroupBy(e => e.InvocationId).Select(g => g.Count()), Is.EqualTo(new[] { 2, 2, 2, 2 }));
+        Assert.That(offs.Select(e => e.GroupId).Distinct().Count(), Is.EqualTo(2));
+        foreach (var operation in offs.GroupBy(e => e.InvocationId))
+        {
+            var invocation = trace.Invocations.Single(i => i.Id == operation.Key);
+            Assert.That(invocation.Method, Is.EqualTo("Off"));
+            Assert.That(invocation.GroupId, Is.Not.Null);
+            Assert.That(source.Substring(invocation.SourceSpan.Start, invocation.SourceSpan.Length),
+                Is.EqualTo("group.Off(i * 6 + j)"));
+            Assert.That(operation.Select(e => e.GroupId), Is.All.EqualTo(invocation.GroupId));
+            Assert.That(operation.Select(e => e.Note.Target.VirtualIdentity),
+                Is.EqualTo(trace.Transfers.Where(t => t.Succeeded && t.GroupId == invocation.GroupId).Select(t => t.Channel!.Value)));
+        }
+        AssertMusicalParity(Playback(source), trace.Events.Select(e => e.Note).ToArray());
+    }
+
+    [Test]
+    public void RelaxedBoundDelegateKeepsGroupIdentityAndRepeatedInvocationIdentity()
+    {
+        const string source = """
+            #order relaxed
+            using var group = NewNoteGroup();
+            group += NoteVirtual(0, _O(17));
+            group += NoteVirtual(0, _O(18));
+            Action<double, double> off = group.Off;
+            Action<double, double> equal = group.Off;
+            if (off == equal)
+            {
+                off(2, 0);
+                off(4, 0);
+            }
+            """;
+        var trace = Compile(source).Capture();
+        Assert.That(trace.Status, Is.EqualTo(PatternGenerationTraceStatus.Completed), trace.Detail);
+        var offs = trace.Events.Skip(2).ToArray();
+        Assert.That(offs.Length, Is.EqualTo(4));
+        Assert.That(offs.Select(e => e.GroupId), Is.All.EqualTo(trace.Groups.Single().Id));
+        Assert.That(offs.GroupBy(e => e.InvocationId).Select(g => g.Count()), Is.EqualTo(new[] { 2, 2 }));
+        AssertMusicalParity(Playback(source), trace.Events.Select(e => e.Note).ToArray());
+    }
+
+    [Test]
+    public void RelaxedCallbackEmitterRetainsParentInvocationAndExactEmitterSpan()
+    {
+        const string source = """
+            #order relaxed
+            Action<int> emit = n => Note(n, 0, _O(17));
+            emit(0);
+            emit(1);
+            """;
+        var trace = Compile(source).Capture();
+        Assert.That(trace.Status, Is.EqualTo(PatternGenerationTraceStatus.Completed), trace.Detail);
+        Assert.That(trace.Events.Count, Is.EqualTo(2));
+        var calls = trace.Events.Select(e => trace.Invocations.Single(i => i.Id == e.InvocationId)).ToArray();
+        Assert.That(calls.Select(c => c.Id).Distinct().Count(), Is.EqualTo(2));
+        Assert.That(calls.Select(c => c.ParentInvocationId).Distinct().Count(), Is.EqualTo(2));
+        Assert.That(calls.Select(c => source.Substring(c.SourceSpan.Start, c.SourceSpan.Length)),
+            Is.All.EqualTo("Note(n, 0, _O(17))"));
+        Assert.That(calls.Select(c => c.ParentInvocationId), Is.All.Not.Null);
     }
 
     [Test]
