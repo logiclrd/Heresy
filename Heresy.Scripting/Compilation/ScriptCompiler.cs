@@ -1719,7 +1719,7 @@ public static class ScriptCompiler
 		while (identifiers.Any(id => id.StartsWith(prefix, StringComparison.Ordinal)))
 			prefix += "_";
 
-		var (delegates, methodGroups) = ResolveRelaxedTraceSites(source);
+		var (delegates, methodGroups) = ResolveRelaxedTraceSites(source, diagnostic);
 		Dictionary<ScriptSourceSpan, string> replacements = [];
 		Dictionary<ScriptSourceSpan, BoundTraceSite> boundReplacements = [];
 		List<string> localAdapters = [];
@@ -1730,18 +1730,27 @@ public static class ScriptCompiler
 		// scope still supplies exact provenance in that case.
 		foreach (var (method, sites) in methodGroups)
 		{
-			if (sites.Count != 1)
+			bool knownOrigin = sites.Count == 1;
+			if (!knownOrigin && !diagnostic)
 				continue;
-			MethodGroupTraceSite site = sites[0];
-			ScriptSourceSpan span = site.Span;
-			if (site.BoundReceiver)
-			{
+			// Diagnostic-only: equivalent method-group conversions at multiple
+			// sites share an adapter. Use unknown origin rather than assigning
+			// the first reference's source span to every execution.
+			foreach (var site in sites.Where(s => s.BoundReceiver))
 				if (site.DelegateType is { CanBeReferencedByName: true } delegateType)
-					boundReplacements.Add(span, new(method, delegateType));
+					boundReplacements.Add(site.Span, new(method, delegateType, knownOrigin));
+			var unbound = sites.Where(s => !s.BoundReceiver).ToArray();
+			if (unbound.Length == 0) continue;
+			ScriptSourceSpan span = unbound[0].Span;
+			string name = prefix + "Group" + localAdapters.Count;
+			foreach (var site in unbound) replacements.Add(site.Span, name);
+			string origin = knownOrigin ? TraceCallsite(lowering.Original(span))
+				: "default(global::Heresy.Core.Sequences.SequenceCallsite)";
+			if (diagnostic && method.Name == "NewNoteGroup")
+			{
+				localAdapters.Add($"global::Heresy.Scripting.Runtime.NoteGroup {name}() => base.__HeresyTraceNewGroupFromDelegate({origin});");
 				continue;
 			}
-			string name = prefix + "Group" + localAdapters.Count;
-			replacements.Add(span, name);
 			string parameters = string.Join(", ", method.Parameters.Select(p =>
 				p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
 				+ " @" + p.Name + DefaultParameterSyntax(p)));
@@ -1750,8 +1759,9 @@ public static class ScriptCompiler
 				: method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 			string returnPrefix = method.ReturnsVoid ? "" : "return ";
 			string traceScope = diagnostic
-				? $"using var {prefix}Invocation = base.__HeresyEnterTraceInvocation({TraceCallsite(lowering.Original(span))}, \"{method.Name}\", null); " : "";
-			localAdapters.Add($"{returnType} {name}({parameters}) {{ {traceScope}{returnPrefix}base.{method.Name}({TraceCallsite(lowering.Original(span))}, {arguments}); }}");
+				? $"using var {prefix}Invocation = base.__HeresyEnterTraceInvocation({origin}, \"{method.Name}\", null); " : "";
+			string forwarded = knownOrigin ? origin + ", " + arguments : arguments;
+			localAdapters.Add($"{returnType} {name}({parameters}) {{ {traceScope}{returnPrefix}base.{method.Name}({forwarded}); }}");
 		}
 
 		root = new RelaxedPatternEmitterCallsiteRewriter(emitterSpans, delegates,
@@ -1778,11 +1788,11 @@ public static class ScriptCompiler
 	private sealed record DelegateTraceSite(IMethodSymbol Method, bool ExplicitInvoke);
 	private sealed record MethodGroupTraceSite(ScriptSourceSpan Span, bool BoundReceiver,
 		INamedTypeSymbol? DelegateType);
-	private sealed record BoundTraceSite(IMethodSymbol Method, INamedTypeSymbol DelegateType);
+	private sealed record BoundTraceSite(IMethodSymbol Method, INamedTypeSymbol DelegateType, bool KnownOrigin);
 
 	private static (Dictionary<ScriptSourceSpan, DelegateTraceSite> Delegates,
 		Dictionary<IMethodSymbol, List<MethodGroupTraceSite>> MethodGroups)
-		ResolveRelaxedTraceSites(string source)
+		ResolveRelaxedTraceSites(string source, bool diagnostic = false)
 	{
 		SyntaxTree tree = CSharpSyntaxTree.ParseText(
 			BuildPatternWrapper("__HeresyRelaxedTraceResolution", source), WrapperParseOptions);
@@ -1817,7 +1827,11 @@ public static class ScriptCompiler
 				else if (operation is IMethodReferenceOperation reference
 					&& reference.Parent is IDelegateCreationOperation creation
 					&& reference.Syntax is IdentifierNameSyntax or MemberAccessExpressionSyntax
-					&& ScriptPatternEmissionPolicy.IsEmitterMethod(reference.Method, compilation))
+					&& (ScriptPatternEmissionPolicy.IsEmitterMethod(reference.Method, compilation)
+						|| diagnostic && reference.Method.Name == "NewNoteGroup"
+						&& reference.Method.Parameters.Length == 0
+						&& SymbolEqualityComparer.Default.Equals(reference.Method.ContainingType,
+							compilation.GetTypeByMetadataName(typeof(PatternScriptProgram).FullName!))))
 				{
 					if (!groups.TryGetValue(reference.Method, out var sites))
 						groups.Add(reference.Method, sites = []);
@@ -1869,12 +1883,19 @@ public static class ScriptCompiler
 			// Cache the adapter against that delegate, not against the source
 			// spelling or the variable that formerly held its receiver.
 			string receiverText = diagnostic ? prefix + "ReceiverPlaceholder" : rewritten.WithoutTrivia().ToFullString();
-			string traceScope = diagnostic ? $"using var {prefix}Invocation = base.__HeresyEnterTraceDelegate({TraceCallsite(lowering.Original(span))}, {target}); " : "";
+			string origin = site.KnownOrigin ? TraceCallsite(lowering.Original(span))
+				: "default(global::Heresy.Core.Sequences.SequenceCallsite)";
+			string traceScope = diagnostic ? $"using var {prefix}Invocation = base.__HeresyEnterTraceDelegate({origin}, {target}); " : "";
+			string call = diagnostic
+				? $"try {{ {returnPrefix}{target}({arguments}); }} catch {{ base.__HeresyRecordTraceFailure(); throw; }}"
+				: $"{returnPrefix}{target}({arguments});";
+			string adapterBody = site.KnownOrigin
+				? $"var {previous} = base.__HeresyPushFallbackCallsite({origin}); "
+					+ $"try {{ {traceScope}{call} }} "
+					+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }}"
+				: traceScope + call;
 			string adapter = $"base.__HeresyBindTrace(({delegateType}){receiverText}, "
-				+ $"{target} => ({parameters}) => {{ "
-				+ $"var {previous} = base.__HeresyPushFallbackCallsite({TraceCallsite(lowering.Original(span))}); "
-				+ $"try {{ {traceScope}{returnPrefix}{target}({arguments}); }} "
-				+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }} }})";
+				+ $"{target} => ({parameters}) => {{ {adapterBody} }})";
 			return ParseAdapter(adapter, rewritten).WithTriviaFrom(node);
 		}
 
