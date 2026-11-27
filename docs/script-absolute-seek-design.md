@@ -59,26 +59,66 @@ Key compatibility evidence:
 
 ## Proposed authored contract (owner approval required)
 
-Keep public signatures unchanged. Seek(row, seconds) and SourceFrame(row,
-nativeFrame) are absolute SOURCE playhead positions at the actual event
-deadline, not new offsets relative to note onset. The latest successful
-seek replaces the previous target, regardless of units. The first frame
-rendered at the deadline corresponds to that target, subject to existing
-fractional interpolation / loop mapping / finite-end behavior. Subsequent
-progress uses the existing instantaneous pitch and playback speed. An idle
-control does nothing; never remember a seek for a future start. Group
-members seek their own current sounds to the same requested source position,
-independently of their age; displaced voices and siblings are unaffected.
+Owner refinement: distinguish absolute and relative seeks in both native
+frame and time coordinates. The following is a revised proposal, not yet
+a finalized API decision.
 
-For Sample, seconds are time in original decoded PCM, independent of the
-note's pitch/speed or output sample rate. Native frames are original PCM
-frames. For private Pattern/Sequence, propose seconds on the instantiated
-private playback timeline, native frames at its render sample rate,
-including its selected speed; pitch affects child pitches, not duration.
-A private seek deterministically positions the child timeline and rebuilds
-its internal voice/automation/filter histories as needed; outer note age
-and outer state remain intact. Confirm that this definition of private
-seconds (as opposed to unscaled authored child time) is the desired one.
+Keep existing absolute helper signatures; propose SeekRelative(row,
+deltaSeconds) and SourceFrameRelative(row, deltaFrames), with the same
+physical channel argument, owned-handle/group variants and optional
+fixed-wall offset as their absolute counterparts.
+
+At the actual resolved event deadline, let C be the current fractional
+source playhead and R be its instantaneous source-frame rate per playback
+second. The four target calculations are:
+
+| Operation | Target |
+| --- | --- |
+| SourceFrame(F) | F |
+| SourceFrameRelative(dF) | C + dF |
+| Seek(T) | T * R |
+| SeekRelative(dT) | C + dT * R |
+
+Absolute time is a constant-current-rate conversion from the source origin,
+NOT the integrated history of previous pitches. Relative time is a
+constant-current-rate conversion from the current playhead, NOT a replay
+of earlier or predicted future modulation. Snapshot the rate and position
+at execution, not raw row preparation. The latest successful absolute
+seek replaces the previous target, regardless of units; relative seeks
+derive from the current position including earlier seeks. Subsequent
+progress follows existing live pitch/speed. Idle controls are no-op;
+never remember a seek for a future note. Groups evaluate each member's
+own source rate/position, not a shared frame target for unlike sources.
+Displaced voices and siblings are unaffected.
+
+For Sample, native frames are original decoded PCM frames. R is native
+sample rate times the effective instantaneous pitch (including modulation)
+and playback speed; output sample rate affects sampling, not the
+seconds-to-native-frame conversion. Example: at 48 kHz, effective 2x
+rate, Seek(1s) lands on frame 96000, whereas SourceFrame(48000) lands on
+frame 48000. At that rate SeekRelative(-0.5s) subtracts 48000 frames.
+Fractional current position must be retained, even for an integer delta.
+
+For private Pattern/Sequence, propose using the instantiated private
+render timeline, whose native frames are at its render sample rate.
+Its source-frame rate per outer playback second is that sample rate:
+child clock already accounts for selected speed and pitch affects child
+pitches, not duration. Do not apply pitch or speed a second time.
+An alternate authored/unscaled child-time coordinate would require
+explicit agreement (especially with child Tempo changes). A private
+seek deterministically positions the child timeline and rebuilds its
+internal voice/automation/filter histories as needed; outer note age
+and outer state remain intact.
+
+Propose signed relative deltas, clamping targets before frame zero to
+zero, while absolute negative inputs remain invalid. Decide loop-relative
+coordinates explicitly: unwrapped accumulated traversal (consistent with
+existing loop mapping and ping-pong direction) versus mapped sample
+address. Recommend unwrapped traversal for relative operations, and an
+absolute frame always selects the requested source coordinate before
+normal loop mapping. Confirm behavior for absolute frame addresses past
+loop end, large signed deltas, finite end and private seek during release.
+For zero relative delta recommend a no-op without replay or reanchoring.
 
 Preserve outer StartFrame, voice identity, NoteOffTime, release disposition,
 envelopes, fades, pitch operator phase, volume, spatial state, NNA policy,
@@ -98,19 +138,21 @@ decide with owner), rather than promising arbitrary graph rewind or
 silently reinitializing oscillator state. Instrument-selected Samples or
 private sounds support seeks through their terminal capabilities. Flattened
 recursive sources remain unsupported, as they do not have one bound
-playhead. No broadcast capability. Keep validation of nonnegative finite
-seconds and native long frames. Document replay cost and rate-limit
+playhead. No broadcast capability. Keep validation of nonnegative finite absolute seconds and native long
+frames; relative seconds are signed finite and representable, relative
+frames are signed long. Handle arithmetic without overflow. Document replay cost and rate-limit
 diagnostics for private seeks, including rewind-to-zero.
 
 ## Implementation direction (not yet code)
 
 Introduce distinct typed script absolute seek commands, e.g.
-SeekPlaybackTimeCommand(TimeSpan) and SeekSourceFrameCommand(long), rather
+SeekPlaybackTimeCommand(TimeSpan) and SeekSourceFrameCommand(long), plus
+relative counterparts (or a typed absolute/relative discriminator), rather
 than repurposing SetPlaybackOffsetCommand / SetSourceFrameOffsetCommand.
 Keep native data effects, persisted serialization and low-level additive
 offset API unchanged. Extend existing explicit-target validation,
 flattened suppression, command dispatch, F6 compiler bindings and group
-fanout only as needed; no new authored helper or unsafe raw surface.
+fanout only as needed; only the two proposed relative authored helpers, no unsafe raw surface.
 
 Use sound-specific absolute-seek capability with actual invocation-relative
 frame and render context. Avoid a blanket signed correction to PlaybackOffset
@@ -121,6 +163,10 @@ sample-rate ratio, new position at t is:
 
     target + (P(t) - P(seekFrame)) * k
 
+For relative seeks calculate the current source position from the active
+anchor or legacy mapping, then add the signed delta in native coordinates.
+For time seeks convert using the instantaneous effective rate at the
+deadline; do not use the historical integral for that conversion.
 The previous seek target is replaced, not accumulated. Snapshot P at the
 deadline once, not per sample; retain only latest anchor, no new history or
 per-sample allocations. Initial legacy offsets retain their existing
@@ -159,14 +205,15 @@ state only.
    capability, preserve low-level offsets. Use distinctive ramp/impulse
    PCM with independent oracle, at different native/output rates,
    nonunit pitch/speed, varying pitch curves, repeated forward/backward
-   seeks, mixed units, zero and exact finite end, loop mapping, silent
+   absolute and relative seeks, fractional positions, mixed units, signed
+   deltas and clamp-to-zero, zero delta, exact finite end, loop mapping, silent
    channel, deferred deadline on replacement, no effects on displaced/
    sibling voices, cancellation. Test exact target sample and progression,
    note-age/envelope preservation and block invariance. Preserve
    legacy Oxx/SAx/Qxy tests; log separate counterexamples if found.
 3. Private Pattern/Sequence: independent child PCM slice reference,
    actual accent at target, rewind-to-zero, mixed units, independently
-   started group members, nonunit speed/pitch, inherited pitch mapping,
+   started group members, relative deltas, nonunit speed/pitch, inherited pitch mapping,
    release/cut/end boundaries, nested private/flattened descendants,
    Instrument selection, bounded rebuild and registry retirement.
 4. Integration: strict/relaxed, F6 spans and delegate provenance, exact
