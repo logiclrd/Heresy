@@ -363,3 +363,29 @@ rewind to zero during an older release, unchanged release gain/end, future
 production suppression and irregular chunking in strict/relaxed scripts at
 one and two private nesting levels. Final exact-head CI and further edge
 coverage are required before merge; no local execution is claimed.
+
+Slice 4b exact-head CI at 9b57b60734d4 passed all 4,792 cases and ARM64.
+
+### Slice 4c — boundary and lifecycle hardening
+
+A seek followed by Off/Fade at the same outer deadline selects child events
+due exactly at the reconstructed target, including nested children. Ordinary
+Off/Fade without a seek retains its stop-before-new-events behavior. Keep
+relative ordering of equal-frame Off and Fade in the lifecycle anchors.
+At a stopped-source seek boundary, walk nested private audio bounds before
+replacing the child session. A previously known finite bound caps the new
+source even if the sought voice has a longer authored release. Unknown
+output-filter and displaced DSP tail durations remain conservative unknowns;
+no recursive projection is introduced into the PCM hot path. The target
+voice's own curve and fade-duration policy are evaluated at the inherited
+elapsed age, subject to the original known end bound. A different target
+curve may change gain; seeking does not reset the lifecycle clock.
+
+Eleven more cases: same-frame seek/Off and finite end/sibling isolation at
+one and two nesting levels, inherited displacement fade PCM with/without
+Off at one and two levels, single/nested Multi release propagation, and
+cancellation before replacing a releasing child. Fade tests deliberately
+exercise the still-bound renderer capability directly; authored Past Fade
+targets displaced voices, and normal script seeks do not target them.
+Existing cooperative cancellation during replay remains in place. Exact-head
+CI and owner acceptance required; no local test run claimed.
