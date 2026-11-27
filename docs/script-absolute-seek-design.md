@@ -335,3 +335,31 @@ private replay. CI and desktop acceptance required before merge.
 Absolute private replay also checks the shared cancellation signal before
 reconstruction and once per preroll scratch block, including while a
 long already-started voice renders without more sequencing events.
+
+## Slice 4 — lifecycle-preserving private reconstruction
+
+Owner accepted the original four desktop auditions and the frozen-pitch
+preroll policy. Clarified contract: a bound voice can seek during Off or
+Fade; child content changes while the original denouement continues.
+Cut and retirement are irreversible. This supersedes the Slice 2 policy
+that ignored seeks after outer release/fade.
+
+Slice 4a adds independent elapsed release/fade clock primitives. Exact-head
+CI at 1ff74971a7d6 passed all 4,784 cases and the ARM64 validation.
+Slice 4b forwards elapsed release through voice and FM envelope evaluation
+and end bounds, including nested Source and Multi voices. Private seek
+preroll reconstructs the held content, applies events due at the target
+without consuming an extra frame, and then restores the inherited lifecycle
+and stops later production. Ordinary Off/Fade propagation does not pull
+new boundary events into an already-stopped descendant. Outer release and
+fade anchors are not moved by subsequent seeks. A prior finite audio bound
+is retained where determinable without guessing about output-filter tails.
+Unknown streaming or DSP completion remains observed by rendering. No PCM
+journal or per-sample allocations are added. Cut or quiescent voices cannot
+be resurrected. Release/fade ages are bounded per invocation, not per seek.
+
+End-to-end PCM regressions exercise A-to-B seek at exact child onset,
+rewind to zero during an older release, unchanged release gain/end, future
+production suppression and irregular chunking in strict/relaxed scripts at
+one and two private nesting levels. Final exact-head CI and further edge
+coverage are required before merge; no local execution is claimed.
