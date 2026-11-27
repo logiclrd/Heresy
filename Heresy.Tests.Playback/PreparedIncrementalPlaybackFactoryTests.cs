@@ -3351,8 +3351,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using var chunked = factory.Create(doc, root);
 		float[] pcm = new float[1600], chunks = new float[1600];
 		whole.Source.Render(290, pcm.AsSpan(0, 290));
-		Assert.That(whole.Timeline.RetainedDisplacedSourceProducerCount, Is.EqualTo(1),
-			"The short producer retired, but the continuing one can still emit.");
+		Assert.That(whole.Timeline.RetainedDisplacedSourceProducerCount, Is.LessThanOrEqualTo(1),
+			"The short producer retired; one-step lookahead may already have stopped the continuing producer.");
 		Assert.That(whole.Session.RetainedDisplacedFlattenedSourceCount, Is.EqualTo(2),
 			"Both former logical notes still have audible descendants.");
 		whole.Source.Render(490, pcm.AsSpan(290, 490));
@@ -3377,6 +3377,62 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			Assert.That(pcm[^1], Is.Zero.Within(1e-6f));
 			Assert.That(chunked.Session.RetainedDisplacedFlattenedSourceCount, Is.Zero);
 			Assert.That(chunked.Timeline.RetainedDisplacedSourceProducerCount, Is.Zero);
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void RepeatedFlattenedDisplacementsReclaimPastRecordsAfterNaturalVoiceEnd(bool relaxed)
+	{
+		const int cycles = 256;
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Finite voice", "finite.wav",
+			LongWave(8192, frames: 300)));
+		ObjectId child = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(child, "Short producer")
+		{
+			RowCount = 1, ChannelCount = 1, Source = $"Note(0, 0, _O({sample.Value}));",
+		});
+		ObjectId root = doc.AllocateObjectId();
+		string source = $$"""
+			for (int row = 0; row < {{cycles}}; row++)
+			{
+				Note(row, 0, _O({{child.Value}}));
+				Displacement(row, 0, NoteDisplacementAction.Continue);
+			}
+			""";
+		doc.Add(new ScriptPatternDefinition(root, "Bounded displacement history")
+		{
+			RowCount = cycles + 4, ChannelCount = 1,
+			Source = relaxed ? "#order relaxed\n" + source : source,
+		});
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var whole = factory.Create(doc, root);
+		using var chunked = factory.Create(doc, root);
+		float[] expected = new float[(cycles + 4) * 120], pcm = new float[expected.Length];
+		whole.Source.Render(expected.Length, expected);
+		int peak = 0, peakProducers = 0;
+		for (int pos = 0; pos < pcm.Length;)
+		{
+			int count = Math.Min(37, pcm.Length - pos);
+			chunked.Source.Render(count, pcm.AsSpan(pos, count));
+			pos += count;
+			peak = Math.Max(peak, chunked.Session.RetainedDisplacedFlattenedSourceCount);
+			peakProducers = Math.Max(peakProducers, chunked.Timeline.RetainedDisplacedSourceProducerCount);
+		}
+		TestContext.Out.WriteLine($"Peak flattened Past records={peak}, producers={peakProducers}");
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm, Is.EqualTo(expected).Within(1e-6f));
+			Assert.That(pcm[270], Is.EqualTo(0.75f).Within(1e-6f));
+			Assert.That(peak, Is.InRange(1, 3));
+			Assert.That(peakProducers, Is.LessThanOrEqualTo(2));
+			Assert.That(chunked.Session.RetainedDisplacedFlattenedSourceCount, Is.Zero);
+			Assert.That(chunked.Timeline.RetainedDisplacedSourceProducerCount, Is.Zero);
+			Assert.That(chunked.Session.RetainedFlattenedSourceControllerCount, Is.Zero);
+			Assert.That(chunked.Session.RetainedScopedPhysicalChannelCount, Is.Zero);
+			Assert.That(pcm[^1], Is.Zero.Within(1e-6f));
 		});
 	}
 
