@@ -2000,9 +2000,10 @@ public static class ScriptCompiler
 				+ "." + method.Name + "(" + origin + ", " + arguments + ");";
 			string scopeArgs = origin + ", \"" + method.Name + "\", " + (group ? receiver : "null");
 			string body = _relaxed
-				? "using var " + _prefix + "Scope = base.__HeresyEnterTraceInvocation(" + scopeArgs + "); " + call
+				? "using var " + _prefix + "Scope = base.__HeresyEnterTraceInvocation(" + scopeArgs + "); try { " + call
+                    + " } catch { base.__HeresyRecordTraceFailure(); throw; }"
 				: "base.__HeresyBeginTraceInvocation(" + scopeArgs + "); try { " + call
-					+ " } catch { base.__HeresyEndTraceInvocation(); throw; }";
+					+ " } catch { base.__HeresyRecordTraceFailure(); base.__HeresyEndTraceInvocation(); throw; }";
 			_declarations.Add(returnType + " " + name + "(" + parameters + ") { " + body + " }");
 			var args = rewritten.ArgumentList.Arguments;
 			if (bound)
