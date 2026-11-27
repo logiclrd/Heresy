@@ -45,7 +45,7 @@ public sealed class ScriptEditorHelpTests
         Assert.That(reference,
             Does.Contain("native source frames"));
         Assert.That(reference,
-            Does.Contain("playback in seconds"));
+            Does.Contain("instantaneous rate").And.Contain("instantiated child timeline"));
     }
 
     [Test]
