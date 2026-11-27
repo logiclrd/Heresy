@@ -1508,6 +1508,21 @@ public static class ScriptCompiler
 	private const int AuthoredBodyOffset = 2;
 	private static BlockSyntax ParseAuthoredBody(string source)
 		=> (BlockSyntax)SyntaxFactory.ParseStatement("{\n" + source + "\n}", options: WrapperParseOptions);
+	/// <summary>Authored invocation spans for editor navigation, including
+	/// unexecuted calls. Parse the original text (before ownership lowering
+	/// or instrumentation). No script execution or new authored capability.</summary>
+	public static IReadOnlyList<SequenceCallsite> GetPatternInvocationSpans(string source)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+		var order = ScriptPatternOrderDirective.Analyze(source);
+		return ParseAuthoredBody(order.CompilerSource).DescendantNodes()
+			.OfType<InvocationExpressionSyntax>()
+			.Select(n => new SequenceCallsite(n.SpanStart - AuthoredBodyOffset, n.Span.Length))
+			.Where(s => s.Start >= 0 && s.Length > 0 && s.Start <= source.Length
+				&& s.Length <= source.Length - s.Start)
+			.ToArray();
+	}
+
 	private static string AuthoredBodyText(BlockSyntax body)
 	{
 		string text = body.ToFullString();
