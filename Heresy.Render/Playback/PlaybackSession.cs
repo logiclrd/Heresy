@@ -3270,9 +3270,12 @@ public sealed class PlaybackSession
 	{
 		if (voice is null)
 			return;
-		foreach (FlattenedSourceVolume source in voice.EnclosingSourceVolumes)
-			if (_displacedFlattenedSources.ContainsKey(source.ScopeId))
-				_liveDisplacedSourceScopes.Add(source.ScopeId);
+		for (int i = 0; i < voice.EnclosingSourceVolumes.Count; i++)
+		{
+			long scopeId = voice.EnclosingSourceVolumes[i].ScopeId;
+			if (_displacedFlattenedSources.ContainsKey(scopeId))
+				_liveDisplacedSourceScopes.Add(scopeId);
+		}
 	}
 
 	private void ApplyPastFlattenedSources(int host, long owner,
