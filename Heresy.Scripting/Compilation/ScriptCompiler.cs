@@ -1749,7 +1749,9 @@ public static class ScriptCompiler
 			string returnType = method.ReturnsVoid ? "void"
 				: method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 			string returnPrefix = method.ReturnsVoid ? "" : "return ";
-			localAdapters.Add($"{returnType} {name}({parameters}) {{ {returnPrefix}base.{method.Name}({TraceCallsite(lowering.Original(span))}, {arguments}); }}");
+			string traceScope = diagnostic
+				? $"using var {prefix}Invocation = base.__HeresyEnterTraceInvocation({TraceCallsite(lowering.Original(span))}, \"{method.Name}\", null); " : "";
+			localAdapters.Add($"{returnType} {name}({parameters}) {{ {traceScope}{returnPrefix}base.{method.Name}({TraceCallsite(lowering.Original(span))}, {arguments}); }}");
 		}
 
 		root = new RelaxedPatternEmitterCallsiteRewriter(emitterSpans, delegates,
@@ -1867,10 +1869,11 @@ public static class ScriptCompiler
 			// Cache the adapter against that delegate, not against the source
 			// spelling or the variable that formerly held its receiver.
 			string receiverText = diagnostic ? prefix + "ReceiverPlaceholder" : rewritten.WithoutTrivia().ToFullString();
+			string traceScope = diagnostic ? $"using var {prefix}Invocation = base.__HeresyEnterTraceDelegate({TraceCallsite(lowering.Original(span))}, {target}); " : "";
 			string adapter = $"base.__HeresyBindTrace(({delegateType}){receiverText}, "
 				+ $"{target} => ({parameters}) => {{ "
 				+ $"var {previous} = base.__HeresyPushFallbackCallsite({TraceCallsite(lowering.Original(span))}); "
-				+ $"try {{ {returnPrefix}{target}({arguments}); }} "
+				+ $"try {{ {traceScope}{returnPrefix}{target}({arguments}); }} "
 				+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }} }})";
 			return ParseAdapter(adapter, rewritten).WithTriviaFrom(node);
 		}
@@ -1897,11 +1900,12 @@ public static class ScriptCompiler
 					ParameterModifier(p.RefKind, declaration: false) + prefix + "Arg" + i));
 				string returnPrefix = method.ReturnsVoid ? ""
 					: method.ReturnsByRef || method.ReturnsByRefReadonly ? "return ref " : "return ";
+				string traceScope = diagnostic ? $"using var {prefix}Invocation = base.__HeresyEnterTraceDelegate({TraceCallsite(lowering.Original(span))}, {target}); " : "";
 				string adapter =
 					$"base.__HeresyWrapDelegate({(diagnostic ? prefix + "ReceiverPlaceholder" : receiver.WithoutTrivia().ToFullString())}, "
 					+ $"{target} => ({parameters}) => {{ "
 					+ $"var {previous} = base.__HeresyPushDelegateCallsite({TraceCallsite(lowering.Original(span))}); "
-					+ $"try {{ {returnPrefix}{target}({arguments}); }} "
+					+ $"try {{ {traceScope}{returnPrefix}{target}({arguments}); }} "
 					+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }} }})";
 				return rewritten.WithExpression(ParseAdapter(adapter, receiver)
 					.WithTriviaFrom(rewritten.Expression));
