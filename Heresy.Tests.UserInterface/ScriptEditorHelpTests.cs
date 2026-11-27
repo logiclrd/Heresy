@@ -24,12 +24,15 @@ public sealed class ScriptEditorHelpTests
             "note.Off", "note.Cut", "Dispose",
             "OffVirtualInScope", "CutVirtualInScope", "OffAllVirtual",
             "CutAllVirtual", "Off", "Cut", "Tempo", "Speed", "Seek",
+            "Volume(double row, int channel, double volume", "SourceFrame(double row, int channel, long sourceFrameOffset",
+            "Displacement(double row, int channel, NoteDisplacementAction action",
+            "Past(double row, int channel, TrackerPastNoteAction action",
             "Pan", "Surround", "Filter", "FilterCutoff", "FilterResonance",
             "Semitone", "Cent", "Octave", "SemitoneOffset",
         ];
         foreach (string method in methods)
             Assert.That(reference,
-                Does.Contain(method + "("),
+                Does.Contain(method.Contains("(") ? method : method + "("),
                 $"The current runtime helper {method} needs editor documentation.");
 
         Assert.That(reference, Does.Contain(
