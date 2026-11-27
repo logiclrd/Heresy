@@ -361,8 +361,16 @@ public sealed class ScriptVirtualControlPlaybackTests
         {
             Assert.That(rendered, Is.EqualTo(expected).Within(1e-5f));
             Assert.That(chunked, Is.EqualTo(expected).Within(1e-5f));
-            Assert.That(Math.Abs(expected[540] - expected[541]), Is.GreaterThan(1e-4f),
-                "The remembered off-center position is audible after retrigger.");
+            Assert.That(Math.Abs(expected[540]), Is.GreaterThan(1e-4f),
+                "The retrigger must actually produce audio.");
+            if (privateSource)
+                Assert.That(expected[540], Is.EqualTo(expected[541]).Within(1e-6f),
+                    "Private mixdown preserves its child's existing speaker feeds, not outer pan.");
+            else
+                Assert.That(Math.Abs(expected[540] - expected[541]), Is.GreaterThan(1e-4f),
+                    "The remembered off-center position is audible on a direct retrigger.");
+            Assert.That(expected[640], Is.EqualTo(-expected[641]).Within(1e-5f),
+                "Outer surround phase encoding still applies to centered stereo, including private mixdown.");
             Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
             Assert.That(chunks.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
         });
