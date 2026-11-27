@@ -3259,6 +3259,11 @@ public sealed class PlaybackSession
 			MarkLiveDisplacedSources(channel.CurrentVoice);
 		foreach (PlaybackVoice voice in _virtualVoices)
 			MarkLiveDisplacedSources(voice);
+		ReclaimUnmarkedDisplacedFlattenedSources();
+	}
+
+	private void ReclaimUnmarkedDisplacedFlattenedSources()
+	{
 		foreach (var pair in _displacedFlattenedSources)
 			if (!_sourceVolumes.ContainsKey(pair.Key)
 				&& !_liveDisplacedSourceScopes.Contains(pair.Key))
@@ -3516,6 +3521,9 @@ public sealed class PlaybackSession
 			_targetedVirtualOutputFilters.Count == 0 ? null : [];
 		Dictionary<(long Owner, VirtualChannelIdentity Id), float[]>? scopedBuses =
 			_scopedVirtualOutputFilters.Count == 0 ? null : [];
+		bool trackDisplacedSources = _displacedFlattenedSources.Count != 0;
+		if (trackDisplacedSources)
+			_liveDisplacedSourceScopes.Clear();
 
 		try
 		{
@@ -3595,6 +3603,8 @@ public sealed class PlaybackSession
 					channel.AntiClickTail.RenderFrame(outputFrame);
 				}
 
+				if (trackDisplacedSources)
+					MarkLiveDisplacedSources(channel.CurrentVoice);
 				AccumulateHost(pair.Key.Host, channelBuffer, destination,
 					_physicalOutputFilters, physicalBuses, sampleCount);
 			}
@@ -3628,6 +3638,8 @@ public sealed class PlaybackSession
 					channel.AntiClickTail.RenderFrame(outputFrame);
 				}
 
+				if (trackDisplacedSources)
+					MarkLiveDisplacedSources(channel.CurrentVoice);
 				AccumulateHost(pair.Key, channelBuffer, destination,
 					_targetedVirtualOutputFilters, virtualBuses, sampleCount);
 
@@ -3665,6 +3677,8 @@ public sealed class PlaybackSession
 				for (int frame = 0; frame < frameCount; frame++)
 					channel.AntiClickTail.RenderFrame(channelBuffer.Slice(
 						frame * outputChannelCount, outputChannelCount));
+				if (trackDisplacedSources)
+					MarkLiveDisplacedSources(channel.CurrentVoice);
 				AccumulateHost(pair.Key, channelBuffer, destination,
 					_scopedVirtualOutputFilters, scopedBuses, sampleCount);
 				if (channel.CurrentVoice is null
@@ -3720,7 +3734,11 @@ public sealed class PlaybackSession
 				if (finished)
 					RetireDisplacedVoiceAt(index);
 				else
+				{
+					if (trackDisplacedSources)
+						MarkLiveDisplacedSources(voice);
 					index++;
+				}
 			}
 
 			// A host's current voice, owner-scoped child voices and anti-click
@@ -3742,7 +3760,8 @@ public sealed class PlaybackSession
 				destination);
 			ReclaimRetiredPhysicalScopes();
 			ReclaimRetiredVirtualFilters();
-			ReclaimDisplacedFlattenedSources();
+			if (trackDisplacedSources)
+				ReclaimUnmarkedDisplacedFlattenedSources();
 		}
 		finally
 		{
