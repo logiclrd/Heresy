@@ -78,11 +78,8 @@ public sealed class PatternGenerationTracePresentation
         }
         _lineStarts = starts.ToArray();
         BuildLabels();
-        _navigationSpans = trace.Invocations.Where(i => !i.IsReferenceFallback)
-            .Select(i => (SequenceCallsite?)i.SourceSpan)
-            .Concat(trace.Events.Select(e => e.Note.EditorCallsite))
-            .Where(IsValidSpan).Select(s => s!.Value).Distinct()
-            .OrderBy(s => s.Length).ThenByDescending(s => s.Start).ToArray();
+        _navigationSpans = ScriptCompiler.GetPatternInvocationSpans(trace.Source)
+            .Distinct().OrderBy(s => s.Length).ThenByDescending(s => s.Start).ToArray();
     }
 
     public PatternGenerationTraceResult Trace => _trace;
