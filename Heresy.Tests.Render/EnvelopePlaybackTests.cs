@@ -107,6 +107,63 @@ public sealed class EnvelopePlaybackTests
 		Assert.That(state.ActiveFrame, Is.EqualTo(20));
 	}
 
+	[TestCase(0L)]
+	[TestCase(3L)]
+	[TestCase(12L)]
+	public void ReconstructedReleaseKeepsHeldOriginAndConsumesElapsedAge(long elapsed)
+	{
+		EnvelopePlaybackState state = new(
+			new ScriptEnvelopeCurve((t, release) => release < 0 ? t : 1.0 - release,
+				TimeSpan.FromSeconds(1)),
+			startFrame: 100, sampleRate: 10);
+		Assert.That(state.GetValue(101), Is.EqualTo(0.1).Within(1e-12));
+		state.NoteOff(102, elapsed);
+		Assert.Multiple(() =>
+		{
+			Assert.That(state.NoteOffActiveFrame, Is.EqualTo(2));
+			Assert.That(state.GetValue(102), Is.EqualTo(Math.Max(0, 1.0 - elapsed / 10.0)).Within(1e-12));
+			Assert.That(state.ActiveFrame, Is.EqualTo(2 + elapsed));
+			Assert.That(state.GetCompletionFrameExclusive(102),
+				Is.EqualTo(102 + Math.Max(0, 10 - elapsed)));
+			Assert.That(state.GetValue(101), Is.EqualTo(0.1).Within(1e-12));
+			Assert.That(state.ActiveFrame, Is.EqualTo(2 + elapsed));
+		});
+		state.NoteOff(103, 50); // Cannot restart or accelerate an existing release.
+		Assert.That(state.NoteOffActiveFrame, Is.EqualTo(2));
+		Assert.That(state.GetValue(103),
+			Is.EqualTo(Math.Max(0, 1.0 - (elapsed + 1) / 10.0)).Within(1e-12));
+	}
+
+	[Test]
+	public void ReconstructedNodeReleaseRespectsPauseAndOriginalHistoricalValues()
+	{
+		EnvelopePlaybackState state = new(Curve([(0, 1), (1, 0)], 0),
+			startFrame: 100, sampleRate: 10);
+		state.NoteOff(101, 4);
+		Assert.That(state.GetValue(101), Is.EqualTo(0.6).Within(1e-12));
+		state.SetEnabled(103, false);
+		Assert.That(state.GetValue(120), Is.EqualTo(0.4).Within(1e-12));
+		Assert.That(state.GetCompletionFrameExclusive(120), Is.Null);
+		state.SetEnabled(120, true);
+		Assert.That(state.GetValue(122), Is.EqualTo(0.2).Within(1e-12));
+		Assert.That(state.GetCompletionFrameExclusive(122), Is.EqualTo(125));
+		Assert.That(state.GetValue(100), Is.EqualTo(1.0));
+		Assert.That(state.GetValue(125), Is.Zero);
+	}
+
+	[Test]
+	public void ReconstructedReleaseRejectsInvalidAgeBeforeChangingState()
+	{
+		EnvelopePlaybackState state = new(new ActiveFrameEnvelopeCurve(),
+			startFrame: 0, sampleRate: 10);
+		Assert.Throws<ArgumentOutOfRangeException>(() => state.NoteOff(2, -1));
+		Assert.Throws<OverflowException>(() => state.NoteOff(2, long.MaxValue));
+		Assert.That(state.NoteOffActiveFrame, Is.Null);
+		Assert.That(state.GetValue(1), Is.EqualTo(1.0));
+		state.NoteOff(2, 3);
+		Assert.That(state.GetValue(2), Is.EqualTo(5.0));
+	}
+
 	[Test]
 	public void VolumeEnvelopeMultipliesVoiceOutput()
 	{
