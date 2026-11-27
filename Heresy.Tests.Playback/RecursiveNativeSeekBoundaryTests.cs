@@ -428,6 +428,13 @@ public sealed class RecursiveNativeSeekBoundaryTests
 			1 => sequence,
 			_ => AddInstrument(document, sequence),
 		};
+		if (sourceKind == 2)
+		{
+			// The fixture's single C4 tone is silent an octave above C4
+			// unless the selected table entry is explicitly populated.
+			var instrument = (InstrumentDefinition)document.Objects[source];
+			for (int i = 1; i <= 12; i++) instrument.ToneTable.Add(0);
+		}
 		string prefix = relaxed ? "#order relaxed\n" : "";
 		string start = $"Note(0, 0, _O({source.Value}), pitchMultiplier: 2, playbackSpeedMultiplier: 2, mixdown: true);";
 		ObjectId reference = AddScript(document, prefix + start, rows: 5);
