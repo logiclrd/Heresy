@@ -403,18 +403,8 @@ public static class ScriptCompiler
 		string rewritten = relaxed
 			? InstrumentRelaxedPatternCallsites(source, emitters, lowering, diagnostic: true)
 			: InstrumentIncrementalPattern(source, emitters, true, lowering, diagnostic: true);
-		string wrapper = relaxed ? BuildPatternWrapper(className, rewritten)
-			: BuildIncrementalPatternWrapper(className, rewritten);
-		// Only this entry point selects the diagnostic base and constructor.
-		// Retain the fixed wrapper shape and normal canonical authoring audit.
-		wrapper = wrapper.Replace(" : PatternScriptProgram\n",
-			" : global::Heresy.Scripting.Compilation.DiagnosticPatternScriptProgram\n",
-			StringComparison.Ordinal)
-			.Replace("int channelCount)\n", "int channelCount, global::Heresy.Scripting.Compilation.PatternGenerationTraceBudget traceBudget)\n",
-				StringComparison.Ordinal)
-			.Replace(": base(context, output, rowCount, channelCount)",
-				": base(context, output, rowCount, channelCount, traceBudget)",
-				StringComparison.Ordinal);
+		string wrapper = relaxed ? BuildPatternWrapper(className, rewritten, diagnostic: true)
+			: BuildIncrementalPatternWrapper(className, rewritten, diagnostic: true);
 		var compiled = CompileType(source, className, wrapper,
 			typeof(PatternScriptProgram), allowInjectedPlayCallsites: true,
 			incrementalPattern: !relaxed, patternOrder: order.Order,
@@ -1979,8 +1969,17 @@ public static class ScriptCompiler
 		}
 	}
 
+	private static string PatternWrapperBase(bool diagnostic)
+		=> diagnostic ? "global::Heresy.Scripting.Compilation.DiagnosticPatternScriptProgram"
+			: "PatternScriptProgram";
+
+	private static string PatternWrapperExtraParameter(bool diagnostic)
+		=> diagnostic
+			? ", global::Heresy.Scripting.Compilation.PatternGenerationTraceBudget traceBudget"
+			: "";
+
 	private static string BuildIncrementalPatternWrapper(
-		string className, string source)
+		string className, string source, bool diagnostic = false)
 		=> $$"""
 			using System;
 			using System.Collections.Generic;
@@ -1990,14 +1989,14 @@ public static class ScriptCompiler
 			using Heresy.Scripting.Runtime;
 			using static Heresy.Scripting.Runtime.ScriptPitchMath;
 
-			public sealed class {{className}} : PatternScriptProgram
+			public sealed class {{className}} : {{PatternWrapperBase(diagnostic)}}
 			{
 				public {{className}}(
 					SequencingContext context,
 					INoteReceiver output,
 					double rowCount,
-					int channelCount)
-					: base(context, output, rowCount, channelCount)
+					int channelCount{{PatternWrapperExtraParameter(diagnostic)}})
+					: base(context, output, rowCount, channelCount{{(diagnostic ? ", traceBudget" : "")}})
 				{
 				}
 
@@ -2017,7 +2016,7 @@ public static class ScriptCompiler
 
 	private static string BuildPatternWrapper(
 		string className,
-		string source)
+		string source, bool diagnostic = false)
 		=> $$"""
 			using System;
 			using System.Collections.Generic;
@@ -2027,14 +2026,14 @@ public static class ScriptCompiler
 			using Heresy.Scripting.Runtime;
 			using static Heresy.Scripting.Runtime.ScriptPitchMath;
 
-			public sealed class {{className}} : PatternScriptProgram
+			public sealed class {{className}} : {{PatternWrapperBase(diagnostic)}}
 			{
 				public {{className}}(
 					SequencingContext context,
 					INoteReceiver output,
 					double rowCount,
-					int channelCount)
-					: base(context, output, rowCount, channelCount)
+					int channelCount{{PatternWrapperExtraParameter(diagnostic)}})
+					: base(context, output, rowCount, channelCount{{(diagnostic ? ", traceBudget" : "")}})
 				{
 				}
 
