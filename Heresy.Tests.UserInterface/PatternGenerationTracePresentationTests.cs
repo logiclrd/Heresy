@@ -108,6 +108,25 @@ public sealed class PatternGenerationTracePresentationTests
             || r.Kind == PatternTraceRowKind.GroupOperation), Is.False);
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void DirectGroupTransferFollowsStartInOriginalProjection(bool relaxed)
+    {
+        var model = Model((relaxed ? "#order relaxed\n" : "") + """
+            using var group = NewNoteGroup();
+            group += NoteVirtual(0, _O(17));
+            group.Off(4);
+            """);
+        Assert.That(model.Trace.Status, Is.EqualTo(PatternGenerationTraceStatus.Completed), model.Trace.Detail);
+        Assert.That(model.Rows.Select(r => r.Kind), Is.EqualTo(new[] {
+            PatternTraceRowKind.GroupCreation, PatternTraceRowKind.Event,
+            PatternTraceRowKind.Transfer, PatternTraceRowKind.GroupOperation,
+            PatternTraceRowKind.Event, PatternTraceRowKind.Status }));
+        model.SetOrder(PatternTraceOrder.PlaybackOrderByChannel);
+        var header = model.Rows.Single(r => r.Kind == PatternTraceRowKind.ChannelHeader);
+        Assert.That(header.SourceSpan, Is.EqualTo(model.Trace.GetVirtualOrigins().Single().CreationSpan));
+    }
+
     [Test]
     public void NavigationUsesCanonicalSnapshotAndInnermostInvocationEvenIfUnexecuted()
     {
