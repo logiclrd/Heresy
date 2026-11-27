@@ -608,6 +608,47 @@ public sealed class PlaybackSessionTests
 		Assert.That(after[64], Is.Zero.Within(1e-6f));
 	}
 
+	[Test]
+	public void LogicalPastFadeUsesOrdinaryFadeDurationAfterProducerRetires()
+	{
+		ObjectId id = (ObjectId)50U;
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((id, false, new ConfiguredSustainSound(
+				noteFadeDuration: TimeSpan.FromMilliseconds(200),
+				newNoteFadeDuration: TimeSpan.FromMilliseconds(40)))));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new BeginFlattenedSourceVolumeCommand(1, 1.0)]);
+		StartNoteCommand child = new(id) { ParentSourceScopes = new long[] { 1 } };
+		session.ApplyScopedEvent(10, ChannelTarget.Physical(0),
+			[child, new SetCurrentVoiceDisplacementActionCommand(NoteDisplacementAction.Continue)],
+			physicalPlaybackOwner: 1);
+		session.ApplyScopedEvent(10, ChannelTarget.Physical(0), [child], physicalPlaybackOwner: 1);
+		session.ApplyScopedEvent(10, ChannelTarget.Virtual(7), [child]);
+		session.Render(0, 1, new float[1]);
+		session.RetirePhysicalScope(1);
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new ControlFlattenedSourceCommand(1, NoteDisplacementAction.Continue),
+			 new BeginFlattenedSourceVolumeCommand(2, 1.0)]);
+		session.ApplyScopedEvent(20, ChannelTarget.Physical(0),
+			[new StartNoteCommand(id) { ParentSourceScopes = new long[] { 2 } }],
+			physicalPlaybackOwner: 2);
+		session.ApplyScopedEvent(30, ChannelTarget.Physical(0),
+			[new StartNoteCommand(id)], physicalPlaybackOwner: 3);
+		Assert.That(session.RetainedDisplacedFlattenedSourceCount, Is.EqualTo(1));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new ApplyPastNoteActionCommand(TrackerPastNoteAction.Fade)]);
+		Assert.That(session.GetChannelState(0, 1).CurrentVoice!.FadeEndFrameExclusive, Is.EqualTo(201L));
+		Assert.That(session.VirtualVoices[0].FadeEndFrameExclusive, Is.EqualTo(201L));
+		Assert.That(session.GetChannelState(0, 2).CurrentVoice!.IsNoteFadeRequested, Is.False);
+		Assert.That(session.GetChannelState(0, 3).CurrentVoice!.IsNoteFadeRequested, Is.False);
+		float[] pcm = new float[225];
+		session.Render(1, pcm.Length, pcm);
+		Assert.That(pcm[0], Is.EqualTo(5f).Within(1e-6f));
+		Assert.That(pcm[100], Is.EqualTo(3.5f).Within(1e-5f));
+		Assert.That(pcm[200], Is.EqualTo(2f).Within(1e-6f));
+		Assert.That(session.RetainedDisplacedFlattenedSourceCount, Is.Zero);
+	}
+
 	[TestCase(false, 201L)]
 	[TestCase(true, 41L)]
 	public void PrivateSessionFadeDistinguishesS72FromS76Durations(
