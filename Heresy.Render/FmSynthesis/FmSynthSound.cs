@@ -2252,6 +2252,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		newState.SourceFrameOffset = oldState.SourceFrameOffset;
 		newState.Position = oldState.Position;
 		newState.NoteOffTime = oldState.NoteOffTime;
+		newState.ElapsedReleaseFrames = oldState.ElapsedReleaseFrames;
 		newState.PitchTrajectory.SeedPreparedStreamingPosition(newFrame, position);
 		replacement.RetainOriginalFrequencyBasis(original);
 		replacement.RetainEnvelopeClock(original, oldFrame, newFrame);
@@ -2283,6 +2284,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			?? throw new InvalidOperationException(
 					"Multi onset migration requires a prepared mono child bus.");
 		created.NoteOffTime = previous.NoteOffTime;
+		created.ElapsedReleaseFrames = previous.ElapsedReleaseFrames;
 		created.InheritedAudioReleaseEnd = previous.InheritedAudioReleaseEnd;
 		InitializeMultiOnset(multi, parent.NoiseSeed, index, replacement,
 			created.PitchMultiplier, created.PlaybackSpeedMultiplier,
@@ -3075,13 +3077,23 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| curves.Filter?.HasSustainLoop == true;
 	}
 
+	// Inherited release age advances only envelope/release coordinates,
+	// never the oscillator, noise, native sample or source render clocks.
+	private static long ReleaseCurveFrame(long frame, long? off, long elapsed)
+		=> elapsed != 0 && off.HasValue && frame >= off.Value
+			? checked(frame + elapsed) : frame;
+
+	private static long? ReleaseCurveEnd(long? end, long off, long elapsed)
+		=> end.HasValue && elapsed != 0
+			? Math.Max(off, end.Value - elapsed) : end;
+
 	/// <summary>Latest known completion of all active sustain loops in
 	/// this subtree. Null is an unknown/unbounded release, not silence.
 	/// The child states and EOFs were prepared before this query.</summary>
 	private long? GetReleasingSubtreeEnd(
 		FmSynthState state, long offFrame, int sampleRate)
 	{
-		long latest = checked(offFrame + 1);
+		long latest = checked(offFrame + (state.ElapsedReleaseFrames == 0 ? 1 : 0));
 		bool unknown = false;
 		void Include(long? end)
 		{
@@ -3092,18 +3104,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			IEnvelopeCurve? nodeCurve = _nodes[i].Envelope;
 			if (nodeCurve?.HasSustainLoop == true)
-				Include(nodeCurve.GetEndActiveFrameExclusiveAfterNoteOff(
-					offFrame, sampleRate));
+				Include(ReleaseCurveEnd(nodeCurve.GetEndActiveFrameExclusiveAfterNoteOff(
+					offFrame, sampleRate), offFrame, state.ElapsedReleaseFrames));
 			if (state.Sources[i] is { } source)
 			{
 				EnvelopeConfigurationSnapshot curves =
 					source.Invocation.Configuration.Envelopes;
 				long envelopeOff = checked(offFrame + source.EnvelopeFrameOffset);
+				long elapsed = state.ElapsedReleaseFrames;
 				void IncludeSource(IEnvelopeCurve? curve)
 				{
 					if (curve?.HasSustainLoop != true) return;
-					long? end = curve.GetEndActiveFrameExclusiveAfterNoteOff(
-						envelopeOff, sampleRate);
+					long? end = ReleaseCurveEnd(curve.GetEndActiveFrameExclusiveAfterNoteOff(
+						envelopeOff, sampleRate), envelopeOff, elapsed);
 					Include(end.HasValue
 						? checked(end.Value - source.EnvelopeFrameOffset) : null);
 				}
@@ -3487,7 +3500,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long? end = state.HasReleasingSubtree
 			? state.ReleasingSubtreeEnd
 			: state.NoteOffDisposition == NoteOffDisposition.Indefinite
-				? null : checked(offFrame + 1);
+				? null : checked(offFrame + (state.ElapsedReleaseFrames == 0 ? 1 : 0));
 		if (state.HasReleasingSubtree && !end.HasValue)
 			return null; // An active release is not bounded yet.
 		if (state.InheritedAudioReleaseEnd is long inherited)
@@ -3549,10 +3562,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					: released.HasValue
 						? !state.HasReleasingSubtree
 							&& state.NoteOffDisposition == NoteOffDisposition.Definite
-							? checked(noteOffFrame + 1)
+							? checked(noteOffFrame + (state.ElapsedReleaseFrames == 0 ? 1 : 0))
 							: node.Envelope.IsZeroAfterCompletion
-							? node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
-								noteOffFrame, sampleRate)
+							? ReleaseCurveEnd(node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
+								noteOffFrame, sampleRate), noteOffFrame, state.ElapsedReleaseFrames)
 							: GetIndependentAudioReleaseEnd(index,
 								noteOffFrame, sampleRate, state)
 						: node.Envelope.IsZeroAfterCompletion
@@ -4024,7 +4037,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					FmEnvelopeNode =>
 						EvaluateEnvelope(
 							compiled.Envelope,
-							frame,
+							ReleaseCurveFrame(frame, noteOffFrame, state.ElapsedReleaseFrames),
 							context.Configuration.SampleRate,
 							noteOffFrame),
 
@@ -4253,6 +4266,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			? off - TimeSpan.FromSeconds((double)voice.StartFrame / sampleRate)
 				+ TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
 			: null;
+		child.ElapsedReleaseFrames = state.ElapsedReleaseFrames;
 		if (child is FmSynthState inner)
 			inner.InheritedAudioReleaseEnd = externalEnd is long releaseEnd
 				? releaseEnd >= long.MaxValue - voice.SkipFrames
@@ -4410,10 +4424,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long? released = envelopeNoteOffFrame.HasValue
 			&& envelopeFrame >= envelopeNoteOffFrame.Value
 			? envelopeNoteOffFrame : null;
+		long curveFrame = ReleaseCurveFrame(frame, noteOffFrame, state.ElapsedReleaseFrames);
+		long volumeFrame = ReleaseCurveFrame(envelopeFrame, released, state.ElapsedReleaseFrames);
 		// Pitch envelopes are in octaves, as in PlaybackVoice.
 		if (voice.Invocation.Configuration.Envelopes.Pitch is { } pitchEnvelope)
 			multiplier *= Math.Pow(2.0,
-				pitchEnvelope.GetValue(frame, sampleRate, released));
+				pitchEnvelope.GetValue(curveFrame, sampleRate, released));
 		double rate = outer * multiplier;
 		if (!double.IsFinite(rate))
 			throw new InvalidOperationException(
@@ -4432,7 +4448,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				// A graph node is scalar: spatialize only on this isolated
 				// stereo bus, then fold it back to mono before graph mixing.
 				double pan = Math.Clamp(panEnvelope.GetValue(
-					frame, sampleRate, released), -1.0, 1.0);
+					curveFrame, sampleRate, released), -1.0, 1.0);
 				voice.Invocation.State.Position = new Vector3((float)pan, 0, 0);
 				Span<float> stereo = stackalloc float[2];
 				voice.Sound.Render(state.StereoChildContext!,
@@ -4493,14 +4509,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// The legacy IT Filter Envelope is an absolute normalized
 			// cutoff, independent of the serial tone-Filter layers.
 			double cutoff = Math.Clamp(filterEnvelope.GetValue(
-				frame, sampleRate, released), 0.0, 1.0);
+				curveFrame, sampleRate, released), 0.0, 1.0);
 			voice.FilterEnvelopeState!.SetParameters(
 				new ResonantFilterParameters(cutoff, 0));
 			voice.FilterEnvelopeState.ProcessFrame(mono);
 		}
 		if (voice.ActiveVolumeEnvelope is not null)
 			mono[0] *= (float)voice.EvaluateVolume(
-				frame, envelopeFrame, sampleRate, released);
+				frame, volumeFrame, sampleRate, released);
 		return mono[0];
 	}
 
@@ -4572,6 +4588,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			: null;
 		if (voice.Invocation.State.NoteOffTime != childNoteOff)
 			voice.Invocation.State.NoteOffTime = childNoteOff;
+		voice.Invocation.State.ElapsedReleaseFrames = state.ElapsedReleaseFrames;
 		long? childEnd = voice.Sound.GetEndFrameExclusive(
 			state.MonoContext!, voice.Invocation.State);
 		if (voice.Invocation.State.NaturalEndFrameExclusive is long natural)
@@ -4594,9 +4611,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			long off = checked(FrameTime.Ceiling(childNoteOff!.Value,
 				context.Configuration.SampleRate) + voice.EnvelopeFrameOffset);
-			long? finished = voice.ActiveVolumeEnvelope
+			long? finished = ReleaseCurveEnd(voice.ActiveVolumeEnvelope
 				.GetEndActiveFrameExclusiveAfterNoteOff(off,
-					context.Configuration.SampleRate);
+					context.Configuration.SampleRate), off, state.ElapsedReleaseFrames);
 			if (finished.HasValue)
 			{
 				long silence = checked(finished.Value - voice.EnvelopeFrameOffset
