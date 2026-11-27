@@ -81,6 +81,9 @@ public sealed class PatternGenerationTraceTests
         Assert.That(first.Status, Is.EqualTo(PatternGenerationTraceStatus.Failed));
         Assert.That(first.Detail, Does.Contain("ArgumentOutOfRangeException"));
         Assert.That(first.Events.Count, Is.EqualTo(1));
+        Assert.That(first.FailureContext?.IsInvocationFailure, Is.True);
+        var failure = first.FailureContext!;
+        Assert.That(source.Substring(failure.SourceSpan.Start, failure.SourceSpan.Length), Is.EqualTo("Off(17, 0)"));
         Assert.That(second.Status, Is.EqualTo(first.Status));
         AssertMusicalParity(first.Events.Select(e => e.Note).ToArray(), second.Events.Select(e => e.Note).ToArray());
         if (relaxed)
@@ -89,6 +92,48 @@ public sealed class PatternGenerationTraceTests
             using var iterator = playback.Program!.EnumerateRawSteps(new SequencingContext()).GetEnumerator();
             Assert.Throws<ArgumentOutOfRangeException>(() => iterator.MoveNext());
         }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void NonHelperFailureReportsLastKnownContextWithoutClaimingExactLocation(bool relaxed)
+    {
+        string source = (relaxed ? "#order relaxed\n" : "") + """
+            Note(0, 0, _O(17));
+            int zero = 0;
+            int result = 1 / zero;
+            """;
+        var trace = Compile(source).Capture();
+        Assert.That(trace.Status, Is.EqualTo(PatternGenerationTraceStatus.Failed));
+        Assert.That(trace.Detail, Does.Contain("DivideByZeroException"));
+        Assert.That(trace.FailureContext?.IsInvocationFailure, Is.False);
+        var context = trace.FailureContext!;
+        Assert.That(source.Substring(context.SourceSpan.Start, context.SourceSpan.Length), Is.EqualTo("Note(0, 0, _O(17))"));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void VirtualOriginUsesAllocationNotRetriggerAndDistinguishesSlotReuse(bool relaxed)
+    {
+        string source = (relaxed ? "#order relaxed\n" : "") + """
+            for (int i = 0; i < 2; i++)
+            {
+                using var note = NoteVirtual(i * 4, _O(17));
+                note.Note(i * 4 + 1, _O(18));
+                note.Off(i * 4 + 2);
+            }
+            """;
+        var trace = Compile(source).Capture();
+        Assert.That(trace.Status, Is.EqualTo(PatternGenerationTraceStatus.Completed), trace.Detail);
+        var origins = trace.GetVirtualOrigins();
+        Assert.That(origins.Count, Is.EqualTo(2));
+        Assert.That(origins.Select(o => o.Channel).Distinct().Count(), Is.EqualTo(2));
+        Assert.That(origins.Select(o => o.Channel.Slot).Distinct().Count(), Is.EqualTo(1));
+        Assert.That(origins.Select(o => o.FirstOccurrenceId), Is.EqualTo(new long[] { 0, 3 }));
+        Assert.That(origins.Select(o => source.Substring(o.CreationSpan!.Value.Start, o.CreationSpan.Value.Length)),
+            Is.All.EqualTo("NoteVirtual(i * 4, _O(17))"));
+        Assert.That(origins.Select(o => o.EnclosingScopeId).Distinct().Count(), Is.EqualTo(2));
+        Assert.That(trace.FailureContext, Is.Null);
     }
 
     [TestCase(false)]
