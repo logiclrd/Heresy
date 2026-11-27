@@ -25,13 +25,13 @@ public sealed record PatternGenerationTraceEvent(NoteEvent Note, bool DroppedInS
 }
 
 public sealed record PatternGenerationTraceInvocation(long Id, SequenceCallsite SourceSpan,
-    string Method, long? EnclosingScopeId, long? ParentInvocationId, long? GroupId);
+    string Method, long? EnclosingScopeId, long? ParentInvocationId, long? GroupId, long AtTraceOrdinal);
 
 public sealed record PatternGenerationTraceGroup(long Id, SequenceCallsite? CreationSpan,
-    long? EnclosingScopeId);
+    long? EnclosingScopeId, long AtTraceOrdinal);
 
 public sealed record PatternGenerationTraceTransfer(SequenceCallsite SourceSpan,
-    long GroupId, VirtualChannelIdentity? Channel, bool Succeeded, long? EnclosingScopeId);
+    long GroupId, VirtualChannelIdentity? Channel, bool Succeeded, long? EnclosingScopeId, long AtTraceOrdinal);
 
 public enum PatternGenerationTraceMarkerKind
 {
@@ -96,7 +96,7 @@ public sealed class PatternGenerationTraceBudget
         ReserveRecords(1);
         id = _groups.Count;
         _groupIds.Add(group, id);
-        _groups.Add(new(id, span, CurrentScopeId));
+        _groups.Add(new(id, span, CurrentScopeId, _nextOrdinal));
         return id;
     }
 
@@ -105,7 +105,7 @@ public sealed class PatternGenerationTraceBudget
         long? groupId = group is null ? null : RegisterGroup(group, null);
         ReserveRecords(1);
         var record = new PatternGenerationTraceInvocation(_invocations.Count, span, method,
-            CurrentScopeId, CurrentInvocationId, groupId);
+            CurrentScopeId, CurrentInvocationId, groupId, _nextOrdinal);
         _invocations.Add(record);
         var scope = new InvocationScope(this, _invocation, record);
         _invocation = scope;
@@ -116,7 +116,7 @@ public sealed class PatternGenerationTraceBudget
 
     internal void RecordTransfer(SequenceCallsite span, long groupId,
         VirtualChannelIdentity? channel, bool succeeded)
-        => _transfers.Add(new(span, groupId, channel, succeeded, CurrentScopeId));
+        => _transfers.Add(new(span, groupId, channel, succeeded, CurrentScopeId, _nextOrdinal));
 
     private sealed class InvocationScope(PatternGenerationTraceBudget owner,
         InvocationScope? parent, PatternGenerationTraceInvocation record) : IDisposable
@@ -222,6 +222,21 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
     protected IDisposable __HeresyEnterTraceInvocation(SequenceCallsite span, string method, NoteGroup? group)
         => _traceBudget.EnterInvocation(span, method, group);
 
+    // Delegate receivers/arguments have already been evaluated by the
+    // typed adapter. A single actual bound target is authoritative;
+    // never attribute a multicast delegate to its last target alone.
+    protected IDisposable __HeresyEnterTraceDelegate(SequenceCallsite span, Delegate target)
+    {
+        var method = target.Method;
+        bool single = target.GetInvocationList().Length == 1;
+        NoteGroup? group = single ? target.Target as NoteGroup : null;
+        string name = single && (method.DeclaringType == typeof(NoteGroup)
+            || method.DeclaringType == typeof(VirtualNote)
+            || method.DeclaringType == typeof(PatternScriptProgram))
+            ? method.Name : "Delegate";
+        return _traceBudget.EnterInvocation(span, name, group);
+    }
+
     protected void __HeresyBeginTraceInvocation(SequenceCallsite span, string method, NoteGroup? group)
     {
         if (_pendingInvocation is not null)
@@ -247,12 +262,12 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
     {
         // Preserve evaluation order: receiver and note arguments have
         // already evaluated, including a possible pending strict start.
-        ArgumentNullException.ThrowIfNull(group);
+        // An invalid null receiver must fail as the actual instance operator does.
+        int before = group.DiagnosticLeaseCount;
         long groupId = _traceBudget.RegisterGroup(group, null);
         _traceBudget.ReserveTransfer();
         VirtualChannelIdentity? identity = note is not null
             && note.TryGetTransferIdentity(this, out var channel) ? channel : null;
-        int before = group.DiagnosticLeaseCount;
         group += note!;
         _traceBudget.RecordTransfer(span, groupId, identity, group.DiagnosticLeaseCount > before);
     }
