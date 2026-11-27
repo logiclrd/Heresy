@@ -735,6 +735,37 @@ public sealed class RecursiveNativeSeekBoundaryTests
 	}
 
 	[Test]
+	public void CanceledPrivateReleaseSeekDoesNotReplaceTheStoppedChild()
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId instrument = AddReleaseInstrument(document, sample, 200);
+		ObjectId child = AddPattern(document, instrument, rows: 8);
+		ObjectId parent = AddScript(document, $"""
+			Note(0, 0, _O({child.Value}), mixdown: true);
+			Off(0.5, 0);
+			""", rows: 5);
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono()).Create(document, parent);
+		float[] pcm = new float[100];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[99], Is.GreaterThan(0.01f),
+			"the original release must still be audible");
+		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
+		PlaybackSession stopped = ChildSession(outer);
+		long before = stopped.NextFrame;
+		plan.SequencingContext.Cancellation.RequestStop();
+		Assert.Throws<OperationCanceledException>(() =>
+			((IPlaybackSeekableSound)outer.Sound).SeekFrame(new RenderContext(Mono()),
+				outer.SoundState, 100, 240, relative: false));
+		Assert.Multiple(() =>
+		{
+			Assert.That(ChildSession(outer), Is.SameAs(stopped));
+			Assert.That(stopped.NextFrame, Is.EqualTo(before));
+			Assert.That(stopped.InputEnded, Is.True);
+			Assert.That(plan.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.Zero);
+		});
+	}
+
+	[Test]
 	public void PrivateSeekAfterExplicitReleaseCannotRestartProducer()
 	{
 		SongDocument document = CreateDocument(out ObjectId sample);
