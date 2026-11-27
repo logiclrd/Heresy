@@ -276,3 +276,41 @@ the transitional state. New independent ramp tests exercise all four
 operations on physical/handle/group targets in both ordering modes,
 nonunit rate, pitch trajectory, finite end and owner forward-loop examples.
 Raw legacy offset regression remains intact. CI required; no local test run.
+
+## Slice 2 — private recursive implementation
+
+Private Pattern/Sequence (including Instrument-selected recursive terminal
+sounds) implements IPlaybackSeekableSound. Time conversion uses the private
+render sample rate, which already incorporates the instantiated tracker
+speed; pitch does not change timeline duration. Seconds round by ceiling
+on that native grid, including signed deltas. Relative targets clamp to
+zero with Int128 intermediate arithmetic. Each nontrivial seek reconstructs
+a fresh private generator and session immediately at the event deadline,
+prerenders/discards to the target in existing 256-frame scratch blocks and
+binds the new child-to-outer map. This deliberately also rebuilds on forward
+seeks: reusing an already integrated child pitch history across a changed
+parent-time mapping is not equivalent to deterministic reconstruction.
+A same-target or zero relative seek avoids replay. No PCM/event journal.
+
+Preroll uses the instantaneous outer pitch at the seek deadline (frozen
+for the skipped prefix); from the target onward it reads the live outer
+pitch at the anchor-mapped parent note age. The outer voice, filter
+histories, age and identity are unchanged. This is an explicit proposed
+policy for unrendered child history rather than an attempt to invent a
+past outer pitch trajectory. Natural end and cut map back through the
+anchor; lifecycle advancement uses the active child position. Seeking
+far past a finite end maps completion to the deadline and does not revive
+the detached voice. Explicit outer Off/Fade/Cut irrevocably stops its
+producer: subsequent private seeks are ignored rather than recreating
+released descendants. Native Oxx/Qxy retain their original code paths.
+Legacy offset assignments clear the anchor. Replay hints use the existing
+bounded diagnostic sink with the actual native target, including zero.
+
+New tests: six strict/relaxed Pattern/Sequence/Instrument cases compare
+four seek operations with slices of an independently rendered, speed-scaled
+reference; two independently started group-member cases assert synchronized
+PCM and cut at the outer deadline; a release no-resurrection case and a
+finite-end/sibling isolation case. Slice 3 still needs inherited pitch,
+recursive descendants, editor/export integration and additional stress.
+No local execution; exact-head CI required. Explicit owner review of the
+preroll/release choices is still needed before merge.

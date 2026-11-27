@@ -409,6 +409,170 @@ public sealed class RecursiveNativeSeekBoundaryTests
 			.GetProperty("Session", BindingFlags.Instance | BindingFlags.Public)!
 			.GetValue(parent.Sound)!;
 
+	[TestCase(false, 0)]
+	[TestCase(true, 0)]
+	[TestCase(false, 1)]
+	[TestCase(true, 1)]
+	[TestCase(false, 2)]
+	[TestCase(true, 2)]
+	public void ScriptAbsoluteAndRelativePrivateSeeksMatchIndependentTimeline(
+		bool relaxed, int sourceKind)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId first = AddPattern(document, sample, rows: 2);
+		ObjectId second = AddPattern(document, sample, rows: 5);
+		ObjectId sequence = AddSequence(document, first, second);
+		ObjectId source = sourceKind switch
+		{
+			0 => second,
+			1 => sequence,
+			_ => AddInstrument(document, sequence),
+		};
+		string prefix = relaxed ? "#order relaxed\n" : "";
+		string start = $"Note(0, 0, _O({source.Value}), pitchMultiplier: 2, playbackSpeedMultiplier: 2, mixdown: true);";
+		ObjectId reference = AddScript(document, prefix + start, rows: 5);
+		string seekScript = sourceKind == 0
+			? start + "\n" + """
+				Seek(0.25, 0, 0.15);
+				SourceFrameRelative(0.5, 0, -100);
+				SeekRelative(0.75, 0, -0.05);
+				SourceFrame(1, 0, 0);
+				"""
+			: $"""
+				using var note = NoteVirtual(0, _O({source.Value}), pitchMultiplier: 2, playbackSpeedMultiplier: 2);
+				note.Seek(0.25, 0.15);
+				note.SourceFrameRelative(0.5, -100);
+				note.SeekRelative(0.75, -0.05);
+				note.SourceFrame(1, 0);
+				""";
+		ObjectId sought = AddScript(document, prefix + seekScript, rows: 5);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using var plain = factory.Create(document, reference);
+		using var whole = factory.Create(document, sought);
+		using var split = factory.Create(document, sought);
+		float[] child = new float[200], expected = new float[150], actual = new float[150], chunked = new float[150];
+		plain.Source.Render(child.Length, child);
+		// Independent unmodified, speed-scaled child PCM ranges. No
+		// dependence on the seek implementation for the expected targets.
+		child.AsSpan(0, 30).CopyTo(expected.AsSpan(0, 30));
+		child.AsSpan(150, 30).CopyTo(expected.AsSpan(30, 30));
+		child.AsSpan(80, 30).CopyTo(expected.AsSpan(60, 30));
+		child.AsSpan(60, 30).CopyTo(expected.AsSpan(90, 30));
+		child.AsSpan(0, 30).CopyTo(expected.AsSpan(120, 30));
+		whole.Source.Render(actual.Length, actual);
+		for (int i = 0; i < chunked.Length;)
+		{
+			int n = Math.Min(17, chunked.Length - i);
+			split.Source.Render(n, chunked.AsSpan(i, n));
+			i += n;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+			Assert.That(chunked, Is.EqualTo(expected).Within(1e-6f));
+			Assert.That(actual[31], Is.GreaterThan(0.01f));
+			Assert.That(actual[120], Is.Zero.Within(1e-6f));
+			Assert.That(actual[121], Is.GreaterThan(0f));
+			Assert.That(whole.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(4));
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void PrivateGroupSeeksSynchronizeIndependentMembersAndCutAtOuterDeadline(bool relaxed)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddPattern(document, sample, rows: 5);
+		string prefix = relaxed ? "#order relaxed\n" : "";
+		ObjectId source = AddScript(document, prefix + $"Note(0, 0, _O({child.Value}), mixdown: true);", rows: 5);
+		ObjectId group = AddScript(document, prefix + $"""
+			using var notes = NewNoteGroup();
+			notes += NoteVirtual(0, _O({child.Value}));
+			notes += NoteVirtual(0.25, _O({child.Value}));
+			notes.SourceFrame(0.5, 80);
+			notes.SourceFrameRelative(0.75, -100);
+			notes.Cut(1);
+			""", rows: 5);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using var plain = factory.Create(document, source);
+		using var actual = factory.Create(document, group);
+		float[] reference = new float[160], pcm = new float[480];
+		plain.Source.Render(reference.Length, reference);
+		actual.Source.Render(120, pcm.AsSpan(0, 120));
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm.AsSpan(0, 30).ToArray(), Is.EqualTo(reference.AsSpan(0, 30).ToArray()).Within(1e-6f));
+			for (int i = 30; i < 60; i++)
+				Assert.That(pcm[i], Is.EqualTo(reference[i] + reference[i - 30]).Within(1e-6f));
+			for (int i = 60; i < 90; i++)
+				Assert.That(pcm[i], Is.EqualTo(2 * reference[80 + i - 60]).Within(1e-6f));
+			for (int i = 90; i < 120; i++)
+				Assert.That(pcm[i], Is.EqualTo(2 * reference[10 + i - 90]).Within(1e-6f));
+		});
+		actual.Source.Render(360, pcm.AsSpan(120));
+		Assert.That(pcm[^1], Is.Zero.Within(1e-6f));
+		Assert.That(actual.Session.VirtualVoices, Is.Empty);
+		Assert.That(actual.Session.RetainedScopedVirtualChannelCount, Is.Zero);
+	}
+
+	[Test]
+	public void PrivateSeekAfterExplicitReleaseCannotRestartProducer()
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({sample.Value}));
+			Note(2, 0, _O({sample.Value}), pitchMultiplier: 2);
+			""", rows: 5);
+		string before = $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			note.SourceFrame(0.25, 80);
+			note.Off(0.5);
+			""";
+		ObjectId reference = AddScript(document, before, rows: 5);
+		ObjectId sought = AddScript(document, before + "\nnote.SourceFrame(1, 0);", rows: 5);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using var expected = factory.Create(document, reference);
+		using var actual = factory.Create(document, sought);
+		float[] a = new float[480], b = new float[480];
+		expected.Source.Render(a.Length, a);
+		actual.Source.Render(b.Length, b);
+		Assert.That(b, Is.EqualTo(a).Within(1e-6f));
+		Assert.That(actual.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(1));
+	}
+
+	[Test]
+	public void PrivateSeekFarPastFiniteEndDoesNotAffectSibling()
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({sample.Value}));
+			Cut(1, 0);
+			""", rows: 2);
+		ObjectId sought = AddScript(document, $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			using var sibling = NoteVirtual(0, _O({sample.Value}));
+			note.SourceFrame(0.5, long.MaxValue);
+			note.SourceFrame(1, 0);
+			""", rows: 5);
+		ObjectId reference = AddScript(document, $"Note(0, 0, _O({sample.Value}));", rows: 5);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using var plain = factory.Create(document, reference);
+		using var actual = factory.Create(document, sought);
+		float[] a = new float[240], b = new float[240];
+		plain.Source.Render(a.Length, a);
+		actual.Source.Render(b.Length, b);
+		Assert.That(b.AsSpan(60).ToArray(), Is.EqualTo(a.AsSpan(60).ToArray()).Within(1e-6f));
+		Assert.That(actual.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(1));
+	}
+
+	private static ObjectId AddScript(SongDocument document, string code, int rows)
+	{
+		ObjectId id = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(id, "Private seek")
+		{ RowCount = rows, ChannelCount = 1, Source = code });
+		return id;
+	}
+
 	private static SongDocument CreateDocument(out ObjectId sampleId)
 	{
 		SongDocument document = new();

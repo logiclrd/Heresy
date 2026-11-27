@@ -168,14 +168,14 @@ VirtualNote instance methods (shown on a local named note):
     Set normalized note volume [0,1].
   note.SourceFrame(double row, long sourceFrameOffset,
                    double timeOffsetSeconds = 0.0)
-    Absolute Sample playhead in native frames (nonnegative).
+    Absolute playhead in native source frames (nonnegative).
   note.SourceFrameRelative(double row, long deltaFrames,
                            double timeOffsetSeconds = 0.0)
   note.Seek(double row, double playbackSeconds, double timeOffsetSeconds = 0.0)
   note.SeekRelative(double row, double deltaSeconds, double timeOffsetSeconds = 0.0)
     Sample time converts at the current playback rate; relative deltas are signed.
     Relative targets clamp to zero; absolute seeks replace the previous target.
-    Private recursive seek semantics are still being migrated; unsupported sources ignore seeks.
+    Private Pattern/Sequence seeks use the instantiated child timeline and\n    may reconstruct/replay it. After outer release/fade, private seeks are ignored.\n    Unsupported sources ignore seeks.
   note.Pan(double row, double x, double y = 0, double z = 0,
            double timeOffsetSeconds = 0.0)
   note.Surround(double row, bool enabled, double timeOffsetSeconds = 0.0)
@@ -253,7 +253,7 @@ PHYSICAL-CHANNEL CONTROLS
     For a flattened source, controls the logical source's live gain.
   SourceFrame(double row, int channel, long sourceFrameOffset,
               double timeOffsetSeconds = 0.0)
-    Absolute Sample playhead in native frames (nonnegative).
+    Absolute playhead in native source frames (nonnegative).
   SourceFrameRelative(double row, int channel, long deltaFrames,
                       double timeOffsetSeconds = 0.0)
     Move from the current unwrapped playhead; signed delta, clamped at zero.
@@ -266,7 +266,7 @@ PHYSICAL-CHANNEL CONTROLS
     A former flattened source stops producing and its descendants are controlled.
   Seek(double row, int channel, double playbackSeconds,
        double timeOffsetSeconds = 0.0)
-    Absolute Sample playback time converted at the instantaneous rate.
+    Absolute playback time: Sample uses instantaneous rate; private uses its clock.
   SeekRelative(double row, int channel, double deltaSeconds,
                double timeOffsetSeconds = 0.0)
     Move the playhead by signed time at the instantaneous rate.

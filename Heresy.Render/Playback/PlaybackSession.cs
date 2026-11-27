@@ -1976,20 +1976,6 @@ public sealed class PlaybackSession
 			return;
 		}
 
-		// Transitional compatibility until the private recursive slice:
-		// retain its previous absolute-offset behavior, not relative seeks.
-		// Procedural/non-seekable sounds have no playhead capability.
-		if (voice.Sound is not ISourceFrameSeekableSound) return;
-		switch (command)
-		{
-			case SeekPlaybackTimeCommand { Relative: false } time:
-				voice.SoundState.PlaybackOffset = time.Time;
-				break;
-			case SeekSourceFrameCommand { Relative: false } source:
-				ApplyNativeSourceFrameOffset(channel,
-					new SetSourceFrameOffsetCommand(source.Frame), "Script native offset");
-				break;
-		}
 	}
 
 	private void ApplyNativeSourceFrameOffset(

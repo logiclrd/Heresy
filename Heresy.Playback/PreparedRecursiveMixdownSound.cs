@@ -34,12 +34,20 @@ internal sealed record PrivateRecursivePlayback(
 /// lifecycle queues, replay journals or cooked PCM buffers are retained.
 /// </summary>
 internal sealed class PreparedRecursiveMixdownSound :
-	IStreamingFiniteSound, ISourceFrameSeekableSound, IFirPreparationSound, IDisposable
+	IStreamingFiniteSound, ISourceFrameSeekableSound, IPlaybackSeekableSound, IFirPreparationSound, IDisposable
 {
 	private const int ScratchFrames = 256;
+	private readonly record struct SeekAnchor(long OuterFrame, long ChildFrame, double PrerollPitch);
 	private sealed class NestedState : SoundState
 	{
-		public long SourceFrameOffset { get; set; }
+		private long _sourceFrameOffset;
+		public long SourceFrameOffset
+		{
+			get => _sourceFrameOffset;
+			set { _sourceFrameOffset = value; Anchor = null; }
+		}
+		public SeekAnchor? Anchor { get; set; }
+		protected override void OnPlaybackOffsetChanged() => Anchor = null;
 	}
 
 	private readonly Func<double, double, PrivateRecursivePlayback> _reconstruct;
@@ -53,6 +61,8 @@ internal sealed class PreparedRecursiveMixdownSound :
 	private long _observedEndFrame = -1;
 	private long _cutFrame = -1;
 	private bool _disposed;
+	// Explicit outer release/fade/cut is irreversible by a script seek.
+	private bool _seekClosed;
 
 	public PreparedRecursiveMixdownSound(
 		PrivateRecursivePlayback playback,
@@ -119,10 +129,15 @@ internal sealed class PreparedRecursiveMixdownSound :
 	private void BindParentPitch()
 	{
 		_playback.Session.InheritedPitchAtFrame = _boundState is { } state
-			? sourceFrame => state.PitchTrajectory.GetMultiplier(
-				Math.Max(0, checked(state.PlaybackOriginFrame
-					+ sourceFrame - state.SourceFrameOffset
-					- FrameTime.Ceiling(state.PlaybackOffset, _sampleRate))))
+			? sourceFrame => state.Anchor is { } anchor
+				? sourceFrame < anchor.ChildFrame
+					? anchor.PrerollPitch
+					: state.PitchTrajectory.GetMultiplier(ClampFrame(
+						(Int128)anchor.OuterFrame + sourceFrame - anchor.ChildFrame))
+				: state.PitchTrajectory.GetMultiplier(
+					Math.Max(0, checked(state.PlaybackOriginFrame
+						+ sourceFrame - state.SourceFrameOffset
+						- FrameTime.Ceiling(state.PlaybackOffset, _sampleRate))))
 			: null;
 	}
 
@@ -134,10 +149,81 @@ internal sealed class PreparedRecursiveMixdownSound :
 		_observedEndFrame = -1;
 	}
 
+	// Use wide arithmetic so signed relative offsets cannot wrap around.
+	private static long ClampFrame(Int128 frame)
+		=> frame <= 0 ? 0 : frame >= long.MaxValue ? long.MaxValue : (long)frame;
+
+	private long ChildFrameAt(NestedState state, long outerFrame)
+		=> state.Anchor is { } anchor
+			? ClampFrame((Int128)anchor.ChildFrame + outerFrame - anchor.OuterFrame)
+			: checked(outerFrame - state.PlaybackOriginFrame + state.SourceFrameOffset
+				+ FrameTime.Ceiling(state.PlaybackOffset, _sampleRate));
+
+	public void SeekTime(RenderContext context, SoundState state, long invocationFrame,
+		TimeSpan time, bool relative)
+	{
+		if (!relative && time < TimeSpan.Zero)
+			throw new ArgumentOutOfRangeException(nameof(time));
+		if (relative && time == TimeSpan.Zero) return;
+		// The instantiated child clock already incorporates speed; pitch
+		// transposes its voices, not the timeline. Round on its native grid.
+		Int128 numerator = (Int128)time.Ticks * _sampleRate;
+		Int128 frames = numerator / TimeSpan.TicksPerSecond;
+		if (numerator % TimeSpan.TicksPerSecond > 0) frames++;
+		SeekCore((NestedState)state, invocationFrame, frames, relative);
+	}
+
+	public void SeekFrame(RenderContext context, SoundState state, long invocationFrame,
+		long frame, bool relative)
+	{
+		if (!relative && frame < 0)
+			throw new ArgumentOutOfRangeException(nameof(frame));
+		if (relative && frame == 0) return;
+		SeekCore((NestedState)state, invocationFrame, frame, relative);
+	}
+
+	private void SeekCore(NestedState state, long invocationFrame, Int128 amount, bool relative)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		if (invocationFrame < 0) throw new ArgumentOutOfRangeException(nameof(invocationFrame));
+		// Do not restart a producer explicitly stopped by outer lifecycle.
+		if (_seekClosed) return;
+		long current = ChildFrameAt(state, invocationFrame);
+		long target = ClampFrame(relative ? (Int128)current + amount : amount);
+		if (target == current) return;
+		double prerollPitch = state.PitchTrajectory.GetMultiplier(invocationFrame);
+		PrivateRecursivePlayback fresh = _reconstruct(_pitchMultiplier, _playbackSpeedMultiplier);
+		_playback.Dispose();
+		_playback = fresh;
+		state.PlaybackOffset = TimeSpan.Zero;
+		state.SourceFrameOffset = 0;
+		state.Anchor = new SeekAnchor(invocationFrame, target, prerollPitch);
+		_renderOriginFrame = state.PlaybackOriginFrame;
+		_observedEndFrame = -1;
+		BindParentPitch();
+		_playback.Session.ReplayRequiredSeekObserved?.Invoke("Script playhead seek", target);
+
+		// Reconstruct immediately at the ordered event boundary: a
+		// following Off/Cut at the same frame must see the sought state.
+		// No retained PCM, event history or obsolete descendant registry.
+		float[] scratch = ArrayPool<float>.Shared.Rent(ScratchFrames * _channels);
+		try { RenderUntil(target, Span<float>.Empty, target, scratch); }
+		finally { ArrayPool<float>.Shared.Return(scratch); }
+	}
+
 	public long? GetEndFrameExclusive(RenderContext context, SoundState state)
 	{
 		NestedState nested = (NestedState)state;
 		long origin = nested.PlaybackOriginFrame;
+		if (nested.Anchor is { } anchor)
+		{
+			long? mappedEnd = _observedEndFrame < 0 ? null
+				: ClampFrame((Int128)anchor.OuterFrame
+					+ Math.Max(0, _observedEndFrame - anchor.ChildFrame));
+			if (_cutFrame >= 0)
+				mappedEnd = mappedEnd.HasValue ? Math.Min(mappedEnd.Value, _cutFrame) : _cutFrame;
+			return mappedEnd;
+		}
 		long cut = _cutFrame >= origin ? _cutFrame : -1;
 		long end = _observedEndFrame >= 0 && _renderOriginFrame == origin
 			? checked(origin + _observedEndFrame) : -1;
@@ -155,12 +241,14 @@ internal sealed class PreparedRecursiveMixdownSound :
 	public void ScheduleRelease(long parentFrame)
 	{
 		AdvanceToParentFrame(parentFrame);
+		_seekClosed = true;
 		_playback.Source.EndInput();
 	}
 
 	public void ScheduleCut(long parentFrame)
 	{
 		AdvanceToParentFrame(parentFrame);
+		_seekClosed = true;
 		_cutFrame = parentFrame - ParentStartFrame;
 		_observedEndFrame = _playback.Source.NextFrame;
 	}
@@ -173,6 +261,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 		// release/cut of already sounding private voices. A source-level
 		// S76 or NNA Fade uses the new-note fade duration; S72 past-note
 		// Fade uses the ordinary note-fade duration.
+		_seekClosed = true;
 		_playback.Source.StopProducing();
 		_playback.Source.Session.RequestFadeOfActiveVoices(
 			newNoteDisplacement);
@@ -182,7 +271,10 @@ internal sealed class PreparedRecursiveMixdownSound :
 	{
 		if (parentFrame < ParentStartFrame)
 			throw new ArgumentOutOfRangeException(nameof(parentFrame));
-		long requested = parentFrame - ParentStartFrame - _renderOriginFrame;
+		long outerFrame = parentFrame - ParentStartFrame;
+		long requested = _boundState is { Anchor: not null } state
+			? ChildFrameAt(state, outerFrame)
+			: outerFrame - _renderOriginFrame;
 		if (requested < 0)
 			return;
 		if (requested > _playback.Source.NextFrame)
@@ -207,13 +299,12 @@ internal sealed class PreparedRecursiveMixdownSound :
 			return;
 		NestedState nested = (NestedState)state;
 		long origin = nested.PlaybackOriginFrame;
-		long offset = checked(nested.SourceFrameOffset
-			+ FrameTime.Ceiling(nested.PlaybackOffset, _sampleRate));
-		long first = checked(startFrame - origin + offset);
+		long first = ChildFrameAt(nested, startFrame);
 		if (first < 0)
 			throw new InvalidOperationException(
 				"Private mixdown playback cannot precede its retrigger origin.");
-		long end = checked(first + frameCount);
+		long end = nested.Anchor.HasValue ? ClampFrame((Int128)first + frameCount)
+			: checked(first + frameCount);
 
 		// Restarts create fresh generator AND rendering state, including
 		// independent nested clocks. They execute on the PCM worker.
@@ -227,7 +318,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 			_renderOriginFrame = origin;
 			_observedEndFrame = -1;
 		}
-		long cut = _cutFrame >= origin ? _cutFrame - origin : -1;
+		long cut = ChildCutFrame();
 		if (cut >= 0 && first >= cut)
 			return;
 
@@ -240,14 +331,18 @@ internal sealed class PreparedRecursiveMixdownSound :
 		finally { ArrayPool<float>.Shared.Return(scratch); }
 	}
 
+	private long ChildCutFrame()
+		=> _boundState is { Anchor: not null } state
+			? _cutFrame < 0 ? -1 : ChildFrameAt(state, _cutFrame)
+			: _cutFrame >= _renderOriginFrame ? _cutFrame - _renderOriginFrame : -1;
+
 	private void RenderUntil(long exclusiveEnd,
 		Span<float> destination, long outputStart, float[] scratch)
 	{
 		while (_playback.Source.NextFrame < exclusiveEnd)
 		{
 			long now = _playback.Source.NextFrame;
-			long cut = _cutFrame >= _renderOriginFrame
-				? _cutFrame - _renderOriginFrame : -1;
+			long cut = ChildCutFrame();
 			if (cut >= 0 && now >= cut)
 			{
 				_observedEndFrame = now;
@@ -258,7 +353,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 				_observedEndFrame = now;
 				return;
 			}
-			long until = Math.Min(exclusiveEnd, checked(now + ScratchFrames));
+			long until = now + Math.Min(exclusiveEnd - now, ScratchFrames);
 			if (cut >= 0)
 				until = Math.Min(until, cut);
 			if (until <= now)
