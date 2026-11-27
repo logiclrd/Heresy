@@ -375,6 +375,60 @@ public static class ScriptCompiler
 	}
 
 	/// <summary>
+	/// Compile an isolated raw-generation diagnostic. This factory is not a
+	/// playback generator; no diagnostic events can be submitted to a timeline.
+	/// Canonical authorization is identical to ordinary Pattern compilation.
+	/// </summary>
+	public static ScriptCompilationResult<CompiledPatternGenerationTrace>
+		CompilePatternGenerationTrace(ScriptPatternDefinition definition)
+	{
+		ArgumentNullException.ThrowIfNull(definition);
+		ScriptPatternOrderAnalysis order = ScriptPatternOrderDirective.Analyze(definition.Source);
+		if (HasErrors(order.Diagnostics)) return new(null, order.Diagnostics);
+		PatternUsingLowering lowering = LowerGroupUsingScopes(order.CompilerSource);
+		if (HasErrors(lowering.Diagnostics)) return new(null, lowering.Diagnostics);
+		string source = lowering.Source;
+		var authored = AnalyzePatternSource(definition.Source);
+		if (HasErrors(authored)) return new(null, authored);
+		HashSet<ScriptSourceSpan> transfers = [];
+		HashSet<ScriptSourceSpan> emitters = [];
+		ResolveAuthoredCallStarts(source, ScriptWrapperKind.Pattern, transfers, emitters);
+		bool relaxed = order.Order == ScriptPatternOrder.Relaxed;
+		if (!relaxed)
+		{
+			var restrictions = ValidateIncrementalPatternStatements(source, emitters, transfers);
+			if (restrictions.Count != 0) return new(null, lowering.Project(restrictions));
+		}
+		string className = "__HeresyDiagnosticPattern_" + Guid.NewGuid().ToString("N");
+		string rewritten = relaxed
+			? InstrumentRelaxedPatternCallsites(source, emitters, lowering, diagnostic: true)
+			: InstrumentIncrementalPattern(source, emitters, true, lowering, diagnostic: true);
+		string wrapper = relaxed ? BuildPatternWrapper(className, rewritten)
+			: BuildIncrementalPatternWrapper(className, rewritten);
+		// Only this entry point selects the diagnostic base and constructor.
+		// Retain the fixed wrapper shape and normal canonical authoring audit.
+		wrapper = wrapper.Replace(" : PatternScriptProgram\n",
+			" : global::Heresy.Scripting.Compilation.DiagnosticPatternScriptProgram\n",
+			StringComparison.Ordinal)
+			.Replace("int channelCount)\n", "int channelCount, global::Heresy.Scripting.Compilation.PatternGenerationTraceBudget traceBudget)\n",
+				StringComparison.Ordinal)
+			.Replace(": base(context, output, rowCount, channelCount)",
+				": base(context, output, rowCount, channelCount, traceBudget)",
+				StringComparison.Ordinal);
+		var compiled = CompileType(source, className, wrapper,
+			typeof(PatternScriptProgram), allowInjectedPlayCallsites: true,
+			incrementalPattern: !relaxed, patternOrder: order.Order,
+			generatedUsingScopes: lowering.ScopeNames);
+		if (!compiled.Success || compiled.Program is null)
+			return new(null, lowering.Project(compiled.Diagnostics));
+		if (!typeof(DiagnosticPatternScriptProgram).IsAssignableFrom(compiled.Program))
+			throw new InvalidOperationException("Diagnostic wrapper did not select its diagnostic base.");
+		return new(new CompiledPatternGenerationTrace(compiled.Program, definition.Id,
+			definition.Source, definition.RowCount, definition.ChannelCount, relaxed),
+			lowering.Project(compiled.Diagnostics));
+	}
+
+	/// <summary>
 	/// Compile a per-invocation, on-demand Sequence entry lookup.
 	/// Both the eager and incremental processors use the same script
 	/// function and never buffer a generated list of orders.
@@ -1616,7 +1670,7 @@ public static class ScriptCompiler
 
 	private static string InstrumentIncrementalPattern(string source,
 		IReadOnlySet<ScriptSourceSpan> emitterSpans, bool instrumentActionCallsites,
-		PatternUsingLowering lowering)
+		PatternUsingLowering lowering, bool diagnostic = false)
 	{
 		// Parse the authored statements in their actual method-body shape,
 		// rather than treating top-level locals as script fields. The
@@ -1624,12 +1678,13 @@ public static class ScriptCompiler
 		BlockSyntax body = ParseAuthoredBody(source);
 		body = (BlockSyntax)new StrictPatternEmitterRewriter(
 			emitterSpans, instrumentActionCallsites, AuthoredBodyOffset, lowering).Visit(body)!;
-		body = (BlockSyntax)new LoopCheckpointRewriter(cooperative: true).Visit(body)!;
+		body = (BlockSyntax)new LoopCheckpointRewriter(cooperative: true, diagnostic: diagnostic).Visit(body)!;
 		return AuthoredBodyText(body);
 	}
 
 	private static string InstrumentRelaxedPatternCallsites(string source,
-		IReadOnlySet<ScriptSourceSpan> emitterSpans, PatternUsingLowering lowering)
+		IReadOnlySet<ScriptSourceSpan> emitterSpans, PatternUsingLowering lowering,
+		bool diagnostic = false)
 	{
 		SyntaxNode root = ParseAuthoredBody(source);
 		string prefix = "__heresyTrace";
@@ -1674,7 +1729,7 @@ public static class ScriptCompiler
 
 		root = new RelaxedPatternEmitterCallsiteRewriter(emitterSpans, delegates,
 			replacements, boundReplacements, prefix, lowering).Visit(root) ?? root;
-		root = new LoopCheckpointRewriter().Visit(root) ?? root;
+		root = new LoopCheckpointRewriter(diagnostic: diagnostic).Visit(root) ?? root;
 		// Local adapter declarations are compiler-owned, after the original
 		// authored source, and never included in the canonical API audit.
 		return AuthoredBodyText((BlockSyntax)root) + "\n" + string.Join("\n", localAdapters);
@@ -2250,7 +2305,7 @@ public static class ScriptCompiler
 		CSharpCompilation? Compilation,
 		IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics);
 
-	private sealed class LoopCheckpointRewriter(bool cooperative = false)
+	private sealed class LoopCheckpointRewriter(bool cooperative = false, bool diagnostic = false)
 		: CSharpSyntaxRewriter
 	{
 		// Yield-bearing cooperative checkpoints are valid only inside the
@@ -2262,21 +2317,21 @@ public static class ScriptCompiler
 			=> !cooperative
 				? base.VisitSimpleLambdaExpression(node)
 				: node.WithBody((CSharpSyntaxNode)(
-					new LoopCheckpointRewriter().Visit(node.Body) ?? node.Body));
+					new LoopCheckpointRewriter(diagnostic: diagnostic).Visit(node.Body) ?? node.Body));
 
 		public override SyntaxNode? VisitParenthesizedLambdaExpression(
 			ParenthesizedLambdaExpressionSyntax node)
 			=> !cooperative
 				? base.VisitParenthesizedLambdaExpression(node)
 				: node.WithBody((CSharpSyntaxNode)(
-					new LoopCheckpointRewriter().Visit(node.Body) ?? node.Body));
+					new LoopCheckpointRewriter(diagnostic: diagnostic).Visit(node.Body) ?? node.Body));
 
 		public override SyntaxNode? VisitAnonymousMethodExpression(
 			AnonymousMethodExpressionSyntax node)
 			=> !cooperative
 				? base.VisitAnonymousMethodExpression(node)
 				: node.WithBlock((BlockSyntax)(
-					new LoopCheckpointRewriter().Visit(node.Block) ?? node.Block));
+					new LoopCheckpointRewriter(diagnostic: diagnostic).Visit(node.Block) ?? node.Block));
 
 		public override SyntaxNode? VisitForStatement(
 			ForStatementSyntax node)
@@ -2331,6 +2386,15 @@ public static class ScriptCompiler
 					? "if (ShouldCooperate()) yield return CpuCheckpoint();"
 					: "Checkpoint();");
 
+			if (diagnostic)
+			{
+				StatementSyntax trace = SyntaxFactory.ParseStatement("base.__HeresyDiagnosticCheckpoint();");
+				if (body is BlockSyntax diagnosticBlock)
+					return diagnosticBlock.WithStatements(diagnosticBlock.Statements
+						.Insert(0, checkpoint).Insert(0, trace));
+				return SyntaxFactory.Block(trace, checkpoint, body.WithoutLeadingTrivia())
+					.WithTriviaFrom(body);
+			}
 			if (body is BlockSyntax block)
 			{
 				return block.WithStatements(
