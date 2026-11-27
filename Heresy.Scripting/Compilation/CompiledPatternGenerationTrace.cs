@@ -29,7 +29,7 @@ public sealed record PatternGenerationTraceInvocation(long Id, SequenceCallsite 
     bool IsReferenceFallback);
 
 public sealed record PatternGenerationTraceGroup(long Id, SequenceCallsite? CreationSpan,
-    long? EnclosingScopeId, long AtTraceOrdinal);
+    long? EnclosingScopeId, long AtTraceOrdinal, bool IsReferenceFallback);
 
 public sealed record PatternGenerationTraceTransfer(SequenceCallsite SourceSpan,
     long GroupId, VirtualChannelIdentity? Channel, bool Succeeded, long? EnclosingScopeId, long AtTraceOrdinal);
@@ -42,7 +42,7 @@ public sealed record PatternGenerationTraceLocation(SequenceCallsite SourceSpan,
 
 public sealed record PatternGenerationTraceVirtualOrigin(VirtualChannelIdentity Channel,
     long FirstOccurrenceId, SequenceCallsite? CreationSpan, long? EnclosingScopeId,
-    long? InvocationId);
+    long? InvocationId, bool IsReferenceFallback);
 
 public enum PatternGenerationTraceMarkerKind
 {
@@ -84,14 +84,22 @@ public sealed record PatternGenerationTraceResult(
             if (entry.Note.Target.Kind != ChannelTargetKind.Virtual
                 || !seen.Add(entry.Note.Target.VirtualIdentity)) continue;
             SequenceCallsite? span = entry.Note.EditorCallsite;
+            bool referenceFallback = false;
             if (entry.InvocationId is long id && id >= 0 && id < Invocations.Count)
             {
                 var invocation = Invocations[(int)id];
                 if (invocation.Method == "NoteVirtual" && !invocation.IsReferenceFallback && invocation.SourceSpan.Length > 0)
                     span = invocation.SourceSpan;
+                else if (invocation.IsReferenceFallback && invocation.SourceSpan.Length > 0)
+                {
+                    // An explicit delegate call wins over a method-reference
+                    // anchor. Framework-only invocation can supply just the latter.
+                    span ??= invocation.SourceSpan;
+                    referenceFallback = span == invocation.SourceSpan;
+                }
             }
             origins.Add(new(entry.Note.Target.VirtualIdentity, entry.OccurrenceId,
-                span is { Length: > 0 } ? span : null, entry.EnclosingScopeId, entry.InvocationId));
+                span is { Length: > 0 } ? span : null, entry.EnclosingScopeId, entry.InvocationId, referenceFallback));
         }
         return origins.AsReadOnly();
     }
@@ -127,7 +135,8 @@ public sealed class PatternGenerationTraceBudget
     internal long? CurrentInvocationId => _invocation?.Record.Id;
     internal long? CurrentGroupId => _invocation?.Record.GroupId;
     internal SequenceCallsite? CurrentKnownInvocationSpan
-        => _invocation?.Record.SourceSpan is { Length: > 0 } span ? span : null;
+        => _invocation?.Record is { SourceSpan.Length: > 0, IsReferenceFallback: false } invocation
+            ? invocation.SourceSpan : null;
     private PatternGenerationTraceLocation? _lastContext;
     private PatternGenerationTraceLocation? _invocationFailure;
     internal PatternGenerationTraceLocation? FailureContext => _invocationFailure ?? _lastContext;
@@ -152,13 +161,13 @@ public sealed class PatternGenerationTraceBudget
             ObserveContext(span);
     }
 
-    internal long RegisterGroup(NoteGroup group, SequenceCallsite? span)
+    internal long RegisterGroup(NoteGroup group, SequenceCallsite? span, bool referenceFallback = false)
     {
         if (_groupIds.TryGetValue(group, out long id)) return id;
         ReserveRecords(1);
         id = _groups.Count;
         _groupIds.Add(group, id);
-        _groups.Add(new(id, span, CurrentScopeId, _nextOrdinal));
+        _groups.Add(new(id, span, CurrentScopeId, _nextOrdinal, referenceFallback));
         return id;
     }
 
@@ -317,15 +326,21 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
     }
 
     protected NoteGroup __HeresyTraceNewGroupFromDelegate(SequenceCallsite fallback)
-        => __HeresyTraceNewGroup(_traceBudget.CurrentKnownInvocationSpan ?? fallback);
+    {
+        var explicitCall = _traceBudget.CurrentKnownInvocationSpan;
+        return TraceNewGroup(explicitCall ?? fallback, referenceFallback: explicitCall is null);
+    }
 
     protected NoteGroup __HeresyTraceNewGroup(SequenceCallsite span)
+        => TraceNewGroup(span, referenceFallback: false);
+
+    private NoteGroup TraceNewGroup(SequenceCallsite span, bool referenceFallback)
     {
-        using var invocation = _traceBudget.EnterInvocation(span, "NewNoteGroup", null);
+        using var invocation = _traceBudget.EnterInvocation(span, "NewNoteGroup", null, referenceFallback);
         try
         {
             NoteGroup group = NewNoteGroup();
-            _traceBudget.RegisterGroup(group, span.Length > 0 ? span : null);
+            _traceBudget.RegisterGroup(group, span.Length > 0 ? span : null, referenceFallback);
             return group;
         }
         catch { _traceBudget.RecordInvocationFailure(); throw; }
@@ -456,7 +471,9 @@ public sealed class CompiledPatternGenerationTrace
         return new(_patternId, _source, _rowCount, _channelCount, _relaxed,
             events.AsReadOnly(), budget.Markers, budget.Invocations, budget.Groups, budget.Transfers,
             status, detail, Array.AsReadOnly(context.Diagnostics.Drain()),
-            status == PatternGenerationTraceStatus.Completed ? null : budget.FailureContext);
+            status == PatternGenerationTraceStatus.Completed ? null
+                : status == PatternGenerationTraceStatus.Failed ? budget.FailureContext
+                : budget.FailureContext is { } location ? location with { IsInvocationFailure = false } : null);
     }
 
     private PatternScriptProgram CreateProgram(SequencingContext context, INoteReceiver receiver,
