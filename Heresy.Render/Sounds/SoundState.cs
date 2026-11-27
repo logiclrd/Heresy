@@ -49,8 +49,15 @@ public abstract class SoundState
 			if (value < TimeSpan.Zero)
 				throw new ArgumentOutOfRangeException(nameof(value));
 			_playbackOffset = value;
+			OnPlaybackOffsetChanged();
 		}
 	}
+
+	// A legacy offset assignment supersedes a sound-specific seek anchor.
+	protected virtual void OnPlaybackOffsetChanged() { }
+
+	protected internal void ClearNaturalEndObservation()
+		=> _naturalEndFrameExclusive = null;
 
 	public Vector3 Position
 	{
@@ -97,6 +104,9 @@ public abstract class SoundState
 	// This remains derived from the existing field: no duplicated state.
 	internal bool HasNoteOffTime => _noteOffTime.HasValue;
 
+	/// <summary>Already consumed release frames at NoteOffTime, independent of source age.</summary>
+	internal long ElapsedReleaseFrames { get; set; }
+
 	public NoteOffDisposition NoteOffDisposition { get; set; } =
 		NoteOffDisposition.Definite;
 
@@ -108,6 +118,7 @@ public abstract class SoundState
 			if (value < TimeSpan.Zero)
 				throw new ArgumentOutOfRangeException(nameof(value));
 			_noteOffTime = value;
+			if (!value.HasValue) ElapsedReleaseFrames = 0;
 		}
 	}
 

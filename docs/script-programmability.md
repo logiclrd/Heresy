@@ -299,8 +299,8 @@ block, without permitting reassignment or ref/out writes to that local.
 Invalid transfers warn without revoking valid ownership. A start evaluated
 on the right-hand side before an invalid transfer remains scheduled.
 
-A group forwards `Volume`, `Off`, `Cut`, `SourceFrame`, `Displacement`,
-`Past`, `NoteFilter`, `ChannelFilter`, `Seek`, `Pan`, `Surround`,
+A group forwards `Volume`, `Off`, `Cut`, `SourceFrame`, `SourceFrameRelative`,
+`Displacement`, `Past`, `NoteFilter`, `ChannelFilter`, `Seek`, `SeekRelative`, `Pan`, `Surround`,
 `Filter`, `FilterCutoff` and `FilterResonance` to its own members with the same
 arguments as the handle. There is no group `Note` method and no broadcast
 or separate engine channel behind the group. Dispose releases all leases
@@ -345,6 +345,9 @@ The physical Pattern helpers also expose the following typed controls
 ```csharp
 Volume(row, channel, volume, timeOffsetSeconds: 0.0);
 SourceFrame(row, channel, sourceFrameOffset, timeOffsetSeconds: 0.0);
+SourceFrameRelative(row, channel, deltaFrames, timeOffsetSeconds: 0.0);
+Seek(row, channel, playbackSeconds, timeOffsetSeconds: 0.0);
+SeekRelative(row, channel, deltaSeconds, timeOffsetSeconds: 0.0);
 Displacement(row, channel, NoteDisplacementAction.Continue,
     timeOffsetSeconds: 0.0);
 Past(row, channel, TrackerPastNoteAction.Cut,
@@ -355,8 +358,8 @@ They use the Pattern-local physical channel index and the same typed
 commands, validation and authored ordering as the virtual equivalents.
 Volume is normalized [0,1], remembered on that logical channel, and
 controls the live source gain for a flattened Pattern/Sequence.
-SourceFrame uses a nonnegative native frame index on the current
-seekable sound, distinct from seconds-based Seek. Displacement
+The four seek helpers address the currently bound source at their actual
+execution deadline; see the playhead contract below. Displacement
 overrides the current logical note's next-note action, including the
 existing flattened-source displacement policy. Past addresses displaced
 logical notes by physical origin and playback owner, never the current
@@ -377,7 +380,9 @@ The owned handle exposes typed instance controls; successful calls emit one raw 
 ```csharp
 note.Volume(row, volume, timeOffsetSeconds: 0.0);
 note.SourceFrame(row, sourceFrameOffset, timeOffsetSeconds: 0.0);
+note.SourceFrameRelative(row, deltaFrames, timeOffsetSeconds: 0.0);
 note.Seek(row, playbackSeconds, timeOffsetSeconds: 0.0);
+note.SeekRelative(row, deltaSeconds, timeOffsetSeconds: 0.0);
 note.Pan(row, x, y: 0, z: 0, timeOffsetSeconds: 0.0);
 note.Surround(row, enabled, timeOffsetSeconds: 0.0);
 note.Filter(row, cutoff, resonance, timeOffsetSeconds: 0.0);
@@ -393,19 +398,9 @@ note.Past(row, TrackerPastNoteAction.Cut,
   It modifies the current voice and is remembered on **that scoped
   virtual channel** for a later note; it does not modify another
   invocation's channel or a later generation of a recycled slot.
-- **Native offset:** `note.SourceFrame` takes a nonnegative `long`
-  in **source frames**, not the wall seconds used by the existing
-  `Seek` helper. At the actual event deadline it seeks
-  the voice then current *only when that bound sound implements*
-  `ISourceFrameSeekableSound`; otherwise it does nothing, as does
-  physical Oxx. Direct and replay-required capabilities retain
-  identical frame semantics. Nonzero replay-required virtual seeks
-  emit the existing rate-limited cost warning under
-  `Script virtual native offset`. No decoded buffers or journal are
-  cached to emulate seeking.
-- **Seconds seek:** `Seek` uses the existing physical seconds-based offset,
-  evaluated against the current bound voice at the actual deadline. It does
-  not remember an offset for a future note. Native SourceFrame remains distinct.
+- **Playhead seeks:** All four helpers operate on the current bound voice
+  at their resolved deadline, using the contract below. They do not remember
+  a seek for a later note, affect displaced voices, or reset outer note age.
 - **Spatial:** Pan sets finite float-representable absolute scene coordinates
   and disables surround. Surround true resets position to center, false
   merely disables surround. Both update the current voice and remembered state.
@@ -435,14 +430,58 @@ note.Past(row, TrackerPastNoteAction.Cut,
 Only these two enums' *named constant fields* are newly permitted
 as member accesses by the restricted-C# analyzer; arbitrary
 framework/object member access is still rejected. Runtime validation
-rejects invalid enum casts, negative native offsets, invalid volume,
+rejects invalid enum casts, negative absolute seek targets, nonfinite time deltas, invalid volume,
 rows outside the Pattern, and unrepresentable wall offsets **before**
 emission. Positive fixed-wall offsets execute on the voice present
 at the actual deadline, not when the script merely yields the event.
 
+### Source playhead coordinates (issue #73)
+
+For a Sample, let C be the current unwrapped fractional source frame,
+and R the effective source frames per playback second at the actual
+deadline (native sample rate × pitch × playback speed × instantaneous
+pitch modulation). SourceFrame(F) targets F; SourceFrameRelative(dF)
+targets C+dF; Seek(T) targets T×R; SeekRelative(dT) targets C+dT×R.
+Time conversion uses the current rate, not a retrospective integral.
+Subsequent traversal still integrates the live pitch trajectory.
+
+Absolute values are nonnegative; relative deltas are signed, and negative
+resulting positions clamp to zero. Native frame parameters are long;
+seconds must be finite and TimeSpan-representable. Relative zero is a
+no-op. An absolute seek replaces the preceding frame/time target.
+All group members compute their own target using their bound source's
+position/rate. A looping Sample retains an unwrapped playhead: a forward
+loop maps x to x before its lead-in boundary L, otherwise
+L+(x-L)%loopLength. Ping-pong uses the existing reflected mapping.
+The source end is recalculated without resetting note envelopes or
+outer filter histories. Very large Sample coordinates use double
+precision, as does the underlying interpolator.
+
+For a private Pattern/Sequence, native frames and seconds address the
+instantiated private render timeline; its tracker clock already includes
+playback speed, and pitch transposes child notes rather than accelerating
+their clock. Seconds round upward to the native frame grid. A nontrivial
+seek reconstructs the child session and discards preroll at the outer
+note's instantaneous pitch, then uses live outer pitch from the target
+onward. A seek during outer Off or Fade reconstructs the selected
+child content with the already elapsed release/fade age and stops
+future child events again. It does not renew the outer lifecycle.
+Cut or retirement leaves no bound voice to seek; a new Note is needed
+to restart production. Replaying private
+sources can be expensive; the existing bounded diagnostic reports the
+actual native target, including zero on rewind. No PCM or event journal
+is retained. A finite source sought beyond its end stops at the deadline.
+
+Instrument-selected terminal Samples/private sources have the same
+capability. Procedural Synths, flattened logical sources without a single
+playhead and idle channels do not seek. This authored API emits
+SeekPlaybackTimeCommand / SeekSourceFrameCommand with a relative flag;
+legacy Oxx/SAx/Qxy and native additive SetPlaybackOffsetCommand /
+SetSourceFrameOffsetCommand retain their independent semantics.
+
 These controls target the handle's generated identity only. The existing playback
 broadcast surface supports Note Off/Cut and note volume on eligible
-earlier-started voices. **It does not support** native offsets,
+earlier-started voices. **It does not support** playhead seeks or native offsets,
 displacement policy, past-note actions, spatial or legacy-filter controls,
 tracker channel memory, or source starts on `AllVirtualInScope` or `AllVirtual`. The
 incremental validation layer rejects those raw broadcast commands

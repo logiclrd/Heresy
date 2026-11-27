@@ -218,6 +218,8 @@ public sealed class ScriptVirtualControlPlaybackTests
             v7.FilterCutoff(0.125, 0.3, timeOffsetSeconds: 0.125);
             v7.FilterResonance(0.125, 0.7, timeOffsetSeconds: 0.125);
             v7.Seek(0.125, 1.5, timeOffsetSeconds: 0.125);
+            v7.SeekRelative(0.125, 1.5, timeOffsetSeconds: 0.125);
+            v7.SourceFrameRelative(0.125, 1200, timeOffsetSeconds: 0.125);
             """);
         ObjectId second = AddPattern(document,
             $"using var v7 = NoteVirtual(0, _O({sample.Value}));");
@@ -515,6 +517,8 @@ public sealed class ScriptVirtualControlPlaybackTests
                 group.FilterCutoff(row + 0.75, 0.7, timeOffsetSeconds: 0.05);
                 group.FilterResonance(row + 0.75, 0.1, timeOffsetSeconds: 0.05);
                 group.Seek(row + 0.75, 0.2, timeOffsetSeconds: 0.05);
+                group.SeekRelative(row + 0.75, -0.02, timeOffsetSeconds: 0.05);
+                group.SourceFrameRelative(row + 0.75, 10, timeOffsetSeconds: 0.05);
                 group.Past(row + 0.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.06);
                 group.Cut(row + 0.75, timeOffsetSeconds: 0.06);
             }

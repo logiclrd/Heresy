@@ -464,16 +464,26 @@ Do not reintroduce completed-task checklists here.
   also routes Script Envelope and both independent Script Instrument
   Save groups; draft keyboard-shortcuts PR, awaiting acceptance.
 
-- [ ] **Script Pattern physical/virtual channel helper parity (#71).**
-  All planned helpers implemented in [PR #72](https://github.com/logiclrd/Heresy/pull/72):
-  physical Volume, SourceFrame, Displacement and Past; virtual/group
-  Seek, Pan, Surround, Filter, FilterCutoff and FilterResonance.
-  Flattened Past targets displaced logical source trees; generated virtual
-  recursive starts infer private mixdown. Scalar channel memory persists
-  through silence until final use. Existing private speaker routing and
-  single-voice seek boundaries are preserved. Final integration CI and
-  desktop owner audition/merge approval remain outstanding.
-  See [parity design and acceptance](script-channel-helper-parity-design.md).
+- [x] **Script Pattern physical/virtual channel helper parity (#71).**
+  Merged [PR #72](https://github.com/logiclrd/Heresy/pull/72); all 4,739
+  tests and owner desktop parity acceptance passed. Physical Volume,
+  SourceFrame, Displacement and Past; virtual/group Seek, Pan, Surround,
+  Filter, FilterCutoff and FilterResonance. Flattened logical Past,
+  inferred virtual recursive mixdown and final-use scalar memory.
+  Existing seek semantics are not certified as correct; see #73.
+  [Parity design](script-channel-helper-parity-design.md).
+
+- [ ] **Correct absolute script Seek and SourceFrame playhead semantics (#73).**
+  Desktop tests for #72 confirmed that the current operations set additive,
+  origin-relative offsets, not absolute playhead positions at the event
+  deadline. [PR #74](https://github.com/logiclrd/Heresy/pull/74) implements
+  absolute and relative native/time seeks, unwrapped loops, independent
+  Sample and private recursive anchors and legacy tracker compatibility.
+  Original implementation CI and four desktop auditions passed; owner
+  requested lifecycle-preserving Off/Fade reconstruction (Slice 4).
+  Final integration and exact-head CI pending.
+  See [discovery and proposed design](script-absolute-seek-design.md)
+  and [issue #73](https://github.com/logiclrd/Heresy/issues/73).
 
 - [x] **Broaden restricted-C# Script Pattern and Script Sequence API
   under the owner-approved code-isolation policy (issue #58).** Permit

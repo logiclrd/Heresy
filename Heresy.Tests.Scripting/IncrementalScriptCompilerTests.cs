@@ -73,7 +73,7 @@ public sealed class IncrementalScriptCompilerTests
 			TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(40));
 		Assert.That(events.Select(e => e.Target), Is.All.EqualTo(ChannelTarget.Physical(1)));
 		events.Select(e => e.Commands.Single()).Should().Equal(
-			new SetNoteVolumeCommand(0.25), new SetSourceFrameOffsetCommand(12345678901L),
+			new SetNoteVolumeCommand(0.25), new SeekSourceFrameCommand(12345678901L),
 			new SetCurrentVoiceDisplacementActionCommand(NoteDisplacementAction.Continue),
 			new ApplyPastNoteActionCommand(TrackerPastNoteAction.Off));
 		for (int i = 0; i < calls.Length; i++)

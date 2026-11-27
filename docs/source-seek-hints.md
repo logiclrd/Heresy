@@ -18,13 +18,20 @@ It also reports a Qxy retrigger when the actual current bound voice
 has that cost, because retriggering from source zero may reconstruct
 state previously generated. O00 that resolves to a zero native offset,
 nonseekable sources, and sounds reporting `Direct` do not generate
-this hint. No change to the seek/retrigger execution algorithm is made.
+this hint. These tracker offset/retrigger algorithms are unchanged.
+
+The four Script Pattern playhead operations use the separate
+IPlaybackSeekableSound capability. A nontrivial private absolute or
+relative seek reconstructs its child timeline and reports the actual
+native target under `Script playhead seek`, including target zero.
+Direct Sample seeks, zero deltas, unchanged private targets and
+unsupported sources do not emit a replay hint.
 
 `PreparedIncrementalPlaybackFactory` connects each root/private
 `PlaybackSession.ReplayRequiredSeekObserved` to the same bounded
 `SequencingDiagnosticLog` already used for sequencing warnings.
 The implementation emits `HRSEQ005` for at most 32 individual
-Oxx/Qxy observations per plan and one `HRSEQ006` suppression
+Oxx/Qxy/script seek observations per plan and one `HRSEQ006` suppression
 message thereafter. Draining the log does not reset caps, and private
 mixdown contexts share the root reporting sink. Existing realtime and
 offline export paths drain and display these diagnostics on non-audio

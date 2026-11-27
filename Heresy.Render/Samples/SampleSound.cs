@@ -12,7 +12,7 @@ namespace Heresy.Render.Samples;
 /// <summary>
 /// Executable renderer for a SampleDefinition and its decoded PCM.
 /// </summary>
-public sealed class SampleSound : ISound, ISourceFrameSeekableSound
+public sealed class SampleSound : ISound, ISourceFrameSeekableSound, IPlaybackSeekableSound
 {
 	private readonly SampleDefinition _definition;
 	private readonly ISampleData _data;
@@ -103,6 +103,50 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 		sampleState.SourceFrameOffset = sourceFrameOffset;
 	}
 
+	public void SeekTime(RenderContext context, SoundState state, long invocationFrame,
+		TimeSpan time, bool relative)
+	{
+		if (!relative && time < TimeSpan.Zero)
+			throw new ArgumentOutOfRangeException(nameof(time));
+		SampleSoundState sample = ValidateState(context, state);
+		if (relative && time == TimeSpan.Zero) return;
+		double rate = _data.SampleRate * sample.PitchMultiplier
+			* sample.PlaybackSpeedMultiplier * sample.PitchTrajectory.GetMultiplier(invocationFrame);
+		double frames = time == TimeSpan.Zero ? 0 : time.TotalSeconds * rate;
+		SeekCore(context, sample, invocationFrame, frames, relative);
+	}
+
+	public void SeekFrame(RenderContext context, SoundState state, long invocationFrame,
+		long frame, bool relative)
+	{
+		if (!relative && frame < 0)
+			throw new ArgumentOutOfRangeException(nameof(frame));
+		SampleSoundState sample = ValidateState(context, state);
+		if (relative && frame == 0) return;
+		SeekCore(context, sample, invocationFrame, frame, relative);
+	}
+
+	private void SeekCore(RenderContext context, SampleSoundState state,
+		long invocationFrame, double targetOrDelta, bool relative)
+	{
+		if (invocationFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(invocationFrame));
+		double pitch = state.PitchTrajectory.GetPosition(invocationFrame);
+		double step = GetSourceFramesPerOutputFrame(context, state);
+		double current = state.SeekAnchor is { } anchor
+			? anchor.Target + (pitch - anchor.PitchPosition) * step
+			: state.SourceFrameOffset + state.PlaybackOffset.TotalSeconds * _data.SampleRate + pitch * step;
+		double target = relative ? current + targetOrDelta : targetOrDelta;
+		// Keep the coordinate finite and nonnegative, including a delta
+		// which exceeds the representable native-frame range.
+		if (double.IsNaN(target)) return;
+		target = Math.Clamp(target, 0.0, (double)long.MaxValue);
+		state.PlaybackOffset = TimeSpan.Zero;
+		state.SourceFrameOffset = 0;
+		state.SeekAnchor = new SampleSoundState.PlayheadAnchor(target, invocationFrame, pitch);
+		state.ClearNaturalEndObservation();
+	}
+
 	public long? GetEndFrameExclusive(RenderContext context, SoundState state)
 	{
 		SampleSoundState sampleState = ValidateState(context, state);
@@ -120,18 +164,25 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 		double sourceOffsetFrames =
 			sampleState.SourceFrameOffset
 			+ sampleState.PlaybackOffset.TotalSeconds * _data.SampleRate;
-		double remainingSourceFrames = _data.FrameCount - sourceOffsetFrames;
+		var anchor = sampleState.SeekAnchor;
+		double remainingSourceFrames = _data.FrameCount - (anchor?.Target ?? sourceOffsetFrames);
 
 		if (!(remainingSourceFrames > 0.0))
-			return sampleState.PlaybackOriginFrame;
+		{
+			long end = anchor?.Frame ?? sampleState.PlaybackOriginFrame;
+			return noteOffEnd.HasValue ? Math.Min(end, noteOffEnd.Value) : end;
+		}
 
 		if (!sampleState.PitchTrajectory.CanProjectEndEfficiently)
 			return noteOffEnd;
 
 		double baseStep = GetSourceFramesPerOutputFrame(context, sampleState);
-		double requiredPitchPosition = remainingSourceFrames / baseStep;
-		long naturalEnd = sampleState.PitchTrajectory.FindFrameAtOrAfterPosition(
-			requiredPitchPosition);
+		double requiredPitchPosition = (anchor?.PitchPosition ?? 0.0) + remainingSourceFrames / baseStep;
+		long naturalEnd = double.IsFinite(requiredPitchPosition)
+			? sampleState.PitchTrajectory.FindFrameAtOrAfterPosition(requiredPitchPosition)
+			: long.MaxValue;
+		if (anchor.HasValue)
+			naturalEnd = Math.Max(anchor.Value.Frame, naturalEnd);
 
 		return noteOffEnd.HasValue
 			? Math.Min(naturalEnd, noteOffEnd.Value)
@@ -185,6 +236,10 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 			sampleState.SourceFrameOffset
 			+ sampleState.PlaybackOffset.TotalSeconds * _data.SampleRate;
 
+		var seekAnchor = sampleState.SeekAnchor;
+		double sourceAnchor = seekAnchor?.Target ?? sourceOffsetFrames;
+		double pitchAnchor = seekAnchor?.PitchPosition ?? 0.0;
+
 		int gainCount = checked(_data.ChannelCount * outputChannelCount);
 		Span<float> gains = gainCount <= 128
 			? stackalloc float[gainCount]
@@ -198,7 +253,7 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 		{
 			long invocationFrame = startFrame + outputFrame;
 			double sourcePosition =
-				sourceOffsetFrames + pitchPosition * step;
+				sourceAnchor + (pitchPosition - pitchAnchor) * step;
 
 			if (!IsSourcePositionActive(sourcePosition))
 			{

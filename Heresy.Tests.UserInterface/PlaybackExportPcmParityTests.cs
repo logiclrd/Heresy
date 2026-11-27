@@ -406,6 +406,7 @@ public sealed class PlaybackExportPcmParityTests
 				first.Pan(0, -0.8, 0.2, 0.3);
 				first.Filter(0, 0.4, 0.2);
 				first.Seek(0.125, 0.1, timeOffsetSeconds: 0.02);
+				first.SeekRelative(0.25, -0.02);
 				first.Surround(0.25, true);
 				first.ChannelFilter(0.25,
 				""", StringComparison.Ordinal).Replace("second.Volume(1.5,", """
@@ -461,6 +462,7 @@ public sealed class PlaybackExportPcmParityTests
 				Volume(0.25, 0, 0.6);
 				Displacement(0.25, 0, NoteDisplacementAction.Continue);
 				lead.Filter(0.25, 0.4, 0.2);
+				lead.SeekRelative(0.375, 0.04);
 				lead.SourceFrame(0.5,
 				""", StringComparison.Ordinal).Replace("lead.Displacement(1,", $"""
 				Note(1, 0, _O({flattened.Value}));
@@ -472,8 +474,10 @@ public sealed class PlaybackExportPcmParityTests
 				""", StringComparison.Ordinal).Replace("replacement.Cut(4);", $"""
 				Note(3, 0, _O({sample.Value}), volume: 0.25);
 				SourceFrame(3.25, 0, 100);
+				SourceFrameRelative(3.25, 0, -17);
 				Pan(3.25, 0, -0.5);
 				replacement.Seek(3.25, 0.06);
+				replacement.SourceFrameRelative(3.5, -40);
 				replacement.Surround(3.5, true);
 				Cut(4, 0);
 				replacement.Cut(4);

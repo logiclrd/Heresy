@@ -47,7 +47,7 @@ public static class FlattenedSourceEffectPolicy
 		return command is StartParametricEffectCommand
 				{ Parameter: ParametricEffectParameter.NoteVolume
 					or ParametricEffectParameter.PitchLinearUnits }
-			or SetPlaybackFrequencyCommand or SetPlaybackOffsetCommand
+			or SetPlaybackFrequencyCommand or SetPlaybackOffsetCommand or SeekPlaybackTimeCommand or SeekSourceFrameCommand
 			or ApplyVibratoCommand or ApplyFineVibratoCommand
 			or ApplyVibratoVolumeSlideCommand
 			or SetVibratoCommand or ClearPitchModulationCommand

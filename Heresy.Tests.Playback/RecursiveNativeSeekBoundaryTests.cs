@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Text;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -408,6 +409,457 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		=> (PlaybackSession)parent.Sound.GetType()
 			.GetProperty("Session", BindingFlags.Instance | BindingFlags.Public)!
 			.GetValue(parent.Sound)!;
+
+	[TestCase(false, 0)]
+	[TestCase(true, 0)]
+	[TestCase(false, 1)]
+	[TestCase(true, 1)]
+	[TestCase(false, 2)]
+	[TestCase(true, 2)]
+	public void ScriptAbsoluteAndRelativePrivateSeeksMatchIndependentTimeline(
+		bool relaxed, int sourceKind)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId first = AddPattern(document, sample, rows: 2);
+		ObjectId second = AddPattern(document, sample, rows: 5);
+		ObjectId sequence = AddSequence(document, first, second);
+		ObjectId source = sourceKind switch
+		{
+			0 => second,
+			1 => sequence,
+			_ => AddInstrument(document, sequence),
+		};
+		if (sourceKind == 2)
+		{
+			// The fixture's single C4 tone is silent an octave above C4
+			// unless the selected table entry is explicitly populated.
+			var instrument = (InstrumentDefinition)document.Objects[source];
+			for (int i = 1; i <= 12; i++) instrument.ToneTable.Add(0);
+		}
+		string prefix = relaxed ? "#order relaxed\n" : "";
+		string start = $"Note(0, 0, _O({source.Value}), pitchMultiplier: 2, playbackSpeedMultiplier: 2, mixdown: true);";
+		ObjectId reference = AddScript(document, prefix + start, rows: 5);
+		string seekScript = sourceKind == 0
+			? start + "\n" + """
+				Seek(0.25, 0, 0.15);
+				SourceFrameRelative(0.5, 0, -100);
+				SeekRelative(0.75, 0, -0.05);
+				SourceFrame(1, 0, 0);
+				"""
+			: $"""
+				using var note = NoteVirtual(0, _O({source.Value}), pitchMultiplier: 2, playbackSpeedMultiplier: 2);
+				note.Seek(0.25, 0.15);
+				note.SourceFrameRelative(0.5, -100);
+				note.SeekRelative(0.75, -0.05);
+				note.SourceFrame(1, 0);
+				""";
+		ObjectId sought = AddScript(document, prefix + seekScript, rows: 5);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using var plain = factory.Create(document, reference);
+		using var whole = factory.Create(document, sought);
+		using var split = factory.Create(document, sought);
+		float[] child = new float[200], expected = new float[150], actual = new float[150], chunked = new float[150];
+		plain.Source.Render(child.Length, child);
+		// Independent unmodified, speed-scaled child PCM ranges. No
+		// dependence on the seek implementation for the expected targets.
+		child.AsSpan(0, 30).CopyTo(expected.AsSpan(0, 30));
+		child.AsSpan(150, 30).CopyTo(expected.AsSpan(30, 30));
+		child.AsSpan(80, 30).CopyTo(expected.AsSpan(60, 30));
+		child.AsSpan(60, 30).CopyTo(expected.AsSpan(90, 30));
+		child.AsSpan(0, 30).CopyTo(expected.AsSpan(120, 30));
+		whole.Source.Render(actual.Length, actual);
+		for (int i = 0; i < chunked.Length;)
+		{
+			int n = Math.Min(17, chunked.Length - i);
+			split.Source.Render(n, chunked.AsSpan(i, n));
+			i += n;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+			Assert.That(chunked, Is.EqualTo(expected).Within(1e-6f));
+			Assert.That(actual[31], Is.GreaterThan(0.01f));
+			Assert.That(actual[120], Is.Zero.Within(1e-6f));
+			Assert.That(actual[121], Is.GreaterThan(0f));
+			Assert.That(whole.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(4));
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void PrivateGroupSeeksSynchronizeIndependentMembersAndCutAtOuterDeadline(bool relaxed)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddPattern(document, sample, rows: 5);
+		string prefix = relaxed ? "#order relaxed\n" : "";
+		ObjectId source = AddScript(document, prefix + $"Note(0, 0, _O({child.Value}), mixdown: true);", rows: 5);
+		ObjectId group = AddScript(document, prefix + $"""
+			using var notes = NewNoteGroup();
+			notes += NoteVirtual(0, _O({child.Value}));
+			notes += NoteVirtual(0.25, _O({child.Value}));
+			notes.SourceFrame(0.5, 80);
+			notes.SourceFrameRelative(0.75, -100);
+			notes.Cut(1);
+			""", rows: 5);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using var plain = factory.Create(document, source);
+		using var actual = factory.Create(document, group);
+		float[] reference = new float[160], pcm = new float[480];
+		plain.Source.Render(reference.Length, reference);
+		actual.Source.Render(120, pcm.AsSpan(0, 120));
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm.AsSpan(0, 30).ToArray(), Is.EqualTo(reference.AsSpan(0, 30).ToArray()).Within(1e-6f));
+			for (int i = 30; i < 60; i++)
+				Assert.That(pcm[i], Is.EqualTo(reference[i] + reference[i - 30]).Within(1e-6f));
+			for (int i = 60; i < 90; i++)
+				Assert.That(pcm[i], Is.EqualTo(2 * reference[80 + i - 60]).Within(1e-6f));
+			for (int i = 90; i < 120; i++)
+				Assert.That(pcm[i], Is.EqualTo(2 * reference[10 + i - 90]).Within(1e-6f));
+		});
+		actual.Source.Render(360, pcm.AsSpan(120));
+		Assert.That(pcm[^1], Is.Zero.Within(1e-6f));
+		Assert.That(actual.Session.VirtualVoices, Is.Empty);
+		Assert.That(actual.Session.RetainedScopedVirtualChannelCount, Is.Zero);
+	}
+
+	[TestCase(false, false)]
+	[TestCase(true, false)]
+	[TestCase(false, true)]
+	[TestCase(true, true)]
+	public void PrivateSeekDuringReleaseReconstructsContentWithoutRestartingRelease(bool relaxed, bool nested)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId envelopeId = document.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "200 ms release");
+		envelope.ReplaceCurve(
+			[new(TimeSpan.Zero, 1.0), new(TimeSpan.FromMilliseconds(200), 0.0)],
+			0, 0, EnvelopeSustainLoopMode.Forward);
+		document.Add(envelope);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Sustaining ramp");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = sample, VolumeEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		string prefix = relaxed ? "#order relaxed\n" : "";
+		ObjectId child = AddScript(document, prefix + $"""
+			Note(0, 0, _O({instrumentId.Value}));
+			Cut(1.5, 0);
+			Note(2, 0, _O({instrumentId.Value}), volume: 0.5);
+			Note(2.25, 0, _O({instrumentId.Value}));
+			""", rows: 6);
+		if (nested) child = AddPattern(document, child, rows: 6, mixdown: true);
+		ObjectId parent = AddScript(document, prefix + $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			note.Off(0.5);
+			note.SourceFrame(1, 240);
+			note.SourceFrame(1.5, 0);
+			""", rows: 5);
+		var factory = new PreparedIncrementalPlaybackFactory(Mono());
+		using var whole = factory.Create(document, parent);
+		using var split = factory.Create(document, parent);
+		float[] pcm = new float[320], chunked = new float[320];
+		whole.Source.Render(pcm.Length, pcm);
+		for (int i = 0; i < chunked.Length;)
+		{
+			int n = Math.Min(17, chunked.Length - i);
+			split.Source.Render(n, chunked.AsSpan(i, n));
+			i += n;
+		}
+		const float scale = 20f / 32768;
+		// Release starts at outer frame 60. Both reconstructions keep
+		// this clock, even when the replacement note is age zero.
+		// B starts exactly at the first target; its later retrigger at
+		// child frame 270 must never be produced after the outer Off.
+		Assert.Multiple(() =>
+		{
+			Assert.That(chunked, Is.EqualTo(pcm).Within(1e-6f));
+			Assert.That(pcm[59], Is.EqualTo(59 * scale).Within(1e-6f));
+			Assert.That(pcm[90], Is.EqualTo(90 * scale * 0.85).Within(1e-6f));
+			Assert.That(pcm[121], Is.EqualTo(scale * 0.5 * 0.695).Within(1e-6f));
+			Assert.That(pcm[151], Is.EqualTo(31 * scale * 0.5 * 0.545).Within(1e-6f));
+			Assert.That(pcm[181], Is.EqualTo(scale * 0.395).Within(1e-6f));
+			Assert.That(pcm[259], Is.EqualTo(79 * scale * 0.005).Within(1e-6f));
+			Assert.That(pcm.AsSpan(261).ToArray(), Is.All.EqualTo(0f).Within(1e-6f));
+			Assert.That(whole.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(2));
+			Assert.That(whole.Session.VirtualVoices, Is.Empty);
+		});
+	}
+
+	// A common fixed sustain makes the release oracle independent of
+	// preroll, and the native ramp exposes the exact selected sample age.
+	private static ObjectId AddReleaseInstrument(SongDocument document,
+		ObjectId sample, int releaseMs, int fadeMs = 200)
+	{
+		ObjectId envelopeId = document.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "Fixed sustain release");
+		envelope.ReplaceCurve(
+			[new(TimeSpan.Zero, 1.0), new(TimeSpan.FromMilliseconds(releaseMs), 0.0)],
+			0, 0, EnvelopeSustainLoopMode.Forward);
+		document.Add(envelope);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Release and fade")
+		{
+			NnaOverride = InstrumentNnaOverride.Fade,
+			NnaFadeDuration = TimeSpan.FromMilliseconds(fadeMs),
+		};
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = sample, VolumeEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		return instrumentId;
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void SeekThenOffAtSameDeadlineReleasesTheSelectedChildNote(bool nested)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId instrument = AddReleaseInstrument(document, sample, 200);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({instrument.Value}));
+			Cut(1.5, 0);
+			Note(2, 0, _O({instrument.Value}), volume: 0.5);
+			Note(2.25, 0, _O({instrument.Value}));
+			""", rows: 6);
+		if (nested) child = AddPattern(document, child, rows: 6, mixdown: true);
+		ObjectId parent = AddScript(document, $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			note.SourceFrame(0.5, 240);
+			note.Off(0.5);
+			""", rows: 5);
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono()).Create(document, parent);
+		float[] pcm = new float[320];
+		plan.Source.Render(pcm.Length, pcm);
+		const float scale = 20f / 32768;
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm[59], Is.EqualTo(59 * scale).Within(1e-6f));
+			Assert.That(pcm[61], Is.EqualTo(scale * 0.5 * 0.995).Within(1e-6f));
+			Assert.That(pcm[100], Is.EqualTo(40 * scale * 0.5 * 0.8).Within(1e-6f));
+			Assert.That(pcm[259], Is.EqualTo(199 * scale * 0.5 * 0.005).Within(1e-6f));
+			Assert.That(pcm.AsSpan(261).ToArray(), Is.All.EqualTo(0f).Within(1e-6f));
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void SeekToLongerReleaseCannotExtendOriginalDeadlineOrAlterSibling(bool nested)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId a = AddReleaseInstrument(document, sample, 200);
+		ObjectId b = AddReleaseInstrument(document, sample, 800);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({a.Value}));
+			Cut(1.5, 0);
+			Note(2, 0, _O({b.Value}), volume: 0.5);
+			""", rows: 8);
+		if (nested) child = AddPattern(document, child, rows: 8, mixdown: true);
+		ObjectId parent = AddScript(document, $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			using var sibling = NoteVirtual(0, _O({sample.Value}), volume: 0.25);
+			note.Off(0.5);
+			note.SourceFrame(1, 240);
+			note.SourceFrame(2.5, 0);
+			""", rows: 5);
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono()).Create(document, parent);
+		float[] pcm = new float[350];
+		plan.Source.Render(pcm.Length, pcm);
+		const float scale = 20f / 32768;
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm[121], Is.EqualTo(scale * (121 * 0.25 + 0.5 * (1 - 61.0 / 800))).Within(1e-6f));
+			Assert.That(pcm[259], Is.GreaterThan(259 * scale * 0.25 + 0.01f));
+			for (int i = 261; i < pcm.Length; i++)
+				Assert.That(pcm[i], Is.EqualTo(i * scale * 0.25).Within(1e-6f), $"sibling frame {i}");
+			Assert.That(plan.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(1));
+		});
+	}
+
+	[TestCase(false, false)]
+	[TestCase(true, false)]
+	[TestCase(false, true)]
+	[TestCase(true, true)]
+	public void BoundPrivateFadeSeekPreservesFadeAndOptionalOffClock(bool nested, bool withOff)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId instrument = AddReleaseInstrument(document, sample, 200);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({instrument.Value}));
+			Cut(1.5, 0);
+			Note(2, 0, _O({instrument.Value}), volume: 0.5);
+			Note(2.25, 0, _O({instrument.Value}));
+			""", rows: 6);
+		if (nested) child = AddPattern(document, child, rows: 6, mixdown: true);
+		string off = withOff ? "Off(0.75, 0);" : "";
+		ObjectId parent = AddScript(document, $"""
+			Note(0, 0, _O({child.Value}), mixdown: true);
+			{off}
+			SourceFrame(1, 0, 240);
+			SourceFrame(1.5, 0, 0);
+			""", rows: 5);
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono()).Create(document, parent);
+		float[] pcm = new float[320];
+		plan.Source.Render(60, pcm.AsSpan(0, 60));
+		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
+		// The public script Fade action only addresses displaced voices,
+		// which are not seek targets. Exercise the bound lifecycle capability
+		// directly rather than broaden authored targeting semantics.
+		((IInheritedLifecycleSound)outer.Sound).InheritFade(60, 0,
+			newNoteDisplacement: true, includeTargetEvents: false);
+		for (int i = 60; i < pcm.Length;)
+		{
+			int n = Math.Min(17, pcm.Length - i);
+			plan.Source.Render(n, pcm.AsSpan(i, n));
+			i += n;
+		}
+		const float scale = 20f / 32768;
+		double Gain(int frame) => (1 - (frame - 60) / 200.0)
+			* (withOff ? 1 - Math.Max(0, frame - 90) / 200.0 : 1);
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm[59], Is.EqualTo(59 * scale).Within(1e-6f));
+			Assert.That(pcm[100], Is.EqualTo(100 * scale * Gain(100)).Within(1e-6f));
+			Assert.That(pcm[121], Is.EqualTo(scale * 0.5 * Gain(121)).Within(1e-6f));
+			Assert.That(pcm[151], Is.EqualTo(31 * scale * 0.5 * Gain(151)).Within(1e-6f));
+			Assert.That(pcm[181], Is.EqualTo(scale * Gain(181)).Within(1e-6f));
+			Assert.That(pcm[259], Is.EqualTo(79 * scale * Gain(259)).Within(1e-6f));
+			Assert.That(pcm.AsSpan(260).ToArray(), Is.All.EqualTo(0f).Within(1e-6f));
+			Assert.That(plan.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(2));
+		});
+	}
+
+	[Test]
+	public void CanceledPrivateReleaseSeekDoesNotReplaceTheStoppedChild()
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId instrument = AddReleaseInstrument(document, sample, 200);
+		ObjectId child = AddPattern(document, instrument, rows: 8);
+		ObjectId parent = AddScript(document, $"""
+			Note(0, 0, _O({child.Value}), mixdown: true);
+			Off(0.5, 0);
+			""", rows: 5);
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono()).Create(document, parent);
+		float[] pcm = new float[100];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[99], Is.GreaterThan(0.01f),
+			"the original release must still be audible");
+		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
+		PlaybackSession stopped = ChildSession(outer);
+		long before = stopped.NextFrame;
+		plan.SequencingContext.Cancellation.RequestStop();
+		Assert.Throws<OperationCanceledException>(() =>
+			((IPlaybackSeekableSound)outer.Sound).SeekFrame(new RenderContext(Mono()),
+				outer.SoundState, 100, 240, relative: false));
+		Assert.Multiple(() =>
+		{
+			Assert.That(ChildSession(outer), Is.SameAs(stopped));
+			Assert.That(stopped.NextFrame, Is.EqualTo(before));
+			Assert.That(stopped.InputEnded, Is.True);
+			Assert.That(plan.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.Zero);
+		});
+	}
+
+	[Test]
+	public void PrivateSeekAfterExplicitReleaseCannotRestartProducer()
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({sample.Value}));
+			Note(2, 0, _O({sample.Value}), pitchMultiplier: 2);
+			""", rows: 5);
+		string before = $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			note.SourceFrame(0.25, 80);
+			note.Off(0.5);
+			""";
+		ObjectId reference = AddScript(document, before, rows: 5);
+		ObjectId sought = AddScript(document, before + "\nnote.SourceFrame(1, 0);", rows: 5);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using var expected = factory.Create(document, reference);
+		using var actual = factory.Create(document, sought);
+		float[] a = new float[480], b = new float[480];
+		expected.Source.Render(a.Length, a);
+		actual.Source.Render(b.Length, b);
+		Assert.That(b, Is.EqualTo(a).Within(1e-6f));
+		Assert.That(actual.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(1));
+	}
+
+	[Test]
+	public void PrivateSeekFarPastFiniteEndDoesNotAffectSibling()
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({sample.Value}));
+			Cut(1, 0);
+			""", rows: 2);
+		ObjectId sought = AddScript(document, $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			using var sibling = NoteVirtual(0, _O({sample.Value}));
+			note.SourceFrame(0.5, long.MaxValue);
+			note.SourceFrame(1, 0);
+			""", rows: 5);
+		ObjectId reference = AddScript(document, $"Note(0, 0, _O({sample.Value}));", rows: 5);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using var plain = factory.Create(document, reference);
+		using var actual = factory.Create(document, sought);
+		float[] a = new float[240], b = new float[240];
+		plain.Source.Render(a.Length, a);
+		actual.Source.Render(b.Length, b);
+		Assert.That(b.AsSpan(60).ToArray(), Is.EqualTo(a.AsSpan(60).ToArray()).Within(1e-6f));
+		Assert.That(actual.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(1));
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void PrivateSeekFreezesPrerollPitchAndResumesLiveParentPitch(bool nested)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId leaf = AddPattern(document, sample, rows: 5);
+		ObjectId child = nested ? AddPattern(document, leaf, rows: 5, mixdown: true) : leaf;
+		ObjectId parent = AddScript(document, $"""
+			Note(0, 0, _O({child.Value}), mixdown: true);
+			SourceFrame(0.5, 0, 80);
+			""", rows: 5);
+		var factory = new PreparedIncrementalPlaybackFactory(Mono());
+		using var plan = factory.Create(document, parent);
+		float[] pcm = new float[100];
+		plan.Source.Render(30, pcm.AsSpan(0, 30));
+		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
+		PlaybackSession prior = ChildSession(outer);
+		outer.SoundState.PitchTrajectory.SetMultiplier(30, 2);
+		plan.Source.Render(30, pcm.AsSpan(30, 30));
+		plan.Source.Render(30, pcm.AsSpan(60, 30));
+		PlaybackSession rebuilt = ChildSession(outer);
+		Assert.That(rebuilt, Is.Not.SameAs(prior));
+		Assert.That(rebuilt.NextFrame, Is.EqualTo(110L));
+		Assert.That(prior.NextFrame, Is.EqualTo(60L));
+		Assert.That(plan.Session.GetChannelState(0).CurrentVoice, Is.SameAs(outer));
+		// At the target the reconstructed ramp has integrated 80 frames
+		// at the seek-time pitch 2, independent of actual prior parent pitch.
+		const float scale = 20f / 32768;
+		Assert.That(pcm[60], Is.EqualTo(160 * scale).Within(1e-6f));
+		Assert.That(pcm[89], Is.EqualTo(218 * scale).Within(1e-6f));
+		outer.SoundState.PitchTrajectory.SetMultiplier(90, 0.5);
+		plan.Source.Render(10, pcm.AsSpan(90));
+		Assert.That(pcm[90], Is.EqualTo(220 * scale).Within(1e-6f));
+		Assert.That(pcm[91], Is.EqualTo(220.5f * scale).Within(1e-6f));
+		Assert.That(outer.StartFrame, Is.Zero);
+		Assert.That(outer.SoundState.PlaybackOriginFrame, Is.Zero);
+	}
+
+	private static ObjectId AddScript(SongDocument document, string code, int rows)
+	{
+		ObjectId id = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(id, "Private seek")
+		{ RowCount = rows, ChannelCount = 1, Source = code });
+		return id;
+	}
 
 	private static SongDocument CreateDocument(out ObjectId sampleId)
 	{

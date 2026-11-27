@@ -94,7 +94,72 @@ public sealed class DirectScriptPlaybackControlTests
             Assert.That(channel.FilterParameters.Resonance,
                 Is.EqualTo(0.6).Within(1e-10));
             Assert.That(channel.CurrentVoice?.SoundState.PlaybackOffset,
-                Is.EqualTo(TimeSpan.FromMilliseconds(55)));
+                Is.EqualTo(TimeSpan.Zero), "Script seek no longer writes the legacy additive offset.");
+            Assert.That(channel.CurrentVoice?.StartFrame, Is.Zero);
+        });
+    }
+
+    [TestCase(false, 0)]
+    [TestCase(false, 1)]
+    [TestCase(false, 2)]
+    [TestCase(true, 0)]
+    [TestCase(true, 1)]
+    [TestCase(true, 2)]
+    public void AllFourSeekOperationsLandOnExactRampFrames(bool relaxed, int target)
+    {
+        SongDocument document = new();
+        ObjectId sample = document.AllocateObjectId();
+        document.Add(SampleDefinition.CreateImported(sample, "Ramp", "ramp.wav",
+            AlternatingWave(ramp: true)));
+        ObjectId root = document.AllocateObjectId();
+        string source = target switch
+        {
+            0 => $"""
+                Note(0, 0, _O({sample.Value}), pitchMultiplier: 2);
+                Seek(0.25, 0, 0.1);
+                SourceFrameRelative(0.5, 0, -20);
+                SeekRelative(0.75, 0, -0.05);
+                SourceFrame(1, 0, 0);
+                """,
+            1 => $"""
+                using var note = NoteVirtual(0, _O({sample.Value}), pitchMultiplier: 2);
+                note.Seek(0.25, 0.1);
+                note.SourceFrameRelative(0.5, -20);
+                note.SeekRelative(0.75, -0.05);
+                note.SourceFrame(1, 0);
+                """,
+            _ => $"""
+                using var group = NewNoteGroup();
+                group += NoteVirtual(0, _O({sample.Value}), pitchMultiplier: 2);
+                group.Seek(0.25, 0.1);
+                group.SourceFrameRelative(0.5, -20);
+                group.SeekRelative(0.75, -0.05);
+                group.SourceFrame(1, 0);
+                """,
+        };
+        document.Add(new ScriptPatternDefinition(root, "Absolute and relative seeks")
+        { RowCount = 3, ChannelCount = 1, Source = (relaxed ? "#order relaxed\n" : "") + source });
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using var whole = factory.Create(document, root);
+        using var split = factory.Create(document, root);
+        float[] expected = new float[150], actual = new float[150];
+        whole.Source.Render(expected.Length, expected);
+        for (int i = 0; i < actual.Length;)
+        {
+            int count = Math.Min(17, actual.Length - i);
+            split.Source.Render(count, actual.AsSpan(i, count));
+            i += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+            // Ramp PCM is 32 * native frame / 32768, default volume 1.
+            Assert.That(actual[29], Is.EqualTo(58f / 1024).Within(1e-6f));
+            Assert.That(actual[30], Is.EqualTo(200f / 1024).Within(1e-6f));
+            Assert.That(actual[60], Is.EqualTo(240f / 1024).Within(1e-6f));
+            Assert.That(actual[90], Is.EqualTo(200f / 1024).Within(1e-6f));
+            Assert.That(actual[120], Is.Zero.Within(1e-6f));
+            Assert.That(actual[121], Is.EqualTo(2f / 1024).Within(1e-6f));
         });
     }
 
@@ -102,7 +167,7 @@ public sealed class DirectScriptPlaybackControlTests
         => new(1000, [new OutputChannelConfiguration(Vector3.Zero,
             positionalImportance: 0)]);
 
-    private static byte[] AlternatingWave()
+    private static byte[] AlternatingWave(bool ramp = false)
     {
         const int frames = 500;
         using MemoryStream stream = new();
@@ -120,7 +185,7 @@ public sealed class DirectScriptPlaybackControlTests
         writer.Write(Encoding.ASCII.GetBytes("data"));
         writer.Write(frames * 2);
         for (int i = 0; i < frames; i++)
-            writer.Write((short)(i % 2 == 0 ? 16000 : -16000));
+            writer.Write((short)(ramp ? 32 * i : i % 2 == 0 ? 16000 : -16000));
         writer.Flush();
         return stream.ToArray();
     }

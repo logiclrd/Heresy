@@ -135,6 +135,67 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
     }
 
+    [TestCase(false, 2)]
+    [TestCase(true, 2)]
+    [TestCase(false, 4)]
+    [TestCase(true, 4)]
+    public void ReconstructedReleaseAgeReachesFmAndBoundInstrumentEnvelope(
+        bool instrumentSource, int elapsed)
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 1, 1, 1], 8, loop: true));
+        registry.AddEnvelope(EnvelopeId, new ThreeFrameRelease());
+        registry.Add(InstrumentId, new InstrumentSound(
+            _ => new ToneSpecification { SourceId = SampleId,
+                VolumeEnvelopeId = EnvelopeId }, registry, registry));
+        FmSynthSound synth = instrumentSource
+            ? MakeSynth(registry, [new FmSoundSourceNode(0, InstrumentId, C4)])
+            : MakeSynth(registry, [new FmEnvelopeNode(0, EnvelopeId)]);
+        SoundState state = synth.CreateState();
+        RenderContext context = Mono(8);
+        float[] prefix = new float[1];
+        synth.Render(context, state, 0, 1, prefix);
+        Assert.That(prefix[0], Is.EqualTo(1).Within(1e-6));
+        state.NoteOffTime = TimeSpan.FromSeconds(1.0 / 8);
+        state.ElapsedReleaseFrames = elapsed;
+        Assert.That(synth.GetEndFrameExclusive(context, state),
+            Is.EqualTo(1 + Math.Max(0, 3 - elapsed)));
+        float[] pcm = new float[5];
+        synth.Render(context, state, 1, pcm.Length, pcm);
+        for (int i = 0; i < pcm.Length; i++)
+            Assert.That(pcm[i], Is.EqualTo(Math.Max(0, 1 - (elapsed + i) / 3.0))
+                .Within(1e-6), $"frame {i}");
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ReconstructedReleaseAgeReachesNestedMultiConstituents(bool nested)
+    {
+        Registry registry = new();
+        registry.AddEnvelope(EnvelopeId, new ThreeFrameRelease());
+        FmSynthNode[] nodes = nested
+            ? [new FmEnvelopeNode(0, EnvelopeId),
+               new FmMultiNode(1, 0, voiceCount: 2, detune: 0,
+                   randomizePhase: false, gainCompensation: true),
+               new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                   randomizePhase: false, gainCompensation: true)]
+            : [new FmEnvelopeNode(0, EnvelopeId),
+               new FmMultiNode(1, 0, voiceCount: 2, detune: 0,
+                   randomizePhase: false, gainCompensation: true)];
+        FmSynthSound synth = MakeSynth(registry, nodes, nested ? 2 : 1);
+        SoundState state = synth.CreateState();
+        RenderContext context = Mono(8);
+        float[] prefix = new float[1];
+        synth.Render(context, state, 0, 1, prefix);
+        Assert.That(prefix[0], Is.EqualTo(1).Within(1e-6));
+        state.NoteOffTime = TimeSpan.FromSeconds(1.0 / 8);
+        state.ElapsedReleaseFrames = 2;
+        float[] pcm = new float[5];
+        synth.Render(context, state, 1, pcm.Length, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[] { 1f / 3, 0, 0, 0, 0 }).Within(1e-6));
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(2));
+    }
+
     [Test]
     public void ToneFilterDrainsExactlyItsPreparedTailAfterSampleNaturalEnd()
     {

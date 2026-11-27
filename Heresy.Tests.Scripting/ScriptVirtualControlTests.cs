@@ -62,7 +62,7 @@ public sealed class ScriptVirtualControlTests
             Assert.That(actual[1].Commands.Single(),
                 Is.EqualTo(new SetNoteVolumeCommand(0.25)));
             Assert.That(actual[2].Commands.Single(),
-                Is.EqualTo(new SetSourceFrameOffsetCommand(256)));
+                Is.EqualTo(new SeekSourceFrameCommand(256)));
             Assert.That(actual[2].Offset.TimeOffset,
                 Is.EqualTo(TimeSpan.FromMilliseconds(10)));
             Assert.That(actual.Skip(3).Select(e => e.Commands.Single()),
@@ -101,7 +101,7 @@ public sealed class ScriptVirtualControlTests
         Type[] types = [
             typeof(StartNoteCommand),
             typeof(SetNoteVolumeCommand),
-            typeof(SetSourceFrameOffsetCommand),
+            typeof(SeekSourceFrameCommand),
             typeof(SetCurrentVoiceDisplacementActionCommand),
             typeof(ApplyPastNoteActionCommand),
         ];
@@ -171,15 +171,19 @@ public sealed class ScriptVirtualControlTests
         string[] calls =
         [
             "Seek(1, 0.2, timeOffsetSeconds: 0.01)",
-            "Pan(1, -0.75, 0.25, 2, timeOffsetSeconds: 0.02)",
-            "Surround(1, true, timeOffsetSeconds: 0.03)",
-            "Filter(1, 0.4, 0.2, timeOffsetSeconds: 0.04)",
-            "FilterCutoff(1, 0.6, timeOffsetSeconds: 0.05)",
-            "FilterResonance(1, 0.3, timeOffsetSeconds: 0.06)",
+            "SeekRelative(1, -0.1, timeOffsetSeconds: 0.02)",
+            "SourceFrameRelative(1, -13, timeOffsetSeconds: 0.03)",
+            "Pan(1, -0.75, 0.25, 2, timeOffsetSeconds: 0.04)",
+            "Surround(1, true, timeOffsetSeconds: 0.05)",
+            "Filter(1, 0.4, 0.2, timeOffsetSeconds: 0.06)",
+            "FilterCutoff(1, 0.6, timeOffsetSeconds: 0.07)",
+            "FilterResonance(1, 0.3, timeOffsetSeconds: 0.08)",
         ];
         NoteCommand[] commands =
         [
-            new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(0.2)),
+            new SeekPlaybackTimeCommand(TimeSpan.FromSeconds(0.2)),
+            new SeekPlaybackTimeCommand(TimeSpan.FromSeconds(-0.1), true),
+            new SeekSourceFrameCommand(-13, true),
             new SetSpatialPositionCommand(new Vector3(-0.75f, 0.25f, 2)),
             new SetSurroundCommand(true),
             new SetResonantFilterCommand(0.4, 0.2),
@@ -218,6 +222,8 @@ public sealed class ScriptVirtualControlTests
 
     [TestCase("Seek(0, -1)")]
     [TestCase("Seek(0, 1e300)")]
+    [TestCase("SeekRelative(0, double.NaN)")]
+    [TestCase("SeekRelative(0, -1e300)")]
     [TestCase("Pan(0, 1e300)")]
     [TestCase("Pan(0, 0, double.NaN)")]
     [TestCase("Filter(0, 0.5, 1.1)")]

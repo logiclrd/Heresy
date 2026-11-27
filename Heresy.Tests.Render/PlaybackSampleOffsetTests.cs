@@ -132,6 +132,108 @@ public sealed class PlaybackSampleOffsetTests
 		Assert.That(split, Is.EqualTo(one));
 	}
 
+	[Test]
+	public void SeekUsesInstantaneousPitchAndKeepsIntegratedPositionAndNoteAge()
+	{
+		SampleSound sound = RampSample(2000, 2000);
+		RenderContext context = Context(1000);
+		SoundState state = sound.CreateState();
+		state.PitchMultiplier = 2;
+		state.PlaybackSpeedMultiplier = 0.5;
+		state.PitchTrajectory.SetMultiplier(0, 1.5);
+		state.PitchTrajectory.SetMultiplier(10, 2);
+		state.NoteOffTime = TimeSpan.FromSeconds(1);
+		// Previous trajectory accumulated 15 at frame 10; current rate
+		// is 4000 native frames/sec, not the historical average.
+		sound.SeekTime(context, state, 10, TimeSpan.FromMilliseconds(100), false);
+		float[] pcm = new float[2];
+		sound.Render(context, state, 10, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { 400, 404 }));
+		sound.SeekFrame(context, state, 12, -5, true);
+		pcm.AsSpan().Clear();
+		sound.Render(context, state, 12, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { 403, 407 }));
+		sound.SeekTime(context, state, 14, TimeSpan.FromMilliseconds(-100), true);
+		pcm.AsSpan().Clear();
+		sound.Render(context, state, 14, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { 11, 15 }));
+		sound.SeekFrame(context, state, 16, 0, false);
+		pcm.AsSpan().Clear();
+		sound.Render(context, state, 16, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { 0, 4 }));
+		Assert.That(state.PlaybackOriginFrame, Is.Zero);
+		Assert.That(state.NoteOffTime, Is.EqualTo(TimeSpan.FromSeconds(1)));
+		Assert.That(sound.GetEndFrameExclusive(context, state), Is.EqualTo(516));
+	}
+
+	[Test]
+	public void SeekToFiniteEndUsesActualDeadlineNotNoteOrigin()
+	{
+		SampleSound sound = RampSample(100, 1000);
+		RenderContext context = Context(1000);
+		SoundState state = sound.CreateState();
+		sound.SeekFrame(context, state, 20, 100, false);
+		Assert.That(sound.GetEndFrameExclusive(context, state), Is.EqualTo(20));
+	}
+
+	[TestCase(1050, -200, 850)]
+	[TestCase(1550, -200, 1350)]
+	[TestCase(2050, -200, 1350)]
+	[TestCase(1550, 500, 1050)]
+	[TestCase(100, -200, 0)]
+	public void ForwardLoopRelativeSeekUsesUnwrappedCoordinate(long initial, long delta, int expected)
+	{
+		float[] data = new float[1500];
+		for (int i = 0; i < data.Length; i++) data[i] = i;
+		SampleDefinition definition = new((ObjectId)1U, "Loop",
+			new ExternalAssetReference("loop.raw"));
+		definition.Loop = new SampleLoop(SampleLoopMode.Forward, 1000, 1500);
+		SampleSound sound = new(definition, new MemorySampleData(1000, 1, data));
+		RenderContext context = Context(1000);
+		SoundState state = sound.CreateState();
+		sound.SeekFrame(context, state, 10, initial, false);
+		sound.SeekFrame(context, state, 10, delta, true);
+		float[] pcm = new float[1];
+		sound.Render(context, state, 10, 1, pcm);
+		Assert.That(pcm[0], Is.EqualTo(expected));
+	}
+
+	[TestCase(SampleLoopMode.Forward, 1501, -2, 1499, 1000)]
+	[TestCase(SampleLoopMode.PingPong, 1501, -1, 1498, 1497)]
+	[TestCase(SampleLoopMode.PingPong, 2000, -2, 1000, 1001)]
+	public void SeekPreservesLoopTraversalDirection(SampleLoopMode mode, long initial,
+		long delta, int first, int second)
+	{
+		float[] data = new float[1500];
+		for (int i = 0; i < data.Length; i++) data[i] = i;
+		SampleDefinition definition = new((ObjectId)1U, "Loop", new ExternalAssetReference("loop.raw"));
+		definition.Loop = new SampleLoop(mode, 1000, 1500);
+		SampleSound sound = new(definition, new MemorySampleData(1000, 1, data));
+		RenderContext context = Context(1000);
+		SoundState state = sound.CreateState();
+		sound.SeekFrame(context, state, 10, initial, false);
+		sound.SeekFrame(context, state, 10, delta, true);
+		float[] pcm = new float[2];
+		sound.Render(context, state, 10, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { first, second }));
+	}
+
+	[Test]
+	public void RelativeNativeSeekPreservesFractionalPlayheadAndClampsAtZero()
+	{
+		SampleSound sound = RampSample(100, 1000);
+		RenderContext context = Context(2000);
+		SoundState state = sound.CreateState();
+		sound.SeekFrame(context, state, 3, 10, true); // 1.5 + 10
+		float[] pcm = new float[2];
+		sound.Render(context, state, 3, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { 11.5f, 12f }));
+		sound.SeekFrame(context, state, 5, long.MinValue, true);
+		pcm.AsSpan().Clear();
+		sound.Render(context, state, 5, 2, pcm);
+		Assert.That(pcm, Is.EqualTo(new float[] { 0f, 0.5f }));
+	}
+
 	private static RenderContext Context(int sampleRate)
 		=> new(
 			new RenderConfiguration(

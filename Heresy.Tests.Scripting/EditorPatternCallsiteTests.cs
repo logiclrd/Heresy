@@ -140,6 +140,8 @@ public sealed class EditorPatternCallsiteTests
     [TestCase("using var note = NoteVirtual(0, _O(17)); note.Displacement(default(SequenceCallsite), 0, NoteDisplacementAction.Cut);")]
     [TestCase("using var note = NoteVirtual(0, _O(17)); note.Past(default(SequenceCallsite), 0, TrackerPastNoteAction.Cut);")]
     [TestCase("using var note = NoteVirtual(0, _O(17)); note.Seek(default(SequenceCallsite), 0, .25);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.SeekRelative(default(SequenceCallsite), 0, -.25);")]
+    [TestCase("using var group = NewNoteGroup(); group.SourceFrameRelative(default(SequenceCallsite), 0, -5);")]
     [TestCase("using var note = NoteVirtual(0, _O(17)); note.Pan(default(SequenceCallsite), 0, .25);")]
     [TestCase("using var group = NewNoteGroup(); group.Surround(default(SequenceCallsite), 0, true);")]
     [TestCase("using var group = NewNoteGroup(); group.Filter(default(SequenceCallsite), 0, .25, .5);")]

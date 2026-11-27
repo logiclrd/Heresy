@@ -83,6 +83,8 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 
 	public void RequestStop() => _cancellation?.RequestStop();
 
+	internal void CheckCancellation() => _cancellation?.ThrowIfCancellationRequested();
+
 	public AudioOutputFormat Format { get; }
 	public long NextFrame => _session.NextFrame;
 	public PlaybackSession Session => _session;
@@ -131,13 +133,33 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		FlushRetiredScopes();
 	}
 
-	public void EndInput()
+	public void EndInput() => EndInput(0, reconstructing: false);
+
+	internal void EndInput(long elapsedReleaseFrames, bool reconstructing, bool includeTargetEvents = true)
 	{
 		if (_session.InputEnded)
 			return;
 		StopProducing();
-		_session.EndInput();
+		_session.EndInput(elapsedReleaseFrames, reconstructing, includeTargetEvents);
 		_session.CutIndefiniteActiveVoicesAfterEndInput();
+	}
+
+	/// <summary>Reconstruct the events due at the selected PCM boundary
+	/// without rendering or advancing a sample. Later events remain pending
+	/// until the caller either resumes playback or stops the producer.</summary>
+	internal void ApplyEventsAtCurrentFrame()
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		long now = _session.NextFrame;
+		for (int i = 0; i < MaximumStepsPerRender; i++)
+		{
+			CheckCancellation();
+			FindNextEvent(now == long.MaxValue ? now : now + 1);
+			if (_pendingEvent is not { } next || next.Frame != now)
+				return;
+			ApplyPendingEvent(next, now);
+		}
+		throw new InvalidOperationException("Recursive boundary exceeded the event budget.");
 	}
 
 	/// <summary>
@@ -325,6 +347,29 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			"Recursive generation exceeded the per-render step budget.");
 	}
 
+	private void ApplyPendingEvent(PendingEvent next, long now)
+	{
+		_pendingEvent = null;
+		_applyingEvent = true;
+		try
+		{
+			_validateNote?.Invoke(next.Note);
+			NoteEvent note = _transform?.Invoke(next.Note, now, next.Owner)
+				?? next.Note;
+			_session.ApplyScopedEvent(
+				next.Owner, note.Target, note.Commands,
+				note.PhysicalPlaybackOwner);
+		}
+		finally
+		{
+			_applyingEvent = false;
+			FlushRetiredScopes();
+		}
+		// This event can start or end a voice before the next PCM
+		// block boundary. Retain its real sample-frame deadline.
+		_editorTraceBoundary?.Invoke(now);
+	}
+
 	public void Render(int frameCount, Span<float> destination)
 		=> RenderCore(frameCount, destination, stopAtLogicalEnd: false);
 
@@ -356,25 +401,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 
 			if (_pendingEvent is { } next && next.Frame == now)
 			{
-				_pendingEvent = null;
-				_applyingEvent = true;
-				try
-				{
-					_validateNote?.Invoke(next.Note);
-					NoteEvent note = _transform?.Invoke(next.Note, now, next.Owner)
-						?? next.Note;
-					_session.ApplyScopedEvent(
-						next.Owner, note.Target, note.Commands,
-						note.PhysicalPlaybackOwner);
-				}
-				finally
-				{
-					_applyingEvent = false;
-					FlushRetiredScopes();
-				}
-				// This event can start or end a voice before the next PCM
-				// block boundary. Retain its real sample-frame deadline.
-				_editorTraceBoundary?.Invoke(now);
+				ApplyPendingEvent(next, now);
 				continue;
 			}
 

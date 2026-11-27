@@ -166,17 +166,25 @@ public sealed class RelaxedDelegateCallsiteTests
                 filter.Invoke(2, 0.4, 0.2, 0.01);
             Action<double, double, double> seek = group.Seek;
             seek(3, 0.2, 0);
+            Action<double, double, double> relative = group.SeekRelative;
+            Action<double, long, double> frames = group.SourceFrameRelative;
+            relative(3, -0.1, 0);
+            frames.Invoke(3, -7, 0);
             """;
         AssertTrace(source, new[] {
             "NoteVirtual(0, _O(17))", "NoteVirtual(0, _O(18))",
-            "pan(1, -0.5, 0, 0, 0)", "filter.Invoke(2, 0.4, 0.2, 0.01)", "seek(3, 0.2, 0)",
+            "pan(1, -0.5, 0, 0, 0)", "filter.Invoke(2, 0.4, 0.2, 0.01)", "seek(3, 0.2, 0)", "relative(3, -0.1, 0)", "frames.Invoke(3, -7, 0)",
         });
         var events = Render(source, true);
         Assert.That(events[2].Target, Is.EqualTo(events[0].Target));
         Assert.That(events[3].Target, Is.EqualTo(events[1].Target));
         Assert.That(events[4].Target, Is.EqualTo(events[1].Target));
         Assert.That(events[3].Commands.Single(), Is.EqualTo(new SetResonantFilterCommand(0.4, 0.2)));
-        Assert.That(events[4].Commands.Single(), Is.EqualTo(new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(0.2))));
+        Assert.That(events[4].Commands.Single(), Is.EqualTo(new SeekPlaybackTimeCommand(TimeSpan.FromSeconds(0.2))));
+        Assert.That(events[5].Target, Is.EqualTo(events[1].Target));
+        Assert.That(events[6].Target, Is.EqualTo(events[1].Target));
+        Assert.That(events[5].Commands.Single(), Is.EqualTo(new SeekPlaybackTimeCommand(TimeSpan.FromSeconds(-0.1), true)));
+        Assert.That(events[6].Commands.Single(), Is.EqualTo(new SeekSourceFrameCommand(-7, true)));
     }
 
     [Test]

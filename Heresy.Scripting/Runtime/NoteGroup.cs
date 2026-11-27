@@ -76,6 +76,18 @@ public sealed class NoteGroup : IDisposable
         _owner.ControlVirtualGroup(_leases, row, PatternScriptProgram.CreateSeekCommand(playbackSeconds), timeOffsetSeconds, callsite);
     }
 
+    public void SeekRelative(double row, double deltaSeconds, double timeOffsetSeconds = 0.0)
+        => SeekRelativeCore(null, row, deltaSeconds, timeOffsetSeconds);
+
+    public void SeekRelative(SequenceCallsite callsite, double row, double deltaSeconds, double timeOffsetSeconds = 0.0)
+        => SeekRelativeCore(callsite, row, deltaSeconds, timeOffsetSeconds);
+
+    private void SeekRelativeCore(SequenceCallsite? callsite, double row, double deltaSeconds, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, PatternScriptProgram.CreateSeekCommand(deltaSeconds, relative: true), timeOffsetSeconds, callsite);
+    }
+
     public void Pan(double row, double x, double y = 0, double z = 0, double timeOffsetSeconds = 0.0)
         => PanCore(null, row, x, y, z, timeOffsetSeconds);
 
@@ -198,7 +210,19 @@ public sealed class NoteGroup : IDisposable
     {
         if (!CheckOwned()) return;
         if (sourceFrameOffset < 0) throw new ArgumentOutOfRangeException(nameof(sourceFrameOffset));
-        _owner.ControlVirtualGroup(_leases, row, new SetSourceFrameOffsetCommand(sourceFrameOffset), timeOffsetSeconds, callsite);
+        _owner.ControlVirtualGroup(_leases, row, new SeekSourceFrameCommand(sourceFrameOffset), timeOffsetSeconds, callsite);
+    }
+
+    public void SourceFrameRelative(double row, long deltaFrames, double timeOffsetSeconds = 0.0)
+        => SourceFrameRelativeCore(null, row, deltaFrames, timeOffsetSeconds);
+
+    public void SourceFrameRelative(SequenceCallsite callsite, double row, long deltaFrames, double timeOffsetSeconds = 0.0)
+        => SourceFrameRelativeCore(callsite, row, deltaFrames, timeOffsetSeconds);
+
+    private void SourceFrameRelativeCore(SequenceCallsite? callsite, double row, long deltaFrames, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, new SeekSourceFrameCommand(deltaFrames, Relative: true), timeOffsetSeconds, callsite);
     }
 
     public void Displacement(double row, NoteDisplacementAction action, double timeOffsetSeconds = 0.0)

@@ -379,12 +379,15 @@ public sealed class PlaybackSession
 		ClearHostCompletionActions(null, virtualId, scopedOwner);
 	}
 
-	public bool IsQuiescent
+	public bool IsQuiescent => _inputEnded && IsAudioQuiescent;
+
+	/// <summary>Audio-only quiescence, also applicable to an explicitly
+	/// stopped private producer whose Fade did not invoke EndInput.</summary>
+	public bool IsAudioQuiescent
 	{
 		get
 		{
-			if (!_inputEnded
-				|| _nextEventIndex < _schedule.Count
+			if (_nextEventIndex < _schedule.Count
 				|| _virtualVoices.Count != 0
 				|| _displacedOutputTails.Count != 0
 				|| _outputSpeakerFilters?.HasTail == true
@@ -418,6 +421,39 @@ public sealed class PlaybackSession
 			}
 			return true;
 		}
+	}
+
+	/// <summary>Conservative end bound for a stopped producer, when all
+	/// current voices have known lifetimes and no detached DSP tails remain.
+	/// Called at reconstruction boundaries, not per PCM frame.</summary>
+	public long? GetKnownStoppedAudioEndFrameExclusive()
+	{
+		if (_nextEventIndex < _schedule.Count || _displacedOutputTails.Count != 0
+			|| _outputSpeakerFilters is not null || _physicalOutputFilters.Count != 0
+			|| _targetedVirtualOutputFilters.Count != 0 || _scopedVirtualOutputFilters.Count != 0)
+			return null;
+		long end = _nextFrame;
+		bool Include(PlaybackVoice? voice)
+		{
+			if (voice is null) return true;
+			// A displaced voice can feed a separately owned output filter
+			// whose tail outlasts the underlying sound's completion.
+			if (voice.DisplacedOutputFilterState is not null) return false;
+			long? bound = GetEffectiveVoiceEndFrameExclusive(voice, _nextFrame,
+				projectStoppedChildren: true);
+			if (!bound.HasValue) return false;
+			end = Math.Max(end, bound.Value);
+			return true;
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+			if (channel.AntiClickTail.IsActive || !Include(channel.CurrentVoice)) return null;
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			if (channel.AntiClickTail.IsActive || !Include(channel.CurrentVoice)) return null;
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			if (channel.AntiClickTail.IsActive || !Include(channel.CurrentVoice)) return null;
+		foreach (PlaybackVoice voice in _virtualVoices)
+			if (!Include(voice)) return null;
+		return end;
 	}
 
 	public bool HasIndefiniteActiveVoices
@@ -968,16 +1004,27 @@ public sealed class PlaybackSession
 	/// No sequencing work is performed here.
 	/// </summary>
 	public void RequestFadeOfActiveVoices(bool newNoteDisplacement = false)
+		=> RequestFadeOfActiveVoices(newNoteDisplacement, elapsedFadeFrames: 0);
+
+	/// <summary>Apply an inherited, already-progressing fade at the current
+	/// boundary, without moving the child's note onset or source playhead.
+	/// The fade duration is still selected from each bound voice's policy.</summary>
+	public void RequestFadeOfActiveVoices(bool newNoteDisplacement, long elapsedFadeFrames,
+		bool reconstructing = false, bool includeTargetEvents = true)
 	{
+		if (elapsedFadeFrames < 0)
+			throw new ArgumentOutOfRangeException(nameof(elapsedFadeFrames));
 		void Fade(PlaybackVoice? voice)
 		{
 			if (voice is null)
 				return;
-			if (newNoteDisplacement)
-				voice.RequestNoteFade(_nextFrame, SampleRate,
-					voice.Configuration.NewNoteFadeDuration);
-			else
-				voice.RequestNoteFade(_nextFrame, SampleRate);
+			voice.RequestNoteFade(_nextFrame, SampleRate,
+				newNoteDisplacement ? voice.Configuration.NewNoteFadeDuration
+					: voice.Configuration.NoteFadeDuration,
+				elapsedFadeFrames);
+			if (reconstructing && voice.Sound is IInheritedLifecycleSound recursive)
+				recursive.InheritFade(_nextFrame - voice.StartFrame, elapsedFadeFrames,
+					newNoteDisplacement, includeTargetEvents);
 		}
 		foreach (PlaybackChannelState channel in _channels.Values)
 			Fade(channel.CurrentVoice);
@@ -989,8 +1036,14 @@ public sealed class PlaybackSession
 			Fade(voice);
 	}
 
-	public void EndInput()
+	public void EndInput() => EndInput(0, reconstructing: false);
+
+	/// <summary>End input with an inherited elapsed release, including
+	/// recursively stopping private descendants at the selected boundary.</summary>
+	public void EndInput(long elapsedReleaseFrames, bool reconstructing, bool includeTargetEvents = true)
 	{
+		if (elapsedReleaseFrames < 0)
+			throw new ArgumentOutOfRangeException(nameof(elapsedReleaseFrames));
 		if (_inputEnded)
 			return;
 
@@ -1001,11 +1054,17 @@ public sealed class PlaybackSession
 				"Playback input cannot end before every scheduled event has been reached.");
 		}
 
+		void Release(PlaybackVoice? voice)
+		{
+			if (voice is null) return;
+			voice.ApplyNoteOff(_nextFrame, SampleRate, elapsedReleaseFrames);
+			if (reconstructing && voice.Sound is IInheritedLifecycleSound recursive)
+				recursive.InheritRelease(_nextFrame - voice.StartFrame, elapsedReleaseFrames, includeTargetEvents);
+		}
+
 		foreach (PlaybackChannelState channel in _channels.Values)
 		{
-			channel.CurrentVoice?.ApplyNoteOff(
-				_nextFrame,
-				_context.Configuration.SampleRate);
+			Release(channel.CurrentVoice);
 			CullFinishedCurrentVoice(
 				channel,
 				_nextFrame);
@@ -1013,9 +1072,7 @@ public sealed class PlaybackSession
 
 		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
 		{
-			channel.CurrentVoice?.ApplyNoteOff(
-				_nextFrame,
-				_context.Configuration.SampleRate);
+			Release(channel.CurrentVoice);
 			CullFinishedCurrentVoice(
 				channel,
 				_nextFrame);
@@ -1023,15 +1080,12 @@ public sealed class PlaybackSession
 
 		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
 		{
-			channel.CurrentVoice?.ApplyNoteOff(
-				_nextFrame, _context.Configuration.SampleRate);
+			Release(channel.CurrentVoice);
 			CullFinishedCurrentVoice(channel, _nextFrame);
 		}
 		foreach (PlaybackVoice voice in _virtualVoices)
 		{
-			voice.ApplyNoteOff(
-				_nextFrame,
-				_context.Configuration.SampleRate);
+			Release(voice);
 		}
 
 		_inputEnded = true;
@@ -1884,6 +1938,11 @@ public sealed class PlaybackSession
                         null, virtualChannelId, scopedOwner, eventFrame, channel);
                     break;
 
+				case SeekPlaybackTimeCommand:
+				case SeekSourceFrameCommand:
+					ApplyScriptSeek(channel, command, eventFrame);
+					break;
+
 				case SetPlaybackOffsetCommand offsetSeconds:
 					if (channel.CurrentVoice is not null)
 						channel.CurrentVoice.SoundState.PlaybackOffset = offsetSeconds.Offset;
@@ -1943,13 +2002,30 @@ public sealed class PlaybackSession
 		}
 	}
 
-	/// <summary>S7x on a virtual channel applies only to its own
-	/// NNA-migrated notes, including the original cursor's scope. It
-	/// must not touch the replacement voice or a sibling's same ID.</summary>
-	/// <summary>
-	/// Apply native source-frame seeking to whichever voice is current at the
-	/// event deadline, whether hosted on a physical or scoped virtual channel.
-	/// </summary>
+	/// <summary>Resolve an authored absolute/relative seek against the voice
+	/// current at the event deadline, without changing note lifetime.</summary>
+	private void ApplyScriptSeek(PlaybackChannelState channel, NoteCommand command, long eventFrame)
+	{
+		if (channel.CurrentVoice is not PlaybackVoice voice) return;
+		if (voice.Sound is IPlaybackSeekableSound seekable)
+		{
+			long frame = checked(eventFrame - voice.StartFrame);
+			// Same frame as the first post-event PCM sample. Native
+			// parametric pitch changes must already be reflected in R.
+			voice.SynchronizeNativeParametric(eventFrame);
+			switch (command)
+			{
+				case SeekPlaybackTimeCommand time:
+					seekable.SeekTime(_context, voice.SoundState, frame, time.Time, time.Relative);
+					break;
+				case SeekSourceFrameCommand source:
+					seekable.SeekFrame(_context, voice.SoundState, frame, source.Frame, source.Relative);
+					break;
+			}
+		}
+	}
+
+	/// <summary>Legacy native source-frame offset (including tracker Oxx).</summary>
 	private void ApplyNativeSourceFrameOffset(
 		PlaybackChannelState channel,
 		SetSourceFrameOffsetCommand offset,
@@ -1968,6 +2044,7 @@ public sealed class PlaybackSession
 		}
 	}
 
+	/// <summary>S7x targets only displaced voices of this scoped virtual identity.</summary>
 	private void ApplyPastVirtualNoteAction(
 		PlaybackChannelState channel, VirtualChannelIdentity virtualChannelId,
 		long? scopedOwner, TrackerPastNoteAction action, long frame)
@@ -2285,6 +2362,11 @@ public sealed class PlaybackSession
 				channel.CurrentVoice?.SetPlaybackFrequency(
 					eventFrame, frequency.Frequency,
 					frequency.LocalPitchContextMultiplier);
+				break;
+
+			case SeekPlaybackTimeCommand:
+			case SeekSourceFrameCommand:
+				ApplyScriptSeek(channel, command, eventFrame);
 				break;
 
 			case SetPlaybackOffsetCommand playbackOffset:
@@ -4315,12 +4397,17 @@ public sealed class PlaybackSession
 
 	private long? GetEffectiveVoiceEndFrameExclusive(
 		PlaybackVoice voice,
-		long absoluteFrame)
+		long absoluteFrame,
+		bool projectStoppedChildren = false)
 	{
 		long? soundEndRelative =
 			voice.Sound.GetEndFrameExclusive(
 				_context,
 				voice.SoundState);
+		if (projectStoppedChildren && voice.Sound is IInheritedLifecycleSound privateChild
+			&& privateChild.GetKnownStoppedEndFrameExclusive() is long childEnd)
+			soundEndRelative = soundEndRelative.HasValue
+				? Math.Min(soundEndRelative.Value, childEnd) : childEnd;
 		if (voice.SoundState.NaturalEndFrameExclusive is long naturalEnd)
 			soundEndRelative = soundEndRelative.HasValue
 				? Math.Min(soundEndRelative.Value, naturalEnd) : naturalEnd;
