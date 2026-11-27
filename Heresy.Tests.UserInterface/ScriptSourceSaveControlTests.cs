@@ -35,7 +35,7 @@ public sealed class ScriptSourceSaveControlTests
                     ScriptDocumentEditor.CreateScriptSequence(workspace, "Test"),
                     () => { }, _ => { });
 
-            DockPanel root = (DockPanel)editor.Content!;
+            DockPanel root = Field<DockPanel>(editor, "_sourceView");
             ScrollViewer scroll = root.Children.OfType<ScrollViewer>().Single();
             StackPanel body = (StackPanel)scroll.Content!;
             Button save = Field<Button>(editor, "_saveSource");
