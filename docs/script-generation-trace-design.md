@@ -323,3 +323,59 @@ identity, allocation/group creation and membership transfers, group-call
 scope across strict drain, and failure location beyond the last known
 context remain open. No changes to shared musical helpers or playback
 runtime. Exact-head Slice 3a CI must pass before the next code slice.
+
+
+## Slice 3b/3c: dynamic invocation, ownership and source provenance
+
+Typed diagnostic-only adapters forward the actual helpers exactly once, with
+the original argument names, order and defaults. Strict emitters retain an
+active invocation across their existing trusted fanout drain; relaxed emitters
+use disposable synchronous scopes. Group creation and successful/unsuccessful
+transfers are recorded using actual NoteGroup identity and the existing lease
+count, not a second ownership implementation. All captured metadata contributes
+to the retention budget. Invocation/group/transfer records use AtTraceOrdinal
+as their position relative to the marker/event timeline; their own IDs identify
+occurrences independently.
+
+For relaxed delegates, retain the existing typed receiver-first adapter
+structure. Diagnostic method groups at multiple authored reference sites use
+one shared unbound adapter per method, or the existing bound-target delegate
+cache. This preserves equality/combination/removal while allowing each
+multicast member's actual group and dynamic invocation to be distinguished.
+An ambiguous reference has a zero-length source span (unknown); never assign
+one arbitrary reference site to all invocations. A single reference site
+provides a fallback anchor, explicitly flagged IsReferenceFallback, not
+necessarily the invocation that executed it. Explicit delegate calls retain
+their authored spans and parent/child invocation links. Group factories through
+relaxed method groups register the real returned group; prefer an explicit
+delegate invocation source span over a method-reference anchor.
+
+Virtual origins are projected from the first retained raw event per full
+generation-qualified channel identity, not playback sort or subsequent note
+retrigger. Prefer the actual allocation callsite, falling back to an available
+reference anchor with explicit provenance, or unknown if unavailable. No
+separate allocator or extra production channel bookkeeping. Repeated allocations
+at one source line remain distinct through identity and enclosing scope.
+
+A helper failure captured before its diagnostic adapter unwinds retains the
+failing invocation (not necessarily the exact subexpression). Other failures
+carry only the last known authored context; cancellation/truncation never
+claim an exact failing invocation. Successful captures have no failure context.
+
+Remaining boundaries: strict non-emitting group factory method references
+have not yet been separately instrumented; a group first encountered by a
+later operation can have unknown creation source. A bound method group whose
+delegate type cannot be named is not adapted; preserve its ordinary semantics
+and do not invent attribution. Exact source mapping for arbitrary expressions
+throwing outside a diagnostic invocation is not claimed. These cases must be
+tested or explicitly represented as unknown before the UI promises an exact
+origin. The new code does not inject diagnostics into ordinary/F6 wrappers or
+add trace checks to their shared runtime methods. Full generated-code comparison
+and CI remain gates.
+
+Slice 3b run #46084210783 passed all 534 scripting tests, Core, File, Render,
+Playback and ARM64; Release was superseded during the UI test phase. Slice 3c
+adds seven regression cases covering first allocation versus retrigger, slot
+reuse, exact-vs-last-known failure, multicast equality/removal and per-group
+attribution, and relaxed allocation/group factory method groups. Exact-head
+full CI remains pending.
