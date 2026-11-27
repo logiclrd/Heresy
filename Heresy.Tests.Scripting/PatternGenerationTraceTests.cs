@@ -282,6 +282,83 @@ public sealed class PatternGenerationTraceTests
     }
 
     [Test]
+    public void RelaxedMulticastPreservesRemovalEqualityAndActualMemberGroupProvenance()
+    {
+        const string source = """
+            #order relaxed
+            using var first = NewNoteGroup();
+            first += NoteVirtual(0, _O(17));
+            first += NoteVirtual(0, _O(18));
+            using var second = NewNoteGroup();
+            second += NoteVirtual(0, _O(19));
+            Action<double, double> a = first.Off;
+            Action<double, double> equal = first.Off;
+            Action<double, double> b = second.Off;
+            var combined = a + b;
+            combined -= equal;
+            combined(2, 0);
+            var both = a + b;
+            both(4, 0);
+            """;
+        var trace = Compile(source).Capture();
+        Assert.That(trace.Status, Is.EqualTo(PatternGenerationTraceStatus.Completed), trace.Detail);
+        AssertMusicalParity(Playback(source), trace.Events.Select(e => e.Note).ToArray());
+        var offs = trace.Events.Skip(3).ToArray();
+        Assert.That(offs.Length, Is.EqualTo(4));
+        Assert.That(offs.Select(e => e.GroupId), Is.EqualTo(new long?[] {
+            trace.Groups[1].Id, trace.Groups[0].Id, trace.Groups[0].Id, trace.Groups[1].Id }));
+        Assert.That(offs[1].InvocationId, Is.EqualTo(offs[2].InvocationId));
+        Assert.That(offs[1].InvocationId, Is.Not.EqualTo(offs[3].InvocationId));
+        var members = offs.Skip(1).Select(e => trace.Invocations.Single(i => i.Id == e.InvocationId)).ToArray();
+        Assert.That(members.Select(i => i.ParentInvocationId).Distinct().Count(), Is.EqualTo(1));
+        Assert.That(members.Select(i => i.IsReferenceFallback), Is.All.True);
+        Assert.That(members.Select(i => i.SourceSpan.Length), Is.All.Zero);
+        Assert.That(offs.Skip(1).Select(e => source.Substring(e.Note.EditorCallsite!.Value.Start, e.Note.EditorCallsite.Value.Length)),
+            Is.All.EqualTo("both(4, 0)"));
+    }
+
+    [Test]
+    public void RelaxedGroupFactoryDelegateUsesActualCallAsCreationOrigin()
+    {
+        const string source = """
+            #order relaxed
+            Func<NoteGroup> make = NewNoteGroup;
+            Func<NoteGroup> equal = NewNoteGroup;
+            if (make == equal)
+            {
+                using var group = make();
+                group += NoteVirtual(0, _O(17));
+                group.Off(4);
+            }
+            """;
+        var trace = Compile(source).Capture();
+        Assert.That(trace.Status, Is.EqualTo(PatternGenerationTraceStatus.Completed), trace.Detail);
+        Assert.That(trace.Groups.Count, Is.EqualTo(1));
+        var span = trace.Groups.Single().CreationSpan!.Value;
+        Assert.That(source.Substring(span.Start, span.Length), Is.EqualTo("make()"));
+        Assert.That(trace.Events.Count, Is.EqualTo(2));
+        Assert.That(trace.Events.Last().GroupId, Is.EqualTo(trace.Groups.Single().Id));
+        AssertMusicalParity(Playback(source), trace.Events.Select(e => e.Note).ToArray());
+    }
+
+    [Test]
+    public void RelaxedAllocationMethodGroupUsesActualDelegateCallAsOrigin()
+    {
+        const string source = """
+            #order relaxed
+            Func<double, Heresy.Core.Objects.ObjectId, double, double, double?, double,
+                Heresy.Core.Objects.ObjectId?, VirtualNote> make = NoteVirtual;
+            using var note = make(0, _O(17), 1, 1, null, 0, null);
+            note.Off(4);
+            """;
+        var trace = Compile(source).Capture();
+        Assert.That(trace.Status, Is.EqualTo(PatternGenerationTraceStatus.Completed), trace.Detail);
+        var span = trace.GetVirtualOrigins().Single().CreationSpan!.Value;
+        Assert.That(source.Substring(span.Start, span.Length), Is.EqualTo("make(0, _O(17), 1, 1, null, 0, null)"));
+        AssertMusicalParity(Playback(source), trace.Events.Select(e => e.Note).ToArray());
+    }
+
+    [Test]
     public void RelaxedCallbackEmitterRetainsParentInvocationAndExactEmitterSpan()
     {
         const string source = """
