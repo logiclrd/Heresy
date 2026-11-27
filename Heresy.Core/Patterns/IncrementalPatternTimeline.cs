@@ -881,7 +881,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						// both physical and virtual targets. Resolve it against the
 						// voice present at the actual wall deadline, not the row.
 						or SetCurrentVoiceDisplacementActionCommand
-						or ApplyPastNoteActionCommand)
+						or ApplyPastNoteActionCommand
+						or SetPlaybackOffsetCommand or SetSpatialPositionCommand or SetSurroundCommand
+						or SetResonantFilterCommand or SetResonantFilterCutoffCommand
+						or SetResonantFilterResonanceCommand)
 						&& (virtualTarget || c is not (SelectPatternSourceCommand
 							or ApplySampleOffsetCommand
 							// Raw physical S7x is translated into one of the
@@ -899,12 +902,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 							// Pure physical-channel controls can be deferred to
 							// their actual wall deadline; they must not apply
 							// while only preparing a future raw script note.
-							or SetPlaybackOffsetCommand
-							or SetPlaybackFrequencyCommand
-							or SetSpatialPositionCommand or SetSurroundCommand
-							or SetResonantFilterCommand
-							or SetResonantFilterCutoffCommand
-							or SetResonantFilterResonanceCommand)))))
+							or SetPlaybackFrequencyCommand)))))
 				throw new NotSupportedException(
 					"Positive fixed wall-time offsets require standalone global Tempo/Speed or supported physical/virtual note commands.");
 			if (note.Target.Kind is not (ChannelTargetKind.Physical
@@ -934,6 +932,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 								or SetNoteFilterAssignmentsCommand
 								or SetCurrentVoiceDisplacementActionCommand
 								or ApplyPastNoteActionCommand
+								or SetPlaybackOffsetCommand or SetSpatialPositionCommand or SetSurroundCommand
+								or SetResonantFilterCommand or SetResonantFilterCutoffCommand
+								or SetResonantFilterResonanceCommand
 							: command is NoteOffCommand or NoteCutCommand
 								or SetNoteVolumeCommand
 						: command is StartParametricEffectCommand

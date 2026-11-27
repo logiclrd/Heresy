@@ -252,7 +252,7 @@ returns a disposable `VirtualNote`:
 ```csharp
 using var note = NoteVirtual(0, _O(17),
     pitchMultiplier: 1.0, playbackSpeedMultiplier: 1.0,
-    mixdown: false, volume: null, timeOffsetSeconds: 0.0);
+    volume: null, timeOffsetSeconds: 0.0);
 note.Note(4, _O(17), Semitone(7));
 note.Off(8);
 note.Cut(12);
@@ -265,8 +265,16 @@ scheduled events. A recycled slot gets a distinct generation. Aliases
 of a disposed handle cannot emit commands, and misuse is warned.
 Use a using declaration or block to guarantee cleanup. Unproven
 ownership termination produces a compiler warning; invocation-end
-cleanup is a safeguard. Nested Pattern/Sequence sources require
-`mixdown: true` on each virtual start/retrigger.
+cleanup is a safeguard. Pattern/Sequence sources on owned virtual channels
+automatically use a private recursive mixdown on each start or retrigger.
+The recursive timeline infers this from the resolved frozen source type;
+Samples, Synths and Instruments retain direct playback semantics and their
+originating source IDs. There is no virtual `mixdown` parameter. Existing
+scripts must remove that argument (including the old fifth positional
+Boolean); the physical Note helper still offers the explicit choice.
+Generation-zero legacy numeric engine targets retain their explicit
+recursive mixdown requirement. Raw script commands do not resolve source
+types themselves; production recursive scheduling performs inference.
 
 ### Owning note groups
 
@@ -292,7 +300,8 @@ Invalid transfers warn without revoking valid ownership. A start evaluated
 on the right-hand side before an invalid transfer remains scheduled.
 
 A group forwards `Volume`, `Off`, `Cut`, `SourceFrame`, `Displacement`,
-`Past`, `NoteFilter` and `ChannelFilter` to its own members with the same
+`Past`, `NoteFilter`, `ChannelFilter`, `Seek`, `Pan`, `Surround`,
+`Filter`, `FilterCutoff` and `FilterResonance` to its own members with the same
 arguments as the handle. There is no group `Note` method and no broadcast
 or separate engine channel behind the group. Dispose releases all leases
 without stopping music. Strict streaming yields once per member before
@@ -328,6 +337,39 @@ broadcast, ID reuse, cancellation, chunk invariance) and
 `PlaybackExportPcmParityTests` (production realtime/offline mono
 and 5.1 PCM equivalence).
 
+### Physical channel control parity
+
+The physical Pattern helpers also expose the following typed controls
+(PR #72, slice 2a):
+
+```csharp
+Volume(row, channel, volume, timeOffsetSeconds: 0.0);
+SourceFrame(row, channel, sourceFrameOffset, timeOffsetSeconds: 0.0);
+Displacement(row, channel, NoteDisplacementAction.Continue,
+    timeOffsetSeconds: 0.0);
+Past(row, channel, TrackerPastNoteAction.Cut,
+    timeOffsetSeconds: 0.0);
+```
+
+They use the Pattern-local physical channel index and the same typed
+commands, validation and authored ordering as the virtual equivalents.
+Volume is normalized [0,1], remembered on that logical channel, and
+controls the live source gain for a flattened Pattern/Sequence.
+SourceFrame uses a nonnegative native frame index on the current
+seekable sound, distinct from seconds-based Seek. Displacement
+overrides the current logical note's next-note action, including the
+existing flattened-source displacement policy. Past addresses displaced
+logical notes by physical origin and playback owner, never the current
+replacement or unrelated logical owners. For a former flattened invocation,
+all three actions stop its future event production and control its surviving
+physical, virtual, displaced and private recursive descendants, even after
+natural producer completion. Past Fade uses ordinary note-fade duration,
+not the new-note-action fade duration. Detached DSP/anti-click residue
+retains its normal independent lifetime. Raw tracker S70/S71/S72 in the
+incremental arrangement follow the same logical-source behavior.
+Positive fixed-wall offsets are evaluated at their resolved deadline.
+Generated-only F6 overloads are not authored entrypoints.
+
 ### Virtual handle controls
 
 The owned handle exposes typed instance controls; successful calls emit one raw event in strict or relaxed mode:
@@ -335,6 +377,12 @@ The owned handle exposes typed instance controls; successful calls emit one raw 
 ```csharp
 note.Volume(row, volume, timeOffsetSeconds: 0.0);
 note.SourceFrame(row, sourceFrameOffset, timeOffsetSeconds: 0.0);
+note.Seek(row, playbackSeconds, timeOffsetSeconds: 0.0);
+note.Pan(row, x, y: 0, z: 0, timeOffsetSeconds: 0.0);
+note.Surround(row, enabled, timeOffsetSeconds: 0.0);
+note.Filter(row, cutoff, resonance, timeOffsetSeconds: 0.0);
+note.FilterCutoff(row, cutoff, timeOffsetSeconds: 0.0);
+note.FilterResonance(row, resonance, timeOffsetSeconds: 0.0);
 note.Displacement(row, NoteDisplacementAction.Continue,
     timeOffsetSeconds: 0.0);
 note.Past(row, TrackerPastNoteAction.Cut,
@@ -347,7 +395,7 @@ note.Past(row, TrackerPastNoteAction.Cut,
   invocation's channel or a later generation of a recycled slot.
 - **Native offset:** `note.SourceFrame` takes a nonnegative `long`
   in **source frames**, not the wall seconds used by the existing
-  physical-script `Seek` helper. At the actual event deadline it seeks
+  `Seek` helper. At the actual event deadline it seeks
   the voice then current *only when that bound sound implements*
   `ISourceFrameSeekableSound`; otherwise it does nothing, as does
   physical Oxx. Direct and replay-required capabilities retain
@@ -355,6 +403,25 @@ note.Past(row, TrackerPastNoteAction.Cut,
   emit the existing rate-limited cost warning under
   `Script virtual native offset`. No decoded buffers or journal are
   cached to emulate seeking.
+- **Seconds seek:** `Seek` uses the existing physical seconds-based offset,
+  evaluated against the current bound voice at the actual deadline. It does
+  not remember an offset for a future note. Native SourceFrame remains distinct.
+- **Spatial:** Pan sets finite float-representable absolute scene coordinates
+  and disables surround. Surround true resets position to center, false
+  merely disables surround. Both update the current voice and remembered state.
+- **Legacy resonant filter:** Filter sets normalized cutoff and resonance;
+  FilterCutoff and FilterResonance preserve the other remembered parameter.
+  This is the tracker-style resonant low-pass, not NoteFilter or ChannelFilter.
+  Position, surround, volume and these two scalar filter parameters survive
+  silent PCM-channel eviction until the generated identity's final scheduled
+  use. They initialize retriggers without copying DSP histories. Already
+  displaced voices keep their captured state. Private recursive sources
+  receive these controls on the outer bound voice, not on individual descendants.
+  A private mixdown already produces the configured speaker feeds, so its
+  outer Pan updates state without redistributing that PCM; outer stereo
+  Surround (right-channel phase inversion) and the per-speaker resonant
+  filter still apply. Direct sources audibly respond to Pan. This is the
+  same pre-existing behavior for physical and virtual mixdown notes.
 - **Displacement:** The strongly typed `NoteDisplacementAction`
   accepts `Cut`, `Continue`, `Off`, or `Fade`. It overrides
   the **current** voice's behavior on the next start for the same
@@ -376,8 +443,8 @@ at the actual deadline, not when the script merely yields the event.
 These controls target the handle's generated identity only. The existing playback
 broadcast surface supports Note Off/Cut and note volume on eligible
 earlier-started voices. **It does not support** native offsets,
-displacement policy, past-note actions, tracker channel memory, or
-source starts on `AllVirtualInScope` or `AllVirtual`. The
+displacement policy, past-note actions, spatial or legacy-filter controls,
+tracker channel memory, or source starts on `AllVirtualInScope` or `AllVirtual`. The
 incremental validation layer rejects those raw broadcast commands
 instead of deferring a renderer exception; no extra broadcast script
 helpers are introduced.

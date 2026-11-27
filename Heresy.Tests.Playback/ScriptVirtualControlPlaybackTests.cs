@@ -100,6 +100,110 @@ public sealed class ScriptVirtualControlPlaybackTests
         });
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void PhysicalControlsMatchOwnedVoiceAndDeferredSeekTargetsReplacement(bool relaxed)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: true);
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        string lookup = $"_O({sample.Value})";
+        ObjectId physical = AddPattern(document, prefix + $$"""
+            Note(0, 0, {{lookup}});
+            using var sibling = NoteVirtual(0, {{lookup}});
+            Volume(0.25, 0, 0.5);
+            Displacement(0.5, 0, NoteDisplacementAction.Continue);
+            SourceFrame(0.5, 0, 300, timeOffsetSeconds: 0.04);
+            Note(0.75, 0, {{lookup}});
+            Past(1.25, 0, TrackerPastNoteAction.Cut);
+            Volume(1.5, 0, 0.25);
+            Cut(3, 0);
+            """);
+        ObjectId virtualPattern = AddPattern(document, prefix + $$"""
+            using var note = NoteVirtual(0, {{lookup}});
+            using var sibling = NoteVirtual(0, {{lookup}});
+            note.Volume(0.25, 0.5);
+            note.Displacement(0.5, NoteDisplacementAction.Continue);
+            note.SourceFrame(0.5, 300, timeOffsetSeconds: 0.04);
+            note.Note(0.75, {{lookup}});
+            note.Past(1.25, TrackerPastNoteAction.Cut);
+            note.Volume(1.5, 0.25);
+            note.Cut(3);
+            """);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var reference = factory.Create(document, virtualPattern);
+        using var actual = factory.Create(document, physical);
+        float[] expected = new float[480], pcm = new float[480];
+        reference.Source.Render(expected.Length, expected);
+        actual.Source.Render(130, pcm.AsSpan(0, 130));
+        Assert.That(actual.Session.VirtualVoices.Count, Is.EqualTo(1));
+        for (int pos = 130; pos < pcm.Length;)
+        {
+            int count = Math.Min(17, pcm.Length - pos);
+            actual.Source.Render(count, pcm.AsSpan(pos, count));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(pcm, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(pcm[114], Is.GreaterThan(pcm[95] + 0.15f),
+                "Deferred native seek affects the replacement voice.");
+            Assert.That(pcm[175], Is.LessThan(pcm[140] - 0.04f),
+                "Past cuts the old voice but leaves the current one and sibling.");
+            Assert.That(pcm[390], Is.EqualTo(16000f / 32768f).Within(1e-6f));
+            Assert.That(actual.Session.VirtualVoices, Is.Empty);
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void PhysicalVolumeAndDisplacementControlFlattenedLogicalNote(bool relaxed)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: false);
+        string lookup = $"_O({sample.Value})";
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        ObjectId child = document.AllocateObjectId();
+        document.Add(new ScriptPatternDefinition(child, "Flattened child")
+        {
+            RowCount = 4, ChannelCount = 2, Source = prefix + $$"""
+                Note(0, 0, {{lookup}});
+                using var guest = NoteVirtual(0, {{lookup}});
+                Note(2, 1, {{lookup}});
+                """
+        });
+        ObjectId root = AddPattern(document, prefix + $$"""
+            Note(0, 0, _O({{child.Value}}));
+            using var sibling = NoteVirtual(0, {{lookup}});
+            Volume(0.5, 0, 0.25);
+            Displacement(0.75, 0, NoteDisplacementAction.Continue);
+            Note(1, 0, {{lookup}}, volume: 0.5);
+            """);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var plan = factory.Create(document, root);
+        using var chunked = factory.Create(document, root);
+        float[] pcm = new float[360], chunks = new float[360];
+        plan.Source.Render(pcm.Length, pcm);
+        for (int pos = 0; pos < chunks.Length;)
+        {
+            int count = Math.Min(19, chunks.Length - pos);
+            chunked.Source.Render(count, chunks.AsSpan(pos, count));
+            pos += count;
+        }
+        const float amplitude = 16000f / 32768f;
+        Assert.Multiple(() =>
+        {
+            Assert.That(chunks, Is.EqualTo(pcm).Within(1e-6f));
+            Assert.That(pcm[30], Is.EqualTo(3 * amplitude).Within(1e-6f));
+            Assert.That(pcm[90], Is.EqualTo(1.5f * amplitude).Within(1e-6f),
+                "Logical gain reaches physical and virtual descendants once, not the sibling.");
+            Assert.That(pcm[150], Is.EqualTo(2 * amplitude).Within(1e-6f),
+                "The displaced flattened invocation continues beside its replacement.");
+            Assert.That(pcm[270], Is.EqualTo(2.25f * amplitude).Within(1e-6f),
+                "Continue permits the old producer's later note.");
+        });
+    }
+
     [Test]
     public void DeferredVirtualControlOfCanceledCursorCannotTouchSiblingId()
     {
@@ -107,7 +211,13 @@ public sealed class ScriptVirtualControlPlaybackTests
         ObjectId sample = AddSample(document, stepped: false);
         ObjectId first = AddPattern(document, $"""
             using var v7 = NoteVirtual(0, _O({sample.Value}));
-            v7.Volume(0.5, 0.05, timeOffsetSeconds: 0.08);
+            v7.Volume(0.125, 0.05, timeOffsetSeconds: 0.125);
+            v7.Pan(0.125, 0.8, timeOffsetSeconds: 0.125);
+            v7.Surround(0.125, true, timeOffsetSeconds: 0.125);
+            v7.Filter(0.125, 0.2, 0.4, timeOffsetSeconds: 0.125);
+            v7.FilterCutoff(0.125, 0.3, timeOffsetSeconds: 0.125);
+            v7.FilterResonance(0.125, 0.7, timeOffsetSeconds: 0.125);
+            v7.Seek(0.125, 1.5, timeOffsetSeconds: 0.125);
             """);
         ObjectId second = AddPattern(document,
             $"using var v7 = NoteVirtual(0, _O({sample.Value}));");
@@ -118,12 +228,14 @@ public sealed class ScriptVirtualControlPlaybackTests
         plan.Source.Render(before.Length, before);
         Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
         Assert.That(plan.Timeline.IsInvocationActive(sibling), Is.True);
+        Assert.That(plan.Session.RetainedScopedVirtualMemoryCount, Is.LessThanOrEqualTo(1),
+            "Cancellation retires the abandoned generation's memory even while audio tails remain.");
         float[] after = new float[160];
         plan.Source.Render(after.Length, after);
         Assert.Multiple(() =>
         {
             Assert.That(after[145], Is.GreaterThan(0.42f),
-                "The canceled deferred volume command cannot reach another cursor.");
+                "The canceled deferred scalar controls and seek cannot reach another cursor.");
             Assert.That(after[145], Is.LessThan(before[10] * 0.7f),
                 "The canceled cursor's own voice is gone.");
         });
@@ -185,6 +297,196 @@ public sealed class ScriptVirtualControlPlaybackTests
         });
     }
 
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
+    public void VirtualSpatialAndFilterMemoryMatchesPhysicalAcrossSilentGap(bool relaxed, bool privateSource)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: true);
+        ObjectId source = privateSource ? AddPattern(document, $"Note(0, 0, _O({sample.Value}));") : sample;
+        string lookup = $"_O({source.Value})";
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        string mix = privateSource ? ", mixdown: true" : "";
+        // Physical channels retain their state throughout silence. The
+        // generated virtual channel must reconstruct it after eviction.
+        ObjectId physical = AddPattern(document, prefix + $$"""
+            Note(0, 0, {{lookup}}{{mix}});
+            Pan(0, 0, -0.7, 0.2);
+            Filter(0, 0, 0.4, 0.2);
+            Surround(0.25, 0, true);
+            Cut(0.5, 0);
+            FilterCutoff(1, 0, 0.65);
+            Pan(1, 0, 0.65, -0.1, 0.3);
+            FilterResonance(1.25, 0, 0.1);
+            Seek(1.25, 0, 0.2);
+            Note(2, 0, {{lookup}}{{mix}});
+            Seek(2, 0, 0.25, timeOffsetSeconds: 0.02);
+            Surround(2.5, 0, true);
+            Surround(2.75, 0, false);
+            Pan(3, 0, -0.5);
+            Cut(3.5, 0);
+            """);
+        ObjectId virtualId = AddPattern(document, prefix + $$"""
+            using var note = NoteVirtual(0, {{lookup}});
+            note.Pan(0, -0.7, 0.2);
+            note.Filter(0, 0.4, 0.2);
+            note.Surround(0.25, true);
+            note.Cut(0.5);
+            note.FilterCutoff(1, 0.65);
+            note.Pan(1, 0.65, -0.1, 0.3);
+            note.FilterResonance(1.25, 0.1);
+            note.Seek(1.25, 0.2);
+            note.Note(2, {{lookup}});
+            note.Seek(2, 0.25, timeOffsetSeconds: 0.02);
+            note.Surround(2.5, true);
+            note.Surround(2.75, false);
+            note.Pan(3, -0.5);
+            note.Cut(3.5);
+            """);
+        var factory = new PreparedIncrementalPlaybackFactory(new RenderConfiguration(1000,
+            [new OutputChannelConfiguration(new Vector3(-1, 0, 0)),
+             new OutputChannelConfiguration(new Vector3(1, 0, 0))]));
+        using var reference = factory.Create(document, physical);
+        using var actual = factory.Create(document, virtualId);
+        using var chunks = factory.Create(document, virtualId);
+        float[] expected = new float[960], rendered = new float[960], chunked = new float[960];
+        reference.Source.Render(480, expected);
+        actual.Source.Render(180, rendered.AsSpan(0, 360));
+        Assert.That(actual.Session.RetainedScopedVirtualChannelCount, Is.Zero);
+        Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.EqualTo(1));
+        actual.Source.Render(300, rendered.AsSpan(360));
+        for (int pos = 0; pos < 480;)
+        {
+            int count = Math.Min(17, 480 - pos);
+            chunks.Source.Render(count, chunked.AsSpan(2 * pos, 2 * count));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(rendered, Is.EqualTo(expected).Within(1e-5f));
+            Assert.That(chunked, Is.EqualTo(expected).Within(1e-5f));
+            Assert.That(Math.Abs(expected[540]), Is.GreaterThan(1e-4f),
+                "The retrigger must actually produce audio.");
+            if (privateSource)
+                Assert.That(expected[540], Is.EqualTo(expected[541]).Within(1e-6f),
+                    "Private mixdown preserves its child's existing speaker feeds, not outer pan.");
+            else
+                Assert.That(Math.Abs(expected[540] - expected[541]), Is.GreaterThan(1e-4f),
+                    "The remembered off-center position is audible on a direct retrigger.");
+            Assert.That(expected[640], Is.EqualTo(-expected[641]).Within(1e-5f),
+                "Outer surround phase encoding still applies to centered stereo, including private mixdown.");
+            Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
+            Assert.That(chunks.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ReverseParityGroupMatchesExplicitControlsAndPreservesDisplacedVoices(bool relaxed)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: true);
+        string lookup = $"_O({sample.Value})";
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        string starts = $$"""
+            using var other = NoteVirtual(0, {{lookup}});
+            using var a = NoteVirtual(0, {{lookup}});
+            using var b = NoteVirtual(0, {{lookup}});
+            a.Pan(0, -0.5);
+            a.Displacement(0, NoteDisplacementAction.Continue);
+            a.Note(0.25, {{lookup}});
+            """;
+        string[] controls =
+        [
+            "Seek(0.5, 0.3, timeOffsetSeconds: 0.02)", "Pan(0.75, 0.75)",
+            "Filter(1, 0.4, 0.2)", "FilterCutoff(1.25, 0.65)",
+            "FilterResonance(1.5, 0.1)", "Surround(1.75, true)",
+            "Surround(2, false)", "Past(2.25, TrackerPastNoteAction.Cut)", "Cut(3)",
+        ];
+        ObjectId groupId = AddPattern(document, prefix + starts + "\n" +
+            "using var group = NewNoteGroup(); group += a; group += b;\n"
+            + string.Join(";\n", Array.ConvertAll(controls, call => "group." + call)) + ";");
+        ObjectId explicitId = AddPattern(document, prefix + starts + "\n"
+            + string.Join(";\n", Array.ConvertAll(controls, call => "a." + call + "; b." + call)) + ";");
+        var factory = new PreparedIncrementalPlaybackFactory(new RenderConfiguration(1000,
+            [new OutputChannelConfiguration(new Vector3(-1, 0, 0)),
+             new OutputChannelConfiguration(new Vector3(1, 0, 0))]));
+        using var reference = factory.Create(document, explicitId);
+        using var actual = factory.Create(document, groupId);
+        float[] expected = new float[960], rendered = new float[960];
+        reference.Source.Render(480, expected);
+        for (int pos = 0; pos < 480;)
+        {
+            int count = Math.Min(19, 480 - pos);
+            actual.Source.Render(count, rendered.AsSpan(pos * 2, count * 2));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(rendered, Is.EqualTo(expected).Within(1e-5f));
+            Assert.That(actual.Session.VirtualVoices, Is.Empty);
+            Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
+            Assert.That(actual.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+        });
+    }
+
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
+    public void VirtualVolumeSurvivesSilentGap(bool relaxed, bool changeWhileSilent)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: false);
+        string lookup = $"_O({sample.Value})";
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        string idleChange = changeWhileSilent ? "note.Volume(1, 0.125);\n" : "";
+        double remembered = changeWhileSilent ? 0.125 : 0.25;
+        ObjectId actualId = AddPattern(document, prefix + $$"""
+            using var note = NoteVirtual(0, {{lookup}}, volume: 0.25);
+            note.Cut(0.5);
+            {{idleChange}}
+            note.Note(2, {{lookup}});
+            note.Cut(3);
+            """);
+        // Explicit start volume is the independent musical reference.
+        ObjectId referenceId = AddPattern(document, prefix + $$"""
+            using var note = NoteVirtual(0, {{lookup}}, volume: 0.25);
+            note.Cut(0.5);
+            note.Note(2, {{lookup}}, volume: {{(changeWhileSilent ? "0.125" : "0.25")}});
+            note.Cut(3);
+            """);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var reference = factory.Create(document, referenceId);
+        using var actual = factory.Create(document, actualId);
+        using var chunks = factory.Create(document, actualId);
+        float[] expected = new float[480], rendered = new float[480], chunked = new float[480];
+        reference.Source.Render(expected.Length, expected);
+        actual.Source.Render(180, rendered.AsSpan(0, 180));
+        Assert.That(actual.Session.RetainedScopedVirtualChannelCount, Is.Zero,
+            "No silent PCM channel should remain active before the next note.");
+        Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.EqualTo(1),
+            "The referenceable generation still remembers its volume.");
+        actual.Source.Render(300, rendered.AsSpan(180));
+        for (int pos = 0; pos < chunked.Length;)
+        {
+            int count = Math.Min(17, chunked.Length - pos);
+            chunks.Source.Render(count, chunked.AsSpan(pos, count));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(expected[180], Is.Zero.Within(1e-6f));
+            Assert.That(expected[270], Is.EqualTo(16000f / 32768f * remembered).Within(1e-6));
+            Assert.That(rendered, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(chunked, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
+            Assert.That(chunks.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
+        });
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void OverlappingRecycledGroupsReclaimRenderStateDuringLongRunningPattern(bool relaxed)
@@ -207,6 +509,12 @@ public sealed class ScriptVirtualControlPlaybackTests
                 group += lead;
                 group.ChannelFilter(row + 0.25, _O({{filter.Value}}));
                 group.Volume(row + 0.5, 0.25);
+                group.Pan(row + 0.5, 0.7, -0.2);
+                group.Filter(row + 0.5, 0.55, 0.2);
+                group.Surround(row + 0.75, true, timeOffsetSeconds: 0.05);
+                group.FilterCutoff(row + 0.75, 0.7, timeOffsetSeconds: 0.05);
+                group.FilterResonance(row + 0.75, 0.1, timeOffsetSeconds: 0.05);
+                group.Seek(row + 0.75, 0.2, timeOffsetSeconds: 0.05);
                 group.Past(row + 0.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.06);
                 group.Cut(row + 0.75, timeOffsetSeconds: 0.06);
             }
@@ -223,7 +531,7 @@ public sealed class ScriptVirtualControlPlaybackTests
         int totalFrames = (cycles + 3) * framesPerRow;
         float[] expected = new float[totalFrames], actual = new float[totalFrames];
         reference.Source.Render(totalFrames, expected);
-        int peakChannels = 0, peakFilters = 0, peakRetiring = 0, peakDisplaced = 0;
+        int peakChannels = 0, peakFilters = 0, peakRetiring = 0, peakDisplaced = 0, peakMemory = 0;
         int[] chunks = [1, 37, 83, 19, 113];
         for (int pos = 0, index = 0; pos < actual.Length;)
         {
@@ -231,16 +539,19 @@ public sealed class ScriptVirtualControlPlaybackTests
             stream.Source.Render(count, actual.AsSpan(pos, count));
             pos += count;
             peakChannels = Math.Max(peakChannels, stream.Session.RetainedScopedVirtualChannelCount);
+            peakMemory = Math.Max(peakMemory, stream.Session.RetainedScopedVirtualMemoryCount);
             peakFilters = Math.Max(peakFilters, stream.Session.RetainedScopedVirtualFilterCount);
             peakRetiring = Math.Max(peakRetiring, stream.Session.RetiringVirtualFilterCount);
             peakDisplaced = Math.Max(peakDisplaced, stream.Session.VirtualVoices.Count);
         }
-        TestContext.Out.WriteLine($"Peak retained channels={peakChannels}, filters={peakFilters}, retiring={peakRetiring}, displaced={peakDisplaced}");
+        TestContext.Out.WriteLine($"Peak retained channels={peakChannels}, filters={peakFilters}, retiring={peakRetiring}, displaced={peakDisplaced}, memory={peakMemory}");
         Assert.Multiple(() =>
         {
             Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
             Assert.That(actual[50], Is.GreaterThan(0.5f), "The stress test must actually render voices.");
             Assert.That(peakChannels, Is.InRange(3, 12));
+            Assert.That(peakMemory, Is.InRange(1, 12));
+            Assert.That(stream.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
             Assert.That(peakFilters, Is.InRange(2, 12));
             Assert.That(peakRetiring, Is.LessThanOrEqualTo(12));
             Assert.That(peakDisplaced, Is.InRange(1, 6));

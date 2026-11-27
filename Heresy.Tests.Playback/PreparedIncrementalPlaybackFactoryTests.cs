@@ -3298,6 +3298,217 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
 	}
 
+	[TestCase(false, TrackerPastNoteAction.Cut)]
+	[TestCase(true, TrackerPastNoteAction.Cut)]
+	[TestCase(false, TrackerPastNoteAction.Off)]
+	[TestCase(true, TrackerPastNoteAction.Off)]
+	public void DeferredPastControlsFormerFlattenedLogicalNotesNotCurrentOrSibling(
+		bool relaxed, TrackerPastNoteAction action)
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav",
+			LongWave(16384, frames: 1200)));
+		string prefix = relaxed ? "#order relaxed\n" : "";
+		ObjectId shortChild = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(shortChild, "Finished producer")
+		{
+			RowCount = 1, ChannelCount = 2,
+			Source = prefix + $"Note(0, 1, _O({sample.Value}));",
+		});
+		ObjectId privateChild = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(privateChild, "Private descendant")
+		{
+			RowCount = 6, ChannelCount = 2,
+			Source = prefix + $"Note(0, 0, _O({sample.Value})); Note(3, 1, _O({sample.Value}));",
+		});
+		ObjectId activeChild = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(activeChild, "Continuing producer")
+		{
+			RowCount = 6, ChannelCount = 2, Source = prefix + $$"""
+				Note(0, 0, _O({{sample.Value}}));
+				using var nested = NoteVirtual(0, _O({{privateChild.Value}}));
+				Displacement(0, 0, NoteDisplacementAction.Continue);
+				Note(0.25, 0, _O({{sample.Value}}));
+				Note(3, 1, _O({{sample.Value}}));
+				""",
+		});
+		ObjectId root = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(root, "Logical Past")
+		{
+			RowCount = 6, ChannelCount = 2, Source = prefix + $$"""
+				Note(0, 0, _O({{shortChild.Value}}));
+				Note(0, 1, _O({{sample.Value}}));
+				Displacement(0.5, 0, NoteDisplacementAction.Continue);
+				Note(1, 0, _O({{activeChild.Value}}));
+				Displacement(1.5, 0, NoteDisplacementAction.Continue);
+				Past(1.75, 0, TrackerPastNoteAction.{{action}}, timeOffsetSeconds: 0.09);
+				Note(2, 0, _O({{shortChild.Value}}));
+				""",
+		});
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var whole = factory.Create(doc, root);
+		using var chunked = factory.Create(doc, root);
+		float[] pcm = new float[1600], chunks = new float[1600];
+		whole.Source.Render(290, pcm.AsSpan(0, 290));
+		Assert.That(whole.Timeline.RetainedDisplacedSourceProducerCount, Is.LessThanOrEqualTo(1),
+			"The short producer retired; one-step lookahead may already have stopped the continuing producer.");
+		Assert.That(whole.Session.RetainedDisplacedFlattenedSourceCount, Is.EqualTo(2),
+			"Both former logical notes still have audible descendants.");
+		whole.Source.Render(490, pcm.AsSpan(290, 490));
+		Assert.That(whole.Timeline.RetainedDisplacedSourceProducerCount, Is.Zero);
+		Assert.That(whole.Session.RetainedDisplacedFlattenedSourceCount, Is.Zero);
+		Assert.That(PreparedRegistrationCount(whole), Is.Zero);
+		whole.Source.Render(820, pcm.AsSpan(780));
+		for (int pos = 0; pos < chunks.Length;)
+		{
+			int count = Math.Min(17, chunks.Length - pos);
+			chunked.Source.Render(count, chunks.AsSpan(pos, count));
+			pos += count;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(chunks, Is.EqualTo(pcm).Within(1e-6f));
+			Assert.That(pcm[285], Is.EqualTo(3f).Within(1e-5f),
+				"Both old logical notes, migrated voice, current note and sibling sound.");
+			Assert.That(pcm[340], Is.EqualTo(1f).Within(1e-5f));
+			Assert.That(pcm[510], Is.EqualTo(1f).Within(1e-5f),
+				"Neither old producer nor its private descendant starts the later note.");
+			Assert.That(pcm[^1], Is.Zero.Within(1e-6f));
+			Assert.That(chunked.Session.RetainedDisplacedFlattenedSourceCount, Is.Zero);
+			Assert.That(chunked.Timeline.RetainedDisplacedSourceProducerCount, Is.Zero);
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void RepeatedFlattenedDisplacementsReclaimPastRecordsAfterNaturalVoiceEnd(bool relaxed)
+	{
+		const int cycles = 256;
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Finite voice", "finite.wav",
+			LongWave(8192, frames: 300)));
+		ObjectId child = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(child, "Short producer")
+		{
+			RowCount = 1, ChannelCount = 1, Source = $"Note(0, 0, _O({sample.Value}));",
+		});
+		ObjectId root = doc.AllocateObjectId();
+		string source = $$"""
+			for (int row = 0; row < {{cycles}}; row++)
+			{
+				Note(row, 0, _O({{child.Value}}));
+				Displacement(row, 0, NoteDisplacementAction.Continue);
+			}
+			""";
+		doc.Add(new ScriptPatternDefinition(root, "Bounded displacement history")
+		{
+			RowCount = cycles + 4, ChannelCount = 1,
+			Source = relaxed ? "#order relaxed\n" + source : source,
+		});
+		var factory = new PreparedIncrementalPlaybackFactory(Mono(1000));
+		using var whole = factory.Create(doc, root);
+		using var chunked = factory.Create(doc, root);
+		float[] expected = new float[(cycles + 4) * 120], pcm = new float[expected.Length];
+		whole.Source.Render(expected.Length, expected);
+		int peak = 0, peakProducers = 0;
+		for (int pos = 0; pos < pcm.Length;)
+		{
+			int count = Math.Min(37, pcm.Length - pos);
+			chunked.Source.Render(count, pcm.AsSpan(pos, count));
+			pos += count;
+			peak = Math.Max(peak, chunked.Session.RetainedDisplacedFlattenedSourceCount);
+			peakProducers = Math.Max(peakProducers, chunked.Timeline.RetainedDisplacedSourceProducerCount);
+		}
+		TestContext.Out.WriteLine($"Peak flattened Past records={peak}, producers={peakProducers}");
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm, Is.EqualTo(expected).Within(1e-6f));
+			Assert.That(pcm[270], Is.EqualTo(0.75f).Within(1e-6f));
+			Assert.That(peak, Is.InRange(1, 3));
+			Assert.That(peakProducers, Is.LessThanOrEqualTo(2));
+			Assert.That(chunked.Session.RetainedDisplacedFlattenedSourceCount, Is.Zero);
+			Assert.That(chunked.Timeline.RetainedDisplacedSourceProducerCount, Is.Zero);
+			Assert.That(chunked.Session.RetainedFlattenedSourceControllerCount, Is.Zero);
+			Assert.That(chunked.Session.RetainedScopedPhysicalChannelCount, Is.Zero);
+			Assert.That(pcm[^1], Is.Zero.Within(1e-6f));
+		});
+	}
+
+	[Test]
+	public void FlattenedReplacementDisplacesPrivateMixdownForLaterPast()
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav",
+			LongWave(16384, frames: 1200)));
+		ObjectId child = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(child, "Recursive child")
+		{
+			RowCount = 5, ChannelCount = 2,
+			Source = $"Note(0, 0, _O({sample.Value})); Note(3, 1, _O({sample.Value}));",
+		});
+		ObjectId root = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(root, "Mixed replacement")
+		{
+			RowCount = 7, ChannelCount = 1, Source = $$"""
+				Note(0, 0, _O({{child.Value}}), mixdown: true);
+				Displacement(0.5, 0, NoteDisplacementAction.Continue);
+				Note(1, 0, _O({{child.Value}}));
+				Past(2, 0, TrackerPastNoteAction.Cut);
+				""",
+		});
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(doc, root);
+		float[] pcm = new float[700];
+		plan.Source.Render(200, pcm.AsSpan(0, 200));
+		Assert.That(plan.Session.VirtualVoices.Count, Is.EqualTo(1));
+		Assert.That(PreparedRegistrationCount(plan), Is.EqualTo(1));
+		plan.Source.Render(500, pcm.AsSpan(200));
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm[180], Is.EqualTo(1f).Within(1e-6f));
+			Assert.That(pcm[300], Is.EqualTo(0.5f).Within(1e-6f));
+			Assert.That(pcm[400], Is.EqualTo(0.5f).Within(1e-6f),
+				"The old private producer cannot start its later note.");
+			Assert.That(pcm[520], Is.EqualTo(1f).Within(1e-6f),
+				"The replacement flattened producer still starts its later note.");
+			Assert.That(PreparedRegistrationCount(plan), Is.Zero);
+			Assert.That(plan.Session.VirtualVoices, Is.Empty);
+		});
+	}
+
+	[Test]
+	public void DataPatternS70CutsFormerFlattenedSourceButNotCurrentFlattenedSource()
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav", LongWave(16384)));
+		ObjectId child = doc.AllocateObjectId();
+		DataPatternDefinition nested = new(child, "Flattened") { RowCount = 3, ChannelCount = 2 };
+		nested.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		nested.Grid.GetOrCreateCell(2, 1).Note = new StartPatternNote(sample);
+		doc.Add(nested);
+		ObjectId root = doc.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "S70") { RowCount = 5, ChannelCount = 2 };
+		PatternCell first = parent.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote(child);
+		first.Effects.Add(new TrackerNewNoteActionPatternEffect(NoteDisplacementAction.Continue));
+		parent.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(child);
+		parent.Grid.GetOrCreateCell(2, 0).Effects.Add(
+			new TrackerPastNoteActionPatternEffect(TrackerPastNoteAction.Cut));
+		doc.Add(parent);
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(doc, root);
+		float[] pcm = new float[500];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[200], Is.EqualTo(1.5f).Within(1e-5f));
+		Assert.That(pcm[280], Is.EqualTo(1f).Within(1e-5f));
+		Assert.That(pcm[400], Is.EqualTo(1f).Within(1e-5f));
+		Assert.That(plan.Timeline.RetainedDisplacedSourceProducerCount, Is.Zero);
+		Assert.That(plan.Session.RetainedDisplacedFlattenedSourceCount, Is.Zero);
+	}
+
 	[TestCase(false)]
 	[TestCase(true)]
 	public void VirtualHandleRetriggersPrivatePatternMixdown(bool relaxed)
@@ -3312,8 +3523,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			RowCount = 4, ChannelCount = 1,
 		});
 		ObjectId parent = doc.AllocateObjectId();
-		string source = $"using var note = NoteVirtual(0, _O({child.Value}), mixdown: true); "
-			+ $"note.Cut(1); note.Note(2, _O({child.Value}), mixdown: true); note.Cut(3);";
+		string source = $"using var note = NoteVirtual(0, _O({child.Value})); "
+			+ $"note.Cut(1); note.Note(2, _O({child.Value})); note.Cut(3);";
 		doc.Add(new ScriptPatternDefinition(parent, "Virtual parent")
 		{
 			Source = relaxed ? "#order relaxed\n" + source : source,
@@ -3385,16 +3596,16 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		// position differs, and disposal is deliberately non-musical.
 		string Middle(bool recycle) => $"""
 			using var old = NewNoteGroup();
-			using var lead = NoteVirtual(0, _O({leaf.Value}), mixdown: true);
+			using var lead = NoteVirtual(0, _O({leaf.Value}));
 			lead.Displacement(0, NoteDisplacementAction.Continue);
-			lead.Note(0.25, _O({leaf.Value}), mixdown: true);
+			lead.Note(0.25, _O({leaf.Value}));
 			old += lead;
 			old.ChannelFilter(0.25, _O({filter.Value}));
 			old.Past(0.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.09);
 			old.Cut(0.75, timeOffsetSeconds: 0.09);
 			{(recycle ? "old.Dispose();" : "")}
 			using var replacement = NewNoteGroup();
-			replacement += NoteVirtual(1, _O({leaf.Value}), mixdown: true);
+			replacement += NoteVirtual(1, _O({leaf.Value}));
 			{(recycle ? "" : "old.Dispose();")}
 			replacement.Cut(2.5);
 			""";
@@ -3521,7 +3732,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		{
 			Source = $"""
 				using var group = NewNoteGroup();
-				group += NoteVirtual(0, _O({child.Value}), mixdown: true);
+				group += NoteVirtual(0, _O({child.Value}));
 				group.Cut(5);
 				""",
 			RowCount = 6, ChannelCount = 1,

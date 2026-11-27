@@ -20,12 +20,14 @@ internal static class ScriptPatternEmissionPolicy
             or "Off" or "Cut"
             or "OffVirtualInScope" or "CutVirtualInScope"
             or "OffAllVirtual" or "CutAllVirtual"
+            or "Volume" or "SourceFrame" or "Displacement" or "Past"
             or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
             or "Filter" or "FilterCutoff" or "FilterResonance";
 
     internal static bool IsVirtualNoteEmitterName(string name)
         => name is "Note" or "Volume" or "Off" or "Cut" or "NoteFilter"
-            or "ChannelFilter" or "SourceFrame" or "Displacement" or "Past";
+            or "ChannelFilter" or "SourceFrame" or "Displacement" or "Past"
+            or "Seek" or "Pan" or "Surround" or "Filter" or "FilterCutoff" or "FilterResonance";
 
     internal static bool IsNoteGroupEmitterName(string name)
         => name != "Note" && IsVirtualNoteEmitterName(name);

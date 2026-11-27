@@ -319,7 +319,7 @@ public abstract class PatternScriptProgram
 	/// <summary>Allocate an exclusive logical channel and schedule its first note.</summary>
 	protected VirtualNote NoteVirtual(double row, ObjectId sourceId,
 		double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0,
-		bool mixdown = false, double? volume = null,
+		double? volume = null,
 		double timeOffsetSeconds = 0.0, ObjectId? eventFilterDefinitionId = null)
 	{
 		ValidateRow(row);
@@ -327,7 +327,7 @@ public abstract class PatternScriptProgram
 		try
 		{
 			AppendNoteStart(row, ChannelTarget.Virtual(identity), sourceId,
-				pitchMultiplier, playbackSpeedMultiplier, mixdown, volume,
+				pitchMultiplier, playbackSpeedMultiplier, false, volume,
 				timeOffsetSeconds, eventFilterDefinitionId);
 			return new VirtualNote(this, identity);
 		}
@@ -340,27 +340,27 @@ public abstract class PatternScriptProgram
 
 	protected VirtualNote NoteVirtual(SequenceCallsite callsite, double row,
 		ObjectId sourceId, double pitchMultiplier = 1.0,
-		double playbackSpeedMultiplier = 1.0, bool mixdown = false,
+		double playbackSpeedMultiplier = 1.0,
 		double? volume = null, double timeOffsetSeconds = 0.0,
 		ObjectId? eventFilterDefinitionId = null)
 	{
 		SequenceCallsite? previous = _editorActionCallsite;
 		_editorActionCallsite = previous ?? callsite;
 		try { return NoteVirtual(row, sourceId, pitchMultiplier,
-			playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId); }
+			playbackSpeedMultiplier, volume, timeOffsetSeconds, eventFilterDefinitionId); }
 		finally { _editorActionCallsite = previous; }
 	}
 
 	internal void StartVirtualLease(VirtualChannelIdentity identity, double row,
 		ObjectId sourceId, double pitchMultiplier, double playbackSpeedMultiplier,
-		bool mixdown, double? volume, double timeOffsetSeconds,
+		double? volume, double timeOffsetSeconds,
 		ObjectId? eventFilterDefinitionId, SequenceCallsite? callsite)
 	{
 		ValidateRow(row);
 		SequenceCallsite? previous = _editorActionCallsite;
 		_editorActionCallsite = previous ?? callsite;
 		try { AppendNoteStart(row, ChannelTarget.Virtual(identity), sourceId,
-			pitchMultiplier, playbackSpeedMultiplier, mixdown, volume,
+			pitchMultiplier, playbackSpeedMultiplier, false, volume,
 			timeOffsetSeconds, eventFilterDefinitionId); }
 		finally { _editorActionCallsite = previous; }
 	}
@@ -496,6 +496,26 @@ public abstract class PatternScriptProgram
 	protected void Speed(SequenceCallsite callsite, double row, int ticksPerRow)
 		=> EmitWithEditorCallsite(callsite,
 			() => Speed(row, ticksPerRow));
+
+	protected void Volume(SequenceCallsite callsite, double row, int channel,
+		double volume, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Volume(row, channel, volume, timeOffsetSeconds));
+
+	protected void SourceFrame(SequenceCallsite callsite, double row, int channel,
+		long sourceFrameOffset, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => SourceFrame(row, channel, sourceFrameOffset, timeOffsetSeconds));
+
+	protected void Displacement(SequenceCallsite callsite, double row, int channel,
+		NoteDisplacementAction action, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Displacement(row, channel, action, timeOffsetSeconds));
+
+	protected void Past(SequenceCallsite callsite, double row, int channel,
+		TrackerPastNoteAction action, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Past(row, channel, action, timeOffsetSeconds));
 
 	protected void Seek(SequenceCallsite callsite, double row, int channel,
 		double playbackSeconds, double timeOffsetSeconds = 0.0)
@@ -668,6 +688,56 @@ public abstract class PatternScriptProgram
 			new SetSpeedCommand(ticksPerRow));
 	}
 
+	/// <summary>Set the current logical note's base volume and remember
+	/// it for later starts on this physical channel.</summary>
+	protected void Volume(double row, int channel, double volume,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		ValidateUnitInterval(volume, nameof(volume));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetNoteVolumeCommand(volume), timeOffsetSeconds);
+	}
+
+	/// <summary>Seek the current seekable voice in native source frames,
+	/// not output frames or elapsed playback seconds.</summary>
+	protected void SourceFrame(double row, int channel, long sourceFrameOffset,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		if (sourceFrameOffset < 0)
+			throw new ArgumentOutOfRangeException(nameof(sourceFrameOffset));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetSourceFrameOffsetCommand(sourceFrameOffset), timeOffsetSeconds);
+	}
+
+	/// <summary>Override the current logical note's next-note action.</summary>
+	protected void Displacement(double row, int channel, NoteDisplacementAction action,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		if (!Enum.IsDefined(action))
+			throw new ArgumentOutOfRangeException(nameof(action));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetCurrentVoiceDisplacementActionCommand(action), timeOffsetSeconds);
+	}
+
+	/// <summary>Apply a lifecycle action to displaced notes of this
+	/// physical channel, excluding its current note.</summary>
+	protected void Past(double row, int channel, TrackerPastNoteAction action,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		if (!Enum.IsDefined(action))
+			throw new ArgumentOutOfRangeException(nameof(action));
+		Append(row, ChannelTarget.Physical(channel),
+			new ApplyPastNoteActionCommand(action), timeOffsetSeconds);
+	}
+
 	/// <summary>Move the existing physical-channel voice to an explicit
 	/// source playback-time offset. Unlike tracker Oxx, this is a wall-time
 	/// offset and follows the renderer's established seek semantics.</summary>
@@ -677,12 +747,8 @@ public abstract class PatternScriptProgram
 	{
 		ValidateRow(row);
 		ValidateChannel(channel);
-		if (!double.IsFinite(playbackSeconds)
-			|| playbackSeconds < 0
-			|| playbackSeconds > TimeSpan.MaxValue.TotalSeconds)
-			throw new ArgumentOutOfRangeException(nameof(playbackSeconds));
 		Append(row, ChannelTarget.Physical(channel),
-			new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(playbackSeconds)),
+			CreateSeekCommand(playbackSeconds),
 			timeOffsetSeconds);
 	}
 
@@ -694,15 +760,8 @@ public abstract class PatternScriptProgram
 	{
 		ValidateRow(row);
 		ValidateChannel(channel);
-		if (!double.IsFinite(x) || !double.IsFinite(y)
-			|| !double.IsFinite(z)
-			|| Math.Abs(x) > float.MaxValue
-			|| Math.Abs(y) > float.MaxValue
-			|| Math.Abs(z) > float.MaxValue)
-			throw new ArgumentOutOfRangeException(nameof(x));
 		Append(row, ChannelTarget.Physical(channel),
-			new SetSpatialPositionCommand(
-				new Vector3((float)x, (float)y, (float)z)),
+			CreatePanCommand(x, y, z),
 			timeOffsetSeconds);
 	}
 
@@ -754,7 +813,29 @@ public abstract class PatternScriptProgram
 			timeOffsetSeconds);
 	}
 
-	private static void ValidateUnitInterval(double value, string name)
+	// Shared validation and command construction for physical and owned
+	// virtual controls. These internal factories are not authored APIs.
+	internal static SetPlaybackOffsetCommand CreateSeekCommand(double playbackSeconds)
+	{
+		if (!double.IsFinite(playbackSeconds)
+			|| playbackSeconds < 0
+			|| playbackSeconds > TimeSpan.MaxValue.TotalSeconds)
+			throw new ArgumentOutOfRangeException(nameof(playbackSeconds));
+		return new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(playbackSeconds));
+	}
+
+	internal static SetSpatialPositionCommand CreatePanCommand(double x, double y, double z)
+	{
+		if (!double.IsFinite(x) || !double.IsFinite(y)
+			|| !double.IsFinite(z)
+			|| Math.Abs(x) > float.MaxValue
+			|| Math.Abs(y) > float.MaxValue
+			|| Math.Abs(z) > float.MaxValue)
+			throw new ArgumentOutOfRangeException(nameof(x));
+		return new SetSpatialPositionCommand(new Vector3((float)x, (float)y, (float)z));
+	}
+
+	internal static void ValidateUnitInterval(double value, string name)
 	{
 		if (!double.IsFinite(value) || value < 0 || value > 1)
 			throw new ArgumentOutOfRangeException(name);

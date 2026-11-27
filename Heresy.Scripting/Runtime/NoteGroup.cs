@@ -64,6 +64,82 @@ public sealed class NoteGroup : IDisposable
         _owner.ControlVirtualGroup(_leases, row, new SetNoteVolumeCommand(volume), timeOffsetSeconds, callsite);
     }
 
+    public void Seek(double row, double playbackSeconds, double timeOffsetSeconds = 0.0)
+        => SeekCore(null, row, playbackSeconds, timeOffsetSeconds);
+
+    public void Seek(SequenceCallsite callsite, double row, double playbackSeconds, double timeOffsetSeconds = 0.0)
+        => SeekCore(callsite, row, playbackSeconds, timeOffsetSeconds);
+
+    private void SeekCore(SequenceCallsite? callsite, double row, double playbackSeconds, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, PatternScriptProgram.CreateSeekCommand(playbackSeconds), timeOffsetSeconds, callsite);
+    }
+
+    public void Pan(double row, double x, double y = 0, double z = 0, double timeOffsetSeconds = 0.0)
+        => PanCore(null, row, x, y, z, timeOffsetSeconds);
+
+    public void Pan(SequenceCallsite callsite, double row, double x, double y = 0, double z = 0, double timeOffsetSeconds = 0.0)
+        => PanCore(callsite, row, x, y, z, timeOffsetSeconds);
+
+    private void PanCore(SequenceCallsite? callsite, double row, double x, double y, double z, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, PatternScriptProgram.CreatePanCommand(x, y, z), timeOffsetSeconds, callsite);
+    }
+
+    public void Surround(double row, bool enabled, double timeOffsetSeconds = 0.0)
+        => SurroundCore(null, row, enabled, timeOffsetSeconds);
+
+    public void Surround(SequenceCallsite callsite, double row, bool enabled, double timeOffsetSeconds = 0.0)
+        => SurroundCore(callsite, row, enabled, timeOffsetSeconds);
+
+    private void SurroundCore(SequenceCallsite? callsite, double row, bool enabled, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, new SetSurroundCommand(enabled), timeOffsetSeconds, callsite);
+    }
+
+    public void Filter(double row, double cutoff, double resonance, double timeOffsetSeconds = 0.0)
+        => FilterCore(null, row, cutoff, resonance, timeOffsetSeconds);
+
+    public void Filter(SequenceCallsite callsite, double row, double cutoff, double resonance, double timeOffsetSeconds = 0.0)
+        => FilterCore(callsite, row, cutoff, resonance, timeOffsetSeconds);
+
+    private void FilterCore(SequenceCallsite? callsite, double row, double cutoff, double resonance, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        PatternScriptProgram.ValidateUnitInterval(cutoff, nameof(cutoff));
+        PatternScriptProgram.ValidateUnitInterval(resonance, nameof(resonance));
+        _owner.ControlVirtualGroup(_leases, row, new SetResonantFilterCommand(cutoff, resonance), timeOffsetSeconds, callsite);
+    }
+
+    public void FilterCutoff(double row, double cutoff, double timeOffsetSeconds = 0.0)
+        => FilterCutoffCore(null, row, cutoff, timeOffsetSeconds);
+
+    public void FilterCutoff(SequenceCallsite callsite, double row, double cutoff, double timeOffsetSeconds = 0.0)
+        => FilterCutoffCore(callsite, row, cutoff, timeOffsetSeconds);
+
+    private void FilterCutoffCore(SequenceCallsite? callsite, double row, double cutoff, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        PatternScriptProgram.ValidateUnitInterval(cutoff, nameof(cutoff));
+        _owner.ControlVirtualGroup(_leases, row, new SetResonantFilterCutoffCommand(cutoff), timeOffsetSeconds, callsite);
+    }
+
+    public void FilterResonance(double row, double resonance, double timeOffsetSeconds = 0.0)
+        => FilterResonanceCore(null, row, resonance, timeOffsetSeconds);
+
+    public void FilterResonance(SequenceCallsite callsite, double row, double resonance, double timeOffsetSeconds = 0.0)
+        => FilterResonanceCore(callsite, row, resonance, timeOffsetSeconds);
+
+    private void FilterResonanceCore(SequenceCallsite? callsite, double row, double resonance, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        PatternScriptProgram.ValidateUnitInterval(resonance, nameof(resonance));
+        _owner.ControlVirtualGroup(_leases, row, new SetResonantFilterResonanceCommand(resonance), timeOffsetSeconds, callsite);
+    }
+
     public void Off(double row, double timeOffsetSeconds = 0.0)
         => OffCore(null, row, timeOffsetSeconds);
 

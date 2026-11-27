@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
@@ -146,6 +147,27 @@ public sealed class PlaybackSession
 	// Only materialized filters with a confirmed final-use barrier enter
 	// this set; no tombstone is kept for unmaterialized or reclaimed IDs.
 	private readonly HashSet<(long Owner, VirtualChannelIdentity Id)> _retiringVirtualFilters = [];
+	// Generated identities retain scalar note memory until the scheduler's
+	// final-use barrier, independently of audible channels and DSP tails.
+	// Presence also distinguishes a still-referenceable identity from a
+	// retired one whose old voices may need a temporary anti-click host.
+	private readonly record struct VirtualChannelMemory(
+		double Volume, Vector3 Position, bool Surround, ResonantFilterParameters Filter)
+	{
+		public static VirtualChannelMemory Capture(PlaybackChannelState channel)
+			=> new(channel.NoteVolume, channel.Position, channel.Surround, channel.FilterParameters);
+
+		public void Restore(PlaybackChannelState channel, long frame)
+		{
+			channel.CaptureCurrentNoteVolume(Volume);
+			channel.SetPosition(frame, Position);
+			channel.SetSurround(frame, Surround);
+			channel.SetFilterParameters(frame, Filter);
+		}
+	}
+	private readonly Dictionary<(long Owner, VirtualChannelIdentity Id), VirtualChannelMemory>
+		_scopedVirtualMemory = [];
+	internal int RetainedScopedVirtualMemoryCount => _scopedVirtualMemory.Count;
 	internal int RetainedScopedVirtualChannelCount => _scopedVirtualChannels.Count;
 	internal int RetainedScopedVirtualFilterCount => _scopedVirtualOutputFilters.Count;
 	internal int RetiringVirtualFilterCount => _retiringVirtualFilters.Count;
@@ -160,6 +182,16 @@ public sealed class PlaybackSession
 	// Scope-unique controllers outlive the instigating note's assignment
 	// to a logical channel. Descendant voices hold direct references.
 	private readonly Dictionary<long, FlattenedSourceVolume> _sourceVolumes = [];
+	// Displaced logical source notes are independent of producer
+	// registration and the channel's current source. Keep only live
+	// producers or controllers still referenced by descendant voices.
+	private readonly Dictionary<long, (long Owner, int Host, FlattenedSourceVolume Source)>
+		_displacedFlattenedSources = [];
+	private readonly HashSet<long> _liveDisplacedSourceScopes = [];
+	public int RetainedDisplacedFlattenedSourceCount => _displacedFlattenedSources.Count;
+	/// <summary>Mirrors logical Past into private recursive renderers at
+	/// the same frame; ordinary Past Fade is not a new-note fade.</summary>
+	public Action<long, long, NoteDisplacementAction>? FlattenedPastApplied { get; set; }
 	// A bound controller may outlive its producer lookup while previously
 	// started descendants continue their release tails. Only controllers with
 	// completion actions are held here; never retarget via the host channel.
@@ -590,7 +622,7 @@ public sealed class PlaybackSession
 
 	private void ApplyFlattenedScopeActionAtFrame(
 		long scopeId, FlattenedSourceVolume? owner,
-		NoteDisplacementAction action, long frame)
+		NoteDisplacementAction action, long frame, bool newNoteDisplacement = true)
 	{
 		if (action == NoteDisplacementAction.Continue)
 			return;
@@ -601,11 +633,11 @@ public sealed class PlaybackSession
 		if (owner is not null)
 			TrackFlattenedCompletionOwner(owner);
 		foreach (PlaybackChannelState channel in _channels.Values)
-			ApplySourceActionToChannel(channel, scopeId, action, frame);
+			ApplySourceActionToChannel(channel, scopeId, action, frame, newNoteDisplacement);
 		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
-			ApplySourceActionToChannel(channel, scopeId, action, frame);
+			ApplySourceActionToChannel(channel, scopeId, action, frame, newNoteDisplacement);
 		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
-			ApplySourceActionToChannel(channel, scopeId, action, frame);
+			ApplySourceActionToChannel(channel, scopeId, action, frame, newNoteDisplacement);
 		for (int i = _virtualVoices.Count - 1; i >= 0; i--)
 		{
 			PlaybackVoice voice = _virtualVoices[i];
@@ -613,9 +645,12 @@ public sealed class PlaybackSession
 				continue;
 			if (action == NoteDisplacementAction.Cut)
 			{
-				voice.AddCutTo(GetChannelState(
-					voice.OriginPhysicalChannel,
-					voice.OriginPhysicalPlaybackOwner).AntiClickTail);
+				PlaybackChannelState host = voice.OriginVirtualIdentity is { } virtualId
+					? voice.OriginScopedVirtualOwner is long virtualOwner
+						? GetScopedChannel(virtualOwner, virtualId)
+						: GetVirtualChannelState(virtualId)
+					: GetChannelState(voice.OriginPhysicalChannel, voice.OriginPhysicalPlaybackOwner);
+				voice.AddCutTo(host.AntiClickTail);
 				RetireDisplacedVoiceAt(i);
 			}
 			else if (action == NoteDisplacementAction.Off)
@@ -625,8 +660,12 @@ public sealed class PlaybackSession
 				voice.ApplyNoteOff(frame, SampleRate);
 			}
 			else if (action == NoteDisplacementAction.Fade)
-				voice.RequestNoteFade(frame, SampleRate,
-					voice.Configuration.NewNoteFadeDuration);
+			{
+				if (newNoteDisplacement)
+					voice.RequestNoteFade(frame, SampleRate, voice.Configuration.NewNoteFadeDuration);
+				else
+					voice.RequestNoteFade(frame, SampleRate);
+			}
 		}
 	}
 
@@ -656,7 +695,7 @@ public sealed class PlaybackSession
 
 	private void ApplySourceActionToChannel(
 		PlaybackChannelState channel, long scopeId,
-		NoteDisplacementAction action, long frame)
+		NoteDisplacementAction action, long frame, bool newNoteDisplacement)
 	{
 		if (channel.CurrentFlattenedSource?.ScopeId == scopeId
 			&& action == NoteDisplacementAction.Cut)
@@ -679,8 +718,10 @@ public sealed class PlaybackSession
 				// Flattened-source S76 is an explicit new-note action.
 				// Its descendants use their new-note fade duration, not
 				// their independent ordinary note-fade duration.
-				voice.RequestNoteFade(frame, SampleRate,
-					voice.Configuration.NewNoteFadeDuration);
+				if (newNoteDisplacement)
+					voice.RequestNoteFade(frame, SampleRate, voice.Configuration.NewNoteFadeDuration);
+				else
+					voice.RequestNoteFade(frame, SampleRate);
 				break;
 		}
 	}
@@ -807,6 +848,7 @@ public sealed class PlaybackSession
 		if (CollectFlattenedDescendants(scopeId).Count == 0)
 			_pendingFlattenedCompletionOwners.Remove(scopeId);
 		ReclaimRetiredPhysicalScopes();
+		ReclaimDisplacedFlattenedSources();
 	}
 
 	private void ReclaimRetiredPhysicalScopes()
@@ -1075,12 +1117,18 @@ public sealed class PlaybackSession
 		switch (target.Kind)
 		{
 			case ChannelTargetKind.Virtual:
-				ApplyVirtualCommands(GetScopedChannel(
-					invocationId, target.VirtualIdentity),
+			{
+				PlaybackChannelState channel = GetScopedChannel(
+					invocationId, target.VirtualIdentity);
+				ApplyVirtualCommands(channel,
 					commands, _nextFrame, cutIndefiniteAfterNoteOff: false,
 					virtualChannelId: target.VirtualIdentity,
 					scopedOwner: invocationId);
+				if (target.VirtualIdentity.Generation != 0)
+					_scopedVirtualMemory[(invocationId, target.VirtualIdentity)] =
+						VirtualChannelMemory.Capture(channel);
 				return;
+			}
 			case ChannelTargetKind.AllVirtualInScope:
 			case ChannelTargetKind.AllVirtual:
 				ApplyVirtualBroadcast(invocationId,
@@ -1196,6 +1244,7 @@ public sealed class PlaybackSession
 		if (owner < 0 || id.Generation == 0)
 			throw new ArgumentOutOfRangeException(owner < 0 ? nameof(owner) : nameof(id));
 		var key = (owner, id);
+		_scopedVirtualMemory.Remove(key);
 		if (_scopedVirtualOutputFilters.ContainsKey(key))
 		{
 			_retiringVirtualFilters.Add(key);
@@ -1248,6 +1297,8 @@ public sealed class PlaybackSession
 				+ (ulong)id.Slot * 0x9E3779B97F4A7C15UL
 				+ id.Generation * 0xD1B54A32D192ED03UL
 				+ (ulong)owner));
+		if (_scopedVirtualMemory.TryGetValue((owner, id), out VirtualChannelMemory memory))
+			memory.Restore(channel, _nextFrame);
 		_scopedVirtualChannels.Add((owner, id), channel);
 		return channel;
 	}
@@ -1259,18 +1310,18 @@ public sealed class PlaybackSession
 		// Snapshot the eligible channels before applying commands.
 		// Same-frame starts are not pre-existing voices, even if their
 		// start event was dequeued earlier in this callback.
-		List<PlaybackChannelState> eligible = [];
+		List<(PlaybackChannelState Channel, (long Owner, VirtualChannelIdentity Id)? Key)> eligible = [];
 		foreach (var pair in _scopedVirtualChannels)
 			if ((allOwners || pair.Key.Owner == owner)
 				&& pair.Value.CurrentVoice is PlaybackVoice voice
 				&& voice.StartFrame < frame)
-				eligible.Add(pair.Value);
+				eligible.Add((pair.Value, pair.Key));
 		if (allOwners)
 			foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
 				if (channel.CurrentVoice is PlaybackVoice voice
 					&& voice.StartFrame < frame)
-					eligible.Add(channel);
-		foreach (PlaybackChannelState channel in eligible)
+					eligible.Add((channel, null));
+		foreach (var (channel, key) in eligible)
 			foreach (NoteCommand command in commands)
 			{
 				// Broadcasts control existing voices, not the creation
@@ -1287,6 +1338,10 @@ public sealed class PlaybackSession
 						break;
 					case SetNoteVolumeCommand volume:
 						channel.SetNoteVolume(volume.Volume);
+						// A broadcast cannot materialize memory for a retired
+						// identity or for a channel that has never been targeted.
+						if (key.HasValue && _scopedVirtualMemory.ContainsKey(key.Value))
+							_scopedVirtualMemory[key.Value] = VirtualChannelMemory.Capture(channel);
 						break;
 					default:
 						throw new NotSupportedException(
@@ -1829,6 +1884,32 @@ public sealed class PlaybackSession
                         null, virtualChannelId, scopedOwner, eventFrame, channel);
                     break;
 
+				case SetPlaybackOffsetCommand offsetSeconds:
+					if (channel.CurrentVoice is not null)
+						channel.CurrentVoice.SoundState.PlaybackOffset = offsetSeconds.Offset;
+					break;
+
+				case SetSpatialPositionCommand position:
+					channel.SetPosition(eventFrame, position.Position);
+					break;
+
+				case SetSurroundCommand surround:
+					channel.SetSurround(eventFrame, surround.Enabled);
+					break;
+
+				case SetResonantFilterCommand filter:
+					channel.SetFilterParameters(eventFrame,
+						new ResonantFilterParameters(filter.Cutoff, filter.Resonance));
+					break;
+
+				case SetResonantFilterCutoffCommand cutoff:
+					channel.SetFilterCutoff(eventFrame, cutoff.Cutoff);
+					break;
+
+				case SetResonantFilterResonanceCommand resonance:
+					channel.SetFilterResonance(eventFrame, resonance.Resonance);
+					break;
+
 				case SetSourceFrameOffsetCommand offset:
 					ApplyNativeSourceFrameOffset(
 						channel, offset, "Script virtual native offset");
@@ -2009,7 +2090,7 @@ public sealed class PlaybackSession
 		switch (command)
 		{
 			case BeginFlattenedSourceVolumeCommand begin:
-				BeginFlattenedSource(channel, begin, eventFrame);
+				BeginFlattenedSource(channel, begin, eventFrame, physicalPlaybackOwner, physicalChannel);
 				break;
 
 			case ControlFlattenedSourceCommand control:
@@ -2452,6 +2533,8 @@ public sealed class PlaybackSession
 					pastNote.Action,
 					eventFrame,
 					physicalPlaybackOwner);
+				ApplyPastFlattenedSources(physicalChannel, physicalPlaybackOwner,
+					pastNote.Action, eventFrame);
 				break;
 
 			case SetCurrentVoiceDisplacementActionCommand displacement:
@@ -2994,14 +3077,17 @@ public sealed class PlaybackSession
 	}
 
 	private void BeginFlattenedSource(PlaybackChannelState channel,
-		BeginFlattenedSourceVolumeCommand begin, long frame)
+		BeginFlattenedSourceVolumeCommand begin, long frame, long owner, int host)
 	{
 		if (_sourceVolumes.ContainsKey(begin.ChildScopeId))
 			throw new InvalidOperationException(
 				"Flattened scope already has a volume controller.");
 		channel.SynchronizeContinuousState(frame);
 		if (channel.CurrentFlattenedSource is { } previous)
+		{
 			channel.CaptureCurrentNoteVolume(previous.Read(frame));
+			RememberDisplacedFlattenedSource(previous, owner, host);
+		}
 		else if (channel.CurrentVoice is not null)
 			channel.CaptureCurrentNoteVolume(
 				channel.CurrentVoice.GetBaseNoteVolume(frame));
@@ -3115,7 +3201,10 @@ public sealed class PlaybackSession
 		channel.SynchronizeContinuousState(eventFrame);
 
 		if (channel.CurrentFlattenedSource is { } previousSource)
+		{
 			channel.CaptureCurrentNoteVolume(previousSource.Read(eventFrame));
+			RememberDisplacedFlattenedSource(previousSource, physicalPlaybackOwner, physicalChannel);
+		}
 		else if (channel.CurrentVoice is not null)
 			channel.CaptureCurrentNoteVolume(
 				channel.CurrentVoice.GetBaseNoteVolume(eventFrame));
@@ -3186,6 +3275,78 @@ public sealed class PlaybackSession
 		voice.EditorOriginCallsite = start.EditorOriginCallsite;
 		voice.OriginPatternCursorId = _activePatternCursorId;
 		channel.AttachVoice(voice, eventFrame);
+	}
+
+	private void RememberDisplacedFlattenedSource(FlattenedSourceVolume source, long owner, int host)
+	{
+		if (source.IsCut)
+			return;
+		_displacedFlattenedSources[source.ScopeId] = (owner, host, source);
+		ReclaimDisplacedFlattenedSources();
+	}
+
+	// One pass over existing voice ancestry, only when a displaced
+	// source exists. The reusable scratch set never grows with history.
+	private void ReclaimDisplacedFlattenedSources()
+	{
+		if (_displacedFlattenedSources.Count == 0)
+			return;
+		_liveDisplacedSourceScopes.Clear();
+		foreach (PlaybackChannelState channel in _channels.Values)
+			MarkLiveDisplacedSources(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			MarkLiveDisplacedSources(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			MarkLiveDisplacedSources(channel.CurrentVoice);
+		foreach (PlaybackVoice voice in _virtualVoices)
+			MarkLiveDisplacedSources(voice);
+		ReclaimUnmarkedDisplacedFlattenedSources();
+	}
+
+	private void ReclaimUnmarkedDisplacedFlattenedSources()
+	{
+		foreach (var pair in _displacedFlattenedSources)
+			if (!_sourceVolumes.ContainsKey(pair.Key)
+				&& !_liveDisplacedSourceScopes.Contains(pair.Key))
+				_displacedFlattenedSources.Remove(pair.Key);
+		_liveDisplacedSourceScopes.Clear();
+	}
+
+	private void MarkLiveDisplacedSources(PlaybackVoice? voice)
+	{
+		if (voice is null)
+			return;
+		for (int i = 0; i < voice.EnclosingSourceVolumes.Count; i++)
+		{
+			long scopeId = voice.EnclosingSourceVolumes[i].ScopeId;
+			if (_displacedFlattenedSources.ContainsKey(scopeId))
+				_liveDisplacedSourceScopes.Add(scopeId);
+		}
+	}
+
+	private void ApplyPastFlattenedSources(int host, long owner,
+		TrackerPastNoteAction action, long frame)
+	{
+		if (_displacedFlattenedSources.Count == 0)
+			return;
+		NoteDisplacementAction scopeAction = action switch
+		{
+			TrackerPastNoteAction.Cut => NoteDisplacementAction.Cut,
+			TrackerPastNoteAction.Off => NoteDisplacementAction.Off,
+			TrackerPastNoteAction.Fade => NoteDisplacementAction.Fade,
+			_ => throw new InvalidOperationException($"Unsupported past-note action {action}."),
+		};
+		foreach (var pair in _displacedFlattenedSources)
+		{
+			if (pair.Value.Owner != owner || pair.Value.Host != host)
+				continue;
+			FlattenedPastApplied?.Invoke(pair.Key, frame, scopeAction);
+			ApplyFlattenedScopeActionAtFrame(pair.Key, pair.Value.Source,
+				scopeAction, frame, newNoteDisplacement: false);
+			if (scopeAction == NoteDisplacementAction.Cut)
+				_displacedFlattenedSources.Remove(pair.Key);
+		}
+		ReclaimDisplacedFlattenedSources();
 	}
 
 	private void ApplyPastNoteAction(
@@ -3401,6 +3562,9 @@ public sealed class PlaybackSession
 			_targetedVirtualOutputFilters.Count == 0 ? null : [];
 		Dictionary<(long Owner, VirtualChannelIdentity Id), float[]>? scopedBuses =
 			_scopedVirtualOutputFilters.Count == 0 ? null : [];
+		bool trackDisplacedSources = _displacedFlattenedSources.Count != 0;
+		if (trackDisplacedSources)
+			_liveDisplacedSourceScopes.Clear();
 
 		try
 		{
@@ -3480,6 +3644,8 @@ public sealed class PlaybackSession
 					channel.AntiClickTail.RenderFrame(outputFrame);
 				}
 
+				if (trackDisplacedSources)
+					MarkLiveDisplacedSources(channel.CurrentVoice);
 				AccumulateHost(pair.Key.Host, channelBuffer, destination,
 					_physicalOutputFilters, physicalBuses, sampleCount);
 			}
@@ -3513,6 +3679,8 @@ public sealed class PlaybackSession
 					channel.AntiClickTail.RenderFrame(outputFrame);
 				}
 
+				if (trackDisplacedSources)
+					MarkLiveDisplacedSources(channel.CurrentVoice);
 				AccumulateHost(pair.Key, channelBuffer, destination,
 					_targetedVirtualOutputFilters, virtualBuses, sampleCount);
 
@@ -3550,6 +3718,8 @@ public sealed class PlaybackSession
 				for (int frame = 0; frame < frameCount; frame++)
 					channel.AntiClickTail.RenderFrame(channelBuffer.Slice(
 						frame * outputChannelCount, outputChannelCount));
+				if (trackDisplacedSources)
+					MarkLiveDisplacedSources(channel.CurrentVoice);
 				AccumulateHost(pair.Key, channelBuffer, destination,
 					_scopedVirtualOutputFilters, scopedBuses, sampleCount);
 				if (channel.CurrentVoice is null
@@ -3605,7 +3775,11 @@ public sealed class PlaybackSession
 				if (finished)
 					RetireDisplacedVoiceAt(index);
 				else
+				{
+					if (trackDisplacedSources)
+						MarkLiveDisplacedSources(voice);
 					index++;
+				}
 			}
 
 			// A host's current voice, owner-scoped child voices and anti-click
@@ -3627,6 +3801,8 @@ public sealed class PlaybackSession
 				destination);
 			ReclaimRetiredPhysicalScopes();
 			ReclaimRetiredVirtualFilters();
+			if (trackDisplacedSources)
+				ReclaimUnmarkedDisplacedFlattenedSources();
 		}
 		finally
 		{

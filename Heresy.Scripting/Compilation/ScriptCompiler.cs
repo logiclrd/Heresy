@@ -1371,14 +1371,7 @@ public static class ScriptCompiler
 		// rule, then checks the trusted rewritten wrapper with opt-in.
 		if (method.Parameters.Length > 0
 			&& method.Parameters[0].Type.Name == "SequenceCallsite"
-			&& (method.Name is "Play" or "Note" or "NoteVirtual"
-				or "NoteFilter"
-				or "ChannelFilter"
-				or "Off" or "Cut"
-				or "OffVirtualInScope" or "CutVirtualInScope"
-				or "OffAllVirtual" or "CutAllVirtual"
-				or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
-				or "Filter" or "FilterCutoff" or "FilterResonance")
+			&& (method.Name == "Play" || ScriptPatternEmissionPolicy.IsEmitterName(method.Name))
 			&& !allowInjectedPlayCallsites)
 			return false;
 

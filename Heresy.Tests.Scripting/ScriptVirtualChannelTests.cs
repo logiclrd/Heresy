@@ -15,7 +15,7 @@ namespace Heresy.Tests.Scripting;
 public sealed class ScriptVirtualChannelTests
 {
     private const string LifecycleSource = """
-        using var note = NoteVirtual(0, _O(17), 2.0, 0.5, true, 0.75);
+        using var note = NoteVirtual(0, _O(17), 2.0, 0.5, 0.75);
         note.Note(0.25, _O(18), timeOffsetSeconds: 0.01);
         note.Off(0.5);
         note.Cut(0.75);
@@ -67,7 +67,7 @@ public sealed class ScriptVirtualChannelTests
             Assert.That(incrementalEvents.Select(x => x.Commands.Single()),
                 Is.EqualTo(eagerEvents.Select(x => x.Commands.Single())));
             Assert.That(incrementalEvents[0].Commands.Single(),
-                Is.EqualTo(new StartNoteCommand((ObjectId)17U, 2.0, 0.5, true, 0.75)));
+                Is.EqualTo(new StartNoteCommand((ObjectId)17U, 2.0, 0.5, false, 0.75)));
             Assert.That(incrementalEvents[1].Offset.TimeOffset,
                 Is.EqualTo(TimeSpan.FromMilliseconds(10)));
             Assert.That(incrementalEvents.Skip(2).Select(x => x.Commands.Single()),
@@ -77,6 +77,69 @@ public sealed class ScriptVirtualChannelTests
                     new NoteOffCommand(), new NoteCutCommand(),
                 }));
         });
+    }
+
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
+    public void VirtualStartsPreserveNewPositionalAndNamedArguments(bool relaxed, bool traced)
+    {
+        string[] calls =
+        [
+            "NoteVirtual(0, _O(17), 2.0, 0.5, 0.75, 0.01, _O(30))",
+            "note.Note(1, _O(18), volume: 0.25, eventFilterDefinitionId: _O(31), timeOffsetSeconds: 0.02)",
+        ];
+        string source = (relaxed ? "#order relaxed\n" : "")
+            + "using var note = " + calls[0] + ";\n" + calls[1] + ";";
+        ScriptPatternDefinition definition = new((ObjectId)1U, "Inferred virtual source")
+        {
+            RowCount = 2, ChannelCount = 1, Source = source,
+        };
+        var result = ScriptCompiler.CompileIncrementalPattern(definition,
+            instrumentActionCallsites: traced);
+        Assert.That(result.Success, Is.True,
+            string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        var events = result.Program!.EnumerateRawSteps(new SequencingContext())
+            .OfType<RawPatternStep.Emit>().Select(e => e.Note).ToArray();
+        Assert.That(events, Has.Length.EqualTo(2));
+        Assert.That(events[0].Target, Is.EqualTo(events[1].Target));
+        Assert.That(events[0].Commands.Single(), Is.EqualTo(
+            new StartNoteCommand((ObjectId)17U, 2.0, 0.5, false, 0.75)
+            {
+                EventFilterDefinitionId = (ObjectId)30U,
+                EditorOriginCallsite = events[0].EditorCallsite,
+            }));
+        Assert.That(events[1].Commands.Single(), Is.EqualTo(
+            new StartNoteCommand((ObjectId)18U, Volume: 0.25)
+            {
+                EventFilterDefinitionId = (ObjectId)31U,
+                EditorOriginCallsite = events[1].EditorCallsite,
+            }));
+        Assert.That(events.Select(e => e.Offset.TimeOffset),
+            Is.EqualTo(new[] { TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(20) }));
+        for (int i = 0; i < calls.Length; i++)
+            if (traced)
+                Assert.That(events[i].EditorCallsite, Is.EqualTo(
+                    new Heresy.Core.Sequences.SequenceCallsite(
+                        source.IndexOf(calls[i], StringComparison.Ordinal), calls[i].Length)));
+            else
+                Assert.That(events[i].EditorCallsite, Is.Null);
+    }
+
+    [TestCase("using var note = NoteVirtual(0, _O(17), mixdown: true);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17), 1, 1, true);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Note(1, _O(18), mixdown: false);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Note(1, _O(18), 1, 1, false);")]
+    public void RetiredVirtualMixdownArgumentIsNotAccepted(string source)
+    {
+        ScriptPatternDefinition definition = new((ObjectId)1U, "Retired parameter")
+        {
+            RowCount = 2, ChannelCount = 1, Source = source,
+        };
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(definition).Success, Is.False);
+        definition.Source = "#order relaxed\n" + source;
+        Assert.That(ScriptCompiler.CompileIncrementalPattern(definition).Success, Is.False);
     }
 
     [Test]

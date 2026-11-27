@@ -51,6 +51,10 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	private readonly IncrementalPatternTimeline _timeline;
 	private readonly Dictionary<long, Invocation> _frames = [];
 	private readonly Dictionary<long, long> _patternOwners = [];
+	// Only displaced flattened sources with unfinished production belong
+	// here. The renderer independently owns their audible lifetime.
+	private readonly Dictionary<long, (long Owner, int Host)> _displacedSourceProducers = [];
+	public int RetainedDisplacedSourceProducerCount => _displacedSourceProducers.Count;
 	private long _nextFrameId;
 	private bool _disposed;
 
@@ -238,6 +242,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		if (frame.Context.ScopeId != 0 && !sharesParentScope
 			&& _root.ScopedMemory.ForgetScope(frame.Context.ScopeId))
 		{
+			_displacedSourceProducers.Remove(frame.Context.ScopeId);
 			if (cancelAudible)
 				ScopeCanceled?.Invoke(frame.Context.ScopeId);
 			ScopeRetired?.Invoke(frame.Context.ScopeId);
@@ -414,6 +419,20 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 				canceledPatternCursors: stoppedPatternCursors);
 	}
 
+	private void StopPastSourceProducers(long owner, int host)
+	{
+		if (_displacedSourceProducers.Count == 0)
+			return;
+		List<long>? matching = null;
+		foreach (var pair in _displacedSourceProducers)
+			if (pair.Value == (owner, host))
+				(matching ??= []).Add(pair.Key);
+		if (matching is null)
+			return;
+		foreach (long scope in matching)
+			StopSourceProducer(scope);
+	}
+
 	/// <summary>Physical note events can redirect to scope-owned
 	/// instigating-note lifecycle actions without changing host notes.</summary>
 	public bool TryStep(out IncrementalPatternTimelineStep? result)
@@ -449,8 +468,9 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								authoredRow,
 								emit.Time, callsite);
 						List<NoteCommand> retained = [];
-						foreach (NoteCommand command in emit.Note.Commands)
+						foreach (NoteCommand authored in emit.Note.Commands)
 						{
+							NoteCommand command = authored;
 							SequencingChannelState? logical = emit.Note.Target.Kind
 								== ChannelTargetKind.Physical
 									? frame.Context.GetPhysicalChannelState(
@@ -462,6 +482,14 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								&& logical.ActiveFlattenedSourceScopeId > 0)
 								logical.FlattenedSourceDisplacementAction =
 									overrideAction.Action;
+
+							// Past is resolved at this event's deadline, after all
+							// earlier replacements. Stop only former logical
+							// sources of this channel; retain the Past command
+							// for ordinary displaced voices and retired audio tails.
+							if (logical is not null && command is ApplyPastNoteActionCommand)
+								StopPastSourceProducers(frame.Context.PhysicalPlaybackOwner,
+									emit.Note.Target.PhysicalChannel);
 
 							// Note Off releases all voices in this logical source.
 							// Cut immediately stops them. Both end its future
@@ -499,6 +527,9 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 									oldScope, action));
 								if (action != NoteDisplacementAction.Continue)
 									StopSourceProducer(oldScope);
+								else if (_frames.Values.Any(f => f.Context.ScopeId == oldScope))
+									_displacedSourceProducers[oldScope] =
+										(frame.Context.PhysicalPlaybackOwner, emit.Note.Target.PhysicalChannel);
 								logical.ActiveFlattenedSourceScopeId = 0;
 								logical.FlattenedSourceDisplacementAction = null;
 							}
@@ -507,6 +538,17 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								frame.Context.GetPhysicalChannelState(
 									emit.Note.Target.PhysicalChannel -
 									frame.Context.PhysicalChannelBase).NoteVolume = noteVolume.Volume;
+							// A generated virtual identity is an owned logical
+							// channel, never a flattened subtree. Infer private
+							// recursion from the frozen source catalog here, at
+							// resolution, not by setting Mixdown on direct sounds.
+							// Generation zero retains legacy explicit semantics.
+							if (command is StartNoteCommand candidate
+								&& !candidate.Mixdown
+								&& emit.Note.Target.Kind == ChannelTargetKind.Virtual
+								&& emit.Note.Target.VirtualIdentity.Generation != 0
+								&& _root.IsFlattenedSource!(candidate.SourceId))
+								command = candidate with { Mixdown = true };
 							if (command is not StartNoteCommand start || start.Mixdown
 								|| !_resolver.TryResolve(start.SourceId, out SongObject? source)
 								|| source is not (PatternDefinition or SequenceDefinition))
@@ -564,7 +606,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							}
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new NotSupportedException(
-									"Flattened Pattern/Sequence sources require a physical parent channel. For a virtual note, specify mixdown: true.");
+									"Flattened Pattern/Sequence sources require a physical parent channel. Legacy numeric virtual targets must use explicit mixdown.");
 							// Starting a flattened source is a *real start*
 							// for the caller's remembered volume, but does not
 							// create or control one individual playback voice.
@@ -689,5 +731,6 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 				ScopeRetired?.Invoke(scope);
 		_frames.Clear();
 		_patternOwners.Clear();
+		_displacedSourceProducers.Clear();
 	}
 }

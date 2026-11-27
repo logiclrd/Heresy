@@ -390,6 +390,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				sounds.UnregisterPreparedMixdown(id);
 			registeredVoices.Clear();
 			timeline.ScopeCanceled -= CancelPrivateScope;
+			session.FlattenedPastApplied -= ApplyPrivatePastScope;
 			foreach (PreparedRecursiveMixdownSound voice in privateVoices)
 				voice.Dispose();
 			privateVoices.Clear();
@@ -469,7 +470,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		}
 
 		void ApplyPrivateScopeControl(long scopeId, long frame,
-			NoteDisplacementAction action)
+			NoteDisplacementAction action, bool newNoteDisplacement = true)
 		{
 			if (action == NoteDisplacementAction.Continue)
 				return;
@@ -484,7 +485,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				.Distinct().ToArray();
 			foreach (TrackedMixdown voice in affected)
 				Schedule(voice, frame, action,
-					newNoteDisplacement: true);
+					newNoteDisplacement: newNoteDisplacement);
 			if (action == NoteDisplacementAction.Cut)
 			{
 				foreach (var pair in physicalVoices.ToArray())
@@ -503,6 +504,10 @@ public sealed class PreparedIncrementalPlaybackFactory
 				NoteDisplacementAction.Cut);
 		timeline.ScopeCanceled += CancelPrivateScope;
 
+		void ApplyPrivatePastScope(long scopeId, long frame, NoteDisplacementAction action)
+			=> ApplyPrivateScopeControl(scopeId, frame, action, newNoteDisplacement: false);
+		session.FlattenedPastApplied += ApplyPrivatePastScope;
+
 		void ProcessControl(ChannelTarget target, long owner,
 			long playbackOwner, long frame, NoteCommand command)
 		{
@@ -515,6 +520,13 @@ public sealed class PreparedIncrementalPlaybackFactory
 			if (target.Kind == ChannelTargetKind.Physical)
 			{
 				int channel = target.PhysicalChannel;
+				if (command is BeginFlattenedSourceVolumeCommand)
+				{
+					// A flattened logical start replaces a private outer
+					// voice just as a direct or mixed-down start does.
+					ReplacePhysical(channel, playbackOwner, frame);
+					return;
+				}
 				if (command is ApplyPastNoteActionCommand past)
 				{
 					for (int p = displacedVoices.Count - 1; p >= 0; p--)

@@ -21,15 +21,19 @@ public sealed class ScriptEditorHelpTests
             "_O", "Random", "Checkpoint", "Note", "NoteVirtual",
             "NoteFilter", "ChannelFilter", "note.Note", "note.NoteFilter", "note.ChannelFilter",
             "note.Volume", "note.SourceFrame", "note.Displacement", "note.Past",
+            "note.Seek", "note.Pan", "note.Surround", "note.Filter", "note.FilterCutoff", "note.FilterResonance",
             "note.Off", "note.Cut", "Dispose",
             "OffVirtualInScope", "CutVirtualInScope", "OffAllVirtual",
             "CutAllVirtual", "Off", "Cut", "Tempo", "Speed", "Seek",
+            "Volume(double row, int channel, double volume", "SourceFrame(double row, int channel, long sourceFrameOffset",
+            "Displacement(double row, int channel, NoteDisplacementAction action",
+            "Past(double row, int channel, TrackerPastNoteAction action",
             "Pan", "Surround", "Filter", "FilterCutoff", "FilterResonance",
             "Semitone", "Cent", "Octave", "SemitoneOffset",
         ];
         foreach (string method in methods)
             Assert.That(reference,
-                Does.Contain(method + "("),
+                Does.Contain(method.Contains("(") ? method : method + "("),
                 $"The current runtime helper {method} needs editor documentation.");
 
         Assert.That(reference, Does.Contain(
@@ -71,11 +75,22 @@ public sealed class ScriptEditorHelpTests
         Assert.That(reference, Does.Not.Contain("virtualId"));
         Assert.That(reference, Does.Contain("VirtualNote NoteVirtual(double row, ObjectId sourceId,"));
         Assert.That(reference, Does.Contain("both on the first start and on each retrigger"));
+        Assert.That(reference, Does.Contain("Pattern/Sequence sources automatically use private mixdown"));
+        int virtualStart = reference.IndexOf("VIRTUAL NOTE OWNERSHIP", StringComparison.Ordinal);
+        int virtualEnd = reference.IndexOf("PHYSICAL FILTERS AND RELEASE/CUT", StringComparison.Ordinal);
+        Assert.That(virtualStart, Is.GreaterThanOrEqualTo(0));
+        Assert.That(virtualEnd, Is.GreaterThan(virtualStart));
+        Assert.That(reference[virtualStart..virtualEnd], Does.Not.Contain("mixdown:"));
+        Assert.That(reference[virtualStart..virtualEnd], Does.Not.Contain("bool mixdown"));
+        Assert.That(reference[..virtualStart], Does.Contain("bool mixdown = false"));
         Assert.That(reference, Does.Contain("Unproven ownership termination produces a compiler warning"));
         Assert.That(reference, Does.Contain("disposed or transferred handle"));
         Assert.That(reference, Does.Contain("Strict mode yields once per member"));
         Assert.That(reference, Does.Contain("Group controls: Volume, Off, Cut, NoteFilter, ChannelFilter, SourceFrame,"));
-        Assert.That(reference, Does.Contain("Displacement and Past"));
+        Assert.That(reference, Does.Contain("Displacement, Past, Seek, Pan, Surround, Filter, FilterCutoff and"));
+        Assert.That(reference, Does.Contain("FilterResonance, with the same arguments as VirtualNote"));
+        Assert.That(reference, Does.Contain("Legacy tracker resonant low-pass"));
+        Assert.That(reference, Does.Contain("survive silent gaps"));
         Assert.That(reference, Does.Contain("Ambiguous reference sites retain normal delegate equality"));
     }
 

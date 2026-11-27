@@ -343,6 +343,111 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void GeneratedVirtualMemoryIsIsolatedAndRetiredIndependentlyOfPcm()
+	{
+		ObjectId source = (ObjectId)10U;
+		ObjectId missing = (ObjectId)11U;
+		float[] waveform = new float[128];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false, Sample(waveform, 1000))));
+		VirtualChannelIdentity oldId = new(7, 1);
+		VirtualChannelIdentity newId = new(7, 2);
+		ChannelTarget old = ChannelTarget.Virtual(oldId);
+		ChannelTarget replacement = ChannelTarget.Virtual(newId);
+		// Control without a voice, and a failed start, must not retain
+		// a DSP channel nor replace the explicitly remembered volume.
+		session.ApplyScopedEvent(101, old, [new SetNoteVolumeCommand(0.25)]);
+		session.ApplyScopedEvent(101, old, [new StartNoteCommand(missing, Volume: 0.9)]);
+		session.Render(0, 20, new float[20]);
+		Assert.That(session.RetainedScopedVirtualChannelCount, Is.Zero);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.EqualTo(1));
+
+		// A different owner and a recycled slot have independent defaults.
+		session.ApplyScopedEvent(202, old, [new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(101, replacement, [new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(101, old, [new StartNoteCommand(source)]);
+		float[] output = new float[20];
+		session.Render(20, output.Length, output);
+		Assert.That(output[19], Is.EqualTo(2.25f).Within(1e-6f));
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.EqualTo(3));
+
+		// Final use is non-musical. The current voice keeps playing,
+		// but an old generation's remembered state is immediately gone.
+		session.RetireScopedVirtualChannel(101, oldId);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.EqualTo(2));
+		session.Render(40, output.Length, output);
+		Assert.That(output[19], Is.EqualTo(2.25f).Within(1e-6f));
+		// Raw broadcasts may control audible voices but cannot resurrect
+		// retired scalar state. This is not a new authored broadcast API.
+		session.ApplyScopedEvent(101, ChannelTarget.AllVirtualInScope,
+			[new SetNoteVolumeCommand(0.5)]);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.EqualTo(2));
+		session.RetireScopedVirtualChannel(202, oldId);
+		session.RetireScopedVirtualChannel(101, newId);
+		session.Render(60, 200, new float[200]);
+		Assert.That(session.RetainedScopedVirtualChannelCount, Is.Zero);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.Zero);
+	}
+
+	[Test]
+	public void VirtualSpatialFilterMemoryAndSeekStayWithCurrentGenerationNotPastVoice()
+	{
+		ObjectId source = (ObjectId)10U;
+		float[] waveform = new float[512];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false, Sample(waveform, 1000))));
+		VirtualChannelIdentity id = new(7, 1), next = new(7, 2);
+		ChannelTarget target = ChannelTarget.Virtual(id);
+		Vector3 position = new(-0.75f, 0.25f, 0.5f);
+		session.ApplyScopedEvent(101, target,
+			[new SetSpatialPositionCommand(position),
+			 new SetResonantFilterCommand(0.4, 0.2)]);
+		session.Render(0, 20, new float[20]);
+		Assert.That(session.RetainedScopedVirtualChannelCount, Is.Zero);
+		session.ApplyScopedEvent(101, target, [new SetResonantFilterCutoffCommand(0.6)]);
+		session.Render(20, 20, new float[20]);
+		session.ApplyScopedEvent(101, target, [new StartNoteCommand(source),
+			new SetCurrentVoiceDisplacementActionCommand(NoteDisplacementAction.Continue)]);
+		session.Render(40, 1, new float[1]);
+		session.ApplyScopedEvent(101, target, [new StartNoteCommand(source)]);
+		PlaybackVoice past = session.VirtualVoices[0];
+		Assert.That(past.SoundState.Position, Is.EqualTo(position));
+		Assert.That(past.FilterState.Parameters, Is.EqualTo(new ResonantFilterParameters(0.6, 0.2)));
+		TimeSpan pastOffset = past.SoundState.PlaybackOffset;
+		session.ApplyScopedEvent(101, target,
+			[new SetSurroundCommand(true), new SetResonantFilterResonanceCommand(0.1),
+			 new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(0.2)),
+			 new SetCurrentVoiceDisplacementActionCommand(NoteDisplacementAction.Continue)]);
+		session.ApplyScopedEvent(101, target, [new StartNoteCommand(source)]);
+		PlaybackVoice changed = session.VirtualVoices[1];
+		Assert.Multiple(() =>
+		{
+			Assert.That(past.SoundState.Position, Is.EqualTo(position));
+			Assert.That(past.Surround, Is.False);
+			Assert.That(past.FilterState.Parameters, Is.EqualTo(new ResonantFilterParameters(0.6, 0.2)));
+			Assert.That(past.SoundState.PlaybackOffset, Is.EqualTo(pastOffset));
+			Assert.That(changed.SoundState.Position, Is.EqualTo(Vector3.Zero));
+			Assert.That(changed.Surround, Is.True);
+			Assert.That(changed.FilterState.Parameters, Is.EqualTo(new ResonantFilterParameters(0.6, 0.1)));
+			Assert.That(changed.SoundState.PlaybackOffset, Is.EqualTo(TimeSpan.FromSeconds(0.2)));
+		});
+		session.RetireScopedVirtualChannel(101, id);
+		ChannelTarget replacement = ChannelTarget.Virtual(next);
+		session.ApplyScopedEvent(101, replacement, [new StartNoteCommand(source),
+			new SetCurrentVoiceDisplacementActionCommand(NoteDisplacementAction.Continue)]);
+		session.ApplyScopedEvent(101, replacement, [new StartNoteCommand(source)]);
+		PlaybackVoice recycled = session.VirtualVoices[2];
+		Assert.That(recycled.SoundState.Position, Is.EqualTo(Vector3.Zero));
+		Assert.That(recycled.Surround, Is.False);
+		Assert.That(recycled.FilterState.Parameters, Is.EqualTo(ResonantFilterParameters.Disabled));
+		Assert.That(recycled.SoundState.PlaybackOffset, Is.EqualTo(TimeSpan.Zero));
+		session.RetireScopedVirtualChannel(101, next);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.Zero);
+	}
+
+	[Test]
 	public void ScopedVirtualRepeatedStartsHonorNnaContinueAndBroadcastBoundaries()
 	{
 		ObjectId source = (ObjectId)10U;
@@ -558,6 +663,47 @@ public sealed class PlaybackSessionTests
 		Assert.That(after[20], Is.EqualTo(1f).Within(1e-5f));
 		Assert.That(after[40], Is.Zero.Within(1e-6f));
 		Assert.That(after[64], Is.Zero.Within(1e-6f));
+	}
+
+	[Test]
+	public void LogicalPastFadeUsesOrdinaryFadeDurationAfterProducerRetires()
+	{
+		ObjectId id = (ObjectId)50U;
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((id, false, new ConfiguredSustainSound(
+				noteFadeDuration: TimeSpan.FromMilliseconds(200),
+				newNoteFadeDuration: TimeSpan.FromMilliseconds(40)))));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new BeginFlattenedSourceVolumeCommand(1, 1.0)]);
+		StartNoteCommand child = new(id) { ParentSourceScopes = new long[] { 1 } };
+		session.ApplyScopedEvent(10, ChannelTarget.Physical(0),
+			[child, new SetCurrentVoiceDisplacementActionCommand(NoteDisplacementAction.Continue)],
+			physicalPlaybackOwner: 1);
+		session.ApplyScopedEvent(10, ChannelTarget.Physical(0), [child], physicalPlaybackOwner: 1);
+		session.ApplyScopedEvent(10, ChannelTarget.Virtual(7), [child]);
+		session.Render(0, 1, new float[1]);
+		session.RetirePhysicalScope(1);
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new ControlFlattenedSourceCommand(1, NoteDisplacementAction.Continue),
+			 new BeginFlattenedSourceVolumeCommand(2, 1.0)]);
+		session.ApplyScopedEvent(20, ChannelTarget.Physical(0),
+			[new StartNoteCommand(id) { ParentSourceScopes = new long[] { 2 } }],
+			physicalPlaybackOwner: 2);
+		session.ApplyScopedEvent(30, ChannelTarget.Physical(0),
+			[new StartNoteCommand(id)], physicalPlaybackOwner: 3);
+		Assert.That(session.RetainedDisplacedFlattenedSourceCount, Is.EqualTo(1));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new ApplyPastNoteActionCommand(TrackerPastNoteAction.Fade)]);
+		Assert.That(session.GetChannelState(0, 1).CurrentVoice!.FadeEndFrameExclusive, Is.EqualTo(201L));
+		Assert.That(session.VirtualVoices[0].FadeEndFrameExclusive, Is.EqualTo(201L));
+		Assert.That(session.GetChannelState(0, 2).CurrentVoice!.IsNoteFadeRequested, Is.False);
+		Assert.That(session.GetChannelState(0, 3).CurrentVoice!.IsNoteFadeRequested, Is.False);
+		float[] pcm = new float[225];
+		session.Render(1, pcm.Length, pcm);
+		Assert.That(pcm[0], Is.EqualTo(5f).Within(1e-6f));
+		Assert.That(pcm[100], Is.EqualTo(3.5f).Within(1e-5f));
+		Assert.That(pcm[200], Is.EqualTo(2f).Within(1e-6f));
+		Assert.That(session.RetainedDisplacedFlattenedSourceCount, Is.Zero);
 	}
 
 	[TestCase(false, 201L)]
