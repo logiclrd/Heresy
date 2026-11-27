@@ -135,12 +135,12 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 
 	public void EndInput() => EndInput(0, reconstructing: false);
 
-	internal void EndInput(long elapsedReleaseFrames, bool reconstructing)
+	internal void EndInput(long elapsedReleaseFrames, bool reconstructing, bool includeTargetEvents = true)
 	{
 		if (_session.InputEnded)
 			return;
 		StopProducing();
-		_session.EndInput(elapsedReleaseFrames, reconstructing);
+		_session.EndInput(elapsedReleaseFrames, reconstructing, includeTargetEvents);
 		_session.CutIndefiniteActiveVoicesAfterEndInput();
 	}
 
