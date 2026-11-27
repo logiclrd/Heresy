@@ -1759,7 +1759,7 @@ public static class ScriptCompiler
 				: method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 			string returnPrefix = method.ReturnsVoid ? "" : "return ";
 			string traceScope = diagnostic
-				? $"using var {prefix}Invocation = base.__HeresyEnterTraceInvocation({origin}, \"{method.Name}\", null); " : "";
+				? $"using var {prefix}Invocation = base.__HeresyEnterTraceInvocation({origin}, \"{method.Name}\", null, referenceFallback: true); " : "";
 			string forwarded = knownOrigin ? origin + ", " + arguments : arguments;
 			localAdapters.Add($"{returnType} {name}({parameters}) {{ {traceScope}{returnPrefix}base.{method.Name}({forwarded}); }}");
 		}
@@ -1885,7 +1885,7 @@ public static class ScriptCompiler
 			string receiverText = diagnostic ? prefix + "ReceiverPlaceholder" : rewritten.WithoutTrivia().ToFullString();
 			string origin = site.KnownOrigin ? TraceCallsite(lowering.Original(span))
 				: "default(global::Heresy.Core.Sequences.SequenceCallsite)";
-			string traceScope = diagnostic ? $"using var {prefix}Invocation = base.__HeresyEnterTraceDelegate({origin}, {target}); " : "";
+			string traceScope = diagnostic ? $"using var {prefix}Invocation = base.__HeresyEnterTraceDelegate({origin}, {target}, referenceFallback: true); " : "";
 			string call = diagnostic
 				? $"try {{ {returnPrefix}{target}({arguments}); }} catch {{ base.__HeresyRecordTraceFailure(); throw; }}"
 				: $"{returnPrefix}{target}({arguments});";
@@ -1926,7 +1926,9 @@ public static class ScriptCompiler
 					$"base.__HeresyWrapDelegate({(diagnostic ? prefix + "ReceiverPlaceholder" : receiver.WithoutTrivia().ToFullString())}, "
 					+ $"{target} => ({parameters}) => {{ "
 					+ $"var {previous} = base.__HeresyPushDelegateCallsite({TraceCallsite(lowering.Original(span))}); "
-					+ $"try {{ {traceScope}{returnPrefix}{target}({arguments}); }} "
+					+ (diagnostic
+						? $"try {{ {traceScope}try {{ {returnPrefix}{target}({arguments}); }} catch {{ base.__HeresyRecordTraceFailure(); throw; }} }} "
+						: $"try {{ {returnPrefix}{target}({arguments}); }} ")
 					+ $"finally {{ base.__HeresyRestoreDelegateCallsite({previous}); }} }})";
 				return rewritten.WithExpression(ParseAdapter(adapter, receiver)
 					.WithTriviaFrom(rewritten.Expression));
