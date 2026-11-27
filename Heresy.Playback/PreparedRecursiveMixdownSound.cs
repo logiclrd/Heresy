@@ -68,6 +68,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 	private long _fadeFrame = -1;
 	private long _fadeElapsedAtStart;
 	private bool _newNoteDisplacement;
+	private bool _fadeBeforeRelease;
 	private long? _lifecycleEndFrame;
 	private bool IsProducerStopped => _releaseFrame >= 0 || _fadeFrame >= 0 || _cutFrame >= 0;
 
@@ -299,7 +300,11 @@ internal sealed class PreparedRecursiveMixdownSound :
 		long outerFrame = parentFrame - ParentStartFrame;
 		bool includeTargetEvents = SelectsCurrentSeekBoundary(outerFrame);
 		if (includeTargetEvents) _playback.Source.ApplyEventsAtCurrentFrame();
-		if (_releaseFrame < 0) _releaseFrame = outerFrame;
+		if (_releaseFrame < 0)
+		{
+			_releaseFrame = outerFrame;
+			_fadeBeforeRelease = _fadeFrame >= 0;
+		}
 		_playback.Source.EndInput(0, reconstructing: true, includeTargetEvents: includeTargetEvents);
 	}
 
@@ -315,6 +320,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 	{
 		AdvanceToParentFrame(parentFrame);
 		_fadeFrame = parentFrame - ParentStartFrame;
+		_fadeBeforeRelease = _releaseFrame < 0;
 		bool includeTargetEvents = SelectsCurrentSeekBoundary(_fadeFrame);
 		if (includeTargetEvents) _playback.Source.ApplyEventsAtCurrentFrame();
 		_fadeElapsedAtStart = 0;
@@ -332,6 +338,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 		if (_cutFrame >= 0 || _releaseFrame >= 0) return;
 		PrepareInheritedBoundary(invocationFrame, includeTargetEvents);
 		_releaseFrame = invocationFrame;
+		_fadeBeforeRelease = _fadeFrame >= 0;
 		_releaseElapsedAtStart = elapsedReleaseFrames;
 		_playback.Source.EndInput(elapsedReleaseFrames, reconstructing: true, includeTargetEvents: includeTargetEvents);
 	}
@@ -342,6 +349,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 		if (_cutFrame >= 0 || _fadeFrame >= 0) return;
 		PrepareInheritedBoundary(invocationFrame, includeTargetEvents);
 		_fadeFrame = invocationFrame;
+		_fadeBeforeRelease = _releaseFrame < 0;
 		_fadeElapsedAtStart = elapsedFadeFrames;
 		_newNoteDisplacement = newNoteDisplacement;
 		_playback.Source.StopProducing();
@@ -378,9 +386,12 @@ internal sealed class PreparedRecursiveMixdownSound :
 				reconstructing: true);
 		}
 		// Preserve the ordering of independent Off and Fade transitions.
-		if (_fadeFrame >= 0 && (_releaseFrame < 0 || _fadeFrame < _releaseFrame)) Fade();
+		bool fadeFirst = _fadeFrame >= 0 && (_releaseFrame < 0
+			|| _fadeFrame < _releaseFrame
+			|| (_fadeFrame == _releaseFrame && _fadeBeforeRelease));
+		if (fadeFirst) Fade();
 		if (_releaseFrame >= 0) Release();
-		if (_fadeFrame >= 0 && _releaseFrame >= 0 && _fadeFrame >= _releaseFrame) Fade();
+		if (_fadeFrame >= 0 && !fadeFirst) Fade();
 	}
 
 	private void AdvanceToParentFrame(long parentFrame)
