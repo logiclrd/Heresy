@@ -379,12 +379,15 @@ public sealed class PlaybackSession
 		ClearHostCompletionActions(null, virtualId, scopedOwner);
 	}
 
-	public bool IsQuiescent
+	public bool IsQuiescent => _inputEnded && IsAudioQuiescent;
+
+	/// <summary>Audio-only quiescence, also applicable to an explicitly
+	/// stopped private producer whose Fade did not invoke EndInput.</summary>
+	public bool IsAudioQuiescent
 	{
 		get
 		{
-			if (!_inputEnded
-				|| _nextEventIndex < _schedule.Count
+			if (_nextEventIndex < _schedule.Count
 				|| _virtualVoices.Count != 0
 				|| _displacedOutputTails.Count != 0
 				|| _outputSpeakerFilters?.HasTail == true
@@ -418,6 +421,34 @@ public sealed class PlaybackSession
 			}
 			return true;
 		}
+	}
+
+	/// <summary>Conservative end bound for a stopped producer, when all
+	/// current voices have known lifetimes and no detached DSP tails remain.
+	/// Called at reconstruction boundaries, not per PCM frame.</summary>
+	public long? GetKnownStoppedAudioEndFrameExclusive()
+	{
+		if (_nextEventIndex < _schedule.Count || _displacedOutputTails.Count != 0
+			|| _outputSpeakerFilters?.HasTail == true || AnyChannelOutputFilterHasTail())
+			return null;
+		long end = _nextFrame;
+		bool Include(PlaybackVoice? voice)
+		{
+			if (voice is null) return true;
+			long? bound = GetEffectiveVoiceEndFrameExclusive(voice, _nextFrame);
+			if (!bound.HasValue) return false;
+			end = Math.Max(end, bound.Value);
+			return true;
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+			if (channel.AntiClickTail.IsActive || !Include(channel.CurrentVoice)) return null;
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			if (channel.AntiClickTail.IsActive || !Include(channel.CurrentVoice)) return null;
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			if (channel.AntiClickTail.IsActive || !Include(channel.CurrentVoice)) return null;
+		foreach (PlaybackVoice voice in _virtualVoices)
+			if (!Include(voice)) return null;
+		return end;
 	}
 
 	public bool HasIndefiniteActiveVoices
