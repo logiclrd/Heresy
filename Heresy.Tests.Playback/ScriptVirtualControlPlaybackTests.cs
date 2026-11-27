@@ -211,7 +211,13 @@ public sealed class ScriptVirtualControlPlaybackTests
         ObjectId sample = AddSample(document, stepped: false);
         ObjectId first = AddPattern(document, $"""
             using var v7 = NoteVirtual(0, _O({sample.Value}));
-            v7.Volume(0.5, 0.05, timeOffsetSeconds: 0.08);
+            v7.Volume(0.125, 0.05, timeOffsetSeconds: 0.125);
+            v7.Pan(0.125, 0.8, timeOffsetSeconds: 0.125);
+            v7.Surround(0.125, true, timeOffsetSeconds: 0.125);
+            v7.Filter(0.125, 0.2, 0.4, timeOffsetSeconds: 0.125);
+            v7.FilterCutoff(0.125, 0.3, timeOffsetSeconds: 0.125);
+            v7.FilterResonance(0.125, 0.7, timeOffsetSeconds: 0.125);
+            v7.Seek(0.125, 1.5, timeOffsetSeconds: 0.125);
             """);
         ObjectId second = AddPattern(document,
             $"using var v7 = NoteVirtual(0, _O({sample.Value}));");
@@ -229,7 +235,7 @@ public sealed class ScriptVirtualControlPlaybackTests
         Assert.Multiple(() =>
         {
             Assert.That(after[145], Is.GreaterThan(0.42f),
-                "The canceled deferred volume command cannot reach another cursor.");
+                "The canceled deferred scalar controls and seek cannot reach another cursor.");
             Assert.That(after[145], Is.LessThan(before[10] * 0.7f),
                 "The canceled cursor's own voice is gone.");
         });
