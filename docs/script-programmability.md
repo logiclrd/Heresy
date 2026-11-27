@@ -328,6 +328,35 @@ broadcast, ID reuse, cancellation, chunk invariance) and
 `PlaybackExportPcmParityTests` (production realtime/offline mono
 and 5.1 PCM equivalence).
 
+### Physical channel control parity
+
+The physical Pattern helpers also expose the following typed controls
+(PR #72, slice 2a):
+
+```csharp
+Volume(row, channel, volume, timeOffsetSeconds: 0.0);
+SourceFrame(row, channel, sourceFrameOffset, timeOffsetSeconds: 0.0);
+Displacement(row, channel, NoteDisplacementAction.Continue,
+    timeOffsetSeconds: 0.0);
+Past(row, channel, TrackerPastNoteAction.Cut,
+    timeOffsetSeconds: 0.0);
+```
+
+They use the Pattern-local physical channel index and the same typed
+commands, validation and authored ordering as the virtual equivalents.
+Volume is normalized [0,1], remembered on that logical channel, and
+controls the live source gain for a flattened Pattern/Sequence.
+SourceFrame uses a nonnegative native frame index on the current
+seekable sound, distinct from seconds-based Seek. Displacement
+overrides the current logical note's next-note action, including the
+existing flattened-source displacement policy. Past presently addresses
+displaced rendered voices by physical origin and playback owner, never
+the current replacement or explicitly virtual origins. The owner-approved
+extension to former flattened logical invocations is a separate,
+pending slice; it is not yet part of the implementation.
+Positive fixed-wall offsets are evaluated at their resolved deadline.
+Generated-only F6 overloads are not authored entrypoints.
+
 ### Virtual handle controls
 
 The owned handle exposes typed instance controls; successful calls emit one raw event in strict or relaxed mode:
