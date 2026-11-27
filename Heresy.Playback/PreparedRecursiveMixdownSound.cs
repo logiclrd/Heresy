@@ -261,6 +261,34 @@ internal sealed class PreparedRecursiveMixdownSound :
 				- FrameTime.Ceiling(nested.PlaybackOffset, _sampleRate));
 	}
 
+	// This projection is intentionally separate from GetEndFrameExclusive:
+	// it walks stopped descendant sessions only at a seek/control boundary,
+	// never in the ordinary render loop.
+	public long? GetKnownStoppedEndFrameExclusive()
+	{
+		if (!IsProducerStopped || _boundState is not { } state)
+			return null;
+		long? bound = _lifecycleEndFrame;
+		if (_cutFrame >= 0)
+			bound = bound.HasValue ? Math.Min(bound.Value, _cutFrame) : _cutFrame;
+		if (_playback.Session.GetKnownStoppedAudioEndFrameExclusive() is long childEnd)
+		{
+			long mapped = state.Anchor is { } anchor
+				? ClampFrame((Int128)anchor.OuterFrame + Math.Max(0, childEnd - anchor.ChildFrame))
+				: ClampFrame((Int128)state.PlaybackOriginFrame + childEnd
+					- state.SourceFrameOffset - FrameTime.Ceiling(state.PlaybackOffset, _sampleRate));
+			bound = bound.HasValue ? Math.Min(bound.Value, mapped) : mapped;
+		}
+		return bound;
+	}
+
+	// An explicit seek at this very boundary selects events at the
+	// destination, even when the next parent command is Off or Fade.
+	// Without a seek, retain the ordinary stop-before-new-events rule.
+	private bool SelectsCurrentSeekBoundary(long invocationFrame)
+		=> _boundState?.Anchor is { } anchor && anchor.OuterFrame == invocationFrame
+			&& _playback.Source.NextFrame == anchor.ChildFrame;
+
 	/// <summary>
 	/// Parent lifecycle commands arrive in chronological order while the
 	/// same worker is at the affected parent frame. No extra control queue.
@@ -269,8 +297,10 @@ internal sealed class PreparedRecursiveMixdownSound :
 	{
 		AdvanceToParentFrame(parentFrame);
 		long outerFrame = parentFrame - ParentStartFrame;
+		bool includeTargetEvents = SelectsCurrentSeekBoundary(outerFrame);
+		if (includeTargetEvents) _playback.Source.ApplyEventsAtCurrentFrame();
 		if (_releaseFrame < 0) _releaseFrame = outerFrame;
-		_playback.Source.EndInput(0, reconstructing: true, includeTargetEvents: false);
+		_playback.Source.EndInput(0, reconstructing: true, includeTargetEvents: includeTargetEvents);
 	}
 
 	public void ScheduleCut(long parentFrame)
@@ -285,11 +315,13 @@ internal sealed class PreparedRecursiveMixdownSound :
 	{
 		AdvanceToParentFrame(parentFrame);
 		_fadeFrame = parentFrame - ParentStartFrame;
+		bool includeTargetEvents = SelectsCurrentSeekBoundary(_fadeFrame);
+		if (includeTargetEvents) _playback.Source.ApplyEventsAtCurrentFrame();
 		_fadeElapsedAtStart = 0;
 		_newNoteDisplacement = newNoteDisplacement;
 		_playback.Source.StopProducing();
 		_playback.Source.Session.RequestFadeOfActiveVoices(newNoteDisplacement, 0,
-			reconstructing: true, includeTargetEvents: false);
+			reconstructing: true, includeTargetEvents: includeTargetEvents);
 	}
 
 	// A rebuilt nested voice can be younger than the ancestor's release.
