@@ -17,6 +17,7 @@ using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
 using Heresy.Scripting.Compilation;
+using Heresy.UserInterface.Documents;
 
 namespace Heresy.UserInterface.Views;
 
@@ -146,7 +147,7 @@ internal sealed class PatternGenerationTraceView : UserControl
 
     internal async Task RunAsync(ScriptPatternDefinition definition,
         IReadOnlyList<ScriptReferenceVisualToken> tokens,
-        Action<ScriptSyntaxColorizer> applySyntax)
+        IReadOnlyList<ScriptSyntaxHighlightSpan> syntax)
     {
         Abandon();
         using CancellationTokenSource run = new();
@@ -160,7 +161,7 @@ internal sealed class PatternGenerationTraceView : UserControl
             _order.IsEnabled = false;
             _snapshot.Text = definition.Source;
             _references.SetTokens(tokens);
-            applySyntax(_colorizer);
+            _colorizer.SetSpans(syntax);
             _highlight.SetSpans([], _snapshot.Document.TextLength);
             _snapshot.TextArea.TextView.Redraw();
         }
@@ -169,7 +170,7 @@ internal sealed class PatternGenerationTraceView : UserControl
         _status.Text = "Compiling and generating diagnostic events — no audio is played.";
         try
         {
-            var outcome = await Task.Run(() =>
+            var outcome = await Task.Run<(PatternGenerationTracePresentation? Model, string? Error)>(() =>
             {
                 var result = ScriptCompiler.CompilePatternGenerationTrace(definition);
                 if (!result.Success || result.Program is null)
@@ -223,7 +224,8 @@ internal sealed class PatternGenerationTraceView : UserControl
             {
                 items.Clear();
                 // Restore the primary event first, then other selected events.
-                if (_model.PrimaryRowIndex is int primary && primary >= 0)
+                int primary = _model.PrimaryRowIndex;
+                if (primary >= 0)
                     items.Add(_model.Rows[primary]);
                 foreach (var row in _model.Rows)
                     if (row.OccurrenceId is long id && selected.Contains(id)
@@ -268,7 +270,12 @@ internal sealed class PatternGenerationTraceView : UserControl
     {
         if (e.ClickCount != 2 || !e.GetCurrentPoint(_snapshot).Properties.IsLeftButtonPressed) return;
         var position = _snapshot.GetPositionFromPoint(e.GetPosition(_snapshot));
-        if (position is null) return;
+        if (position is null)
+        {
+            e.Handled = true;
+            _back();
+            return;
+        }
         int offset = _snapshot.Document.GetOffset(position.Value.Location);
         e.Handled = true;
         _navigate(offset);
