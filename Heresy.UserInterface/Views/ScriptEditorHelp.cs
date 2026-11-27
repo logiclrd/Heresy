@@ -176,7 +176,7 @@ VirtualNote instance methods (shown on a local named note):
     Sample time converts at the current instantaneous playback rate; relative deltas are signed.
     Relative targets clamp to zero; absolute seeks replace the previous target.
     Relative seeks use the unwrapped playhead even inside loops.
-    Private Pattern/Sequence seeks use the instantiated child timeline and\n    may reconstruct/replay it. After outer release/fade, private seeks are ignored.\n    Unsupported sources ignore seeks.
+    Private Pattern/Sequence seeks use the instantiated child timeline and\n    may reconstruct/replay it. During release/fade, seeking preserves elapsed lifecycle time.\n    Unsupported sources ignore seeks.
   note.Pan(double row, double x, double y = 0, double z = 0,
            double timeOffsetSeconds = 0.0)
   note.Surround(double row, bool enabled, double timeOffsetSeconds = 0.0)
