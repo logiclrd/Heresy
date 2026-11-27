@@ -589,6 +589,151 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		});
 	}
 
+	// A common fixed sustain makes the release oracle independent of
+	// preroll, and the native ramp exposes the exact selected sample age.
+	private static ObjectId AddReleaseInstrument(SongDocument document,
+		ObjectId sample, int releaseMs, int fadeMs = 200)
+	{
+		ObjectId envelopeId = document.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "Fixed sustain release");
+		envelope.ReplaceCurve(
+			[new(TimeSpan.Zero, 1.0), new(TimeSpan.FromMilliseconds(releaseMs), 0.0)],
+			0, 0, EnvelopeSustainLoopMode.Forward);
+		document.Add(envelope);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Release and fade")
+		{
+			NnaOverride = InstrumentNnaOverride.Fade,
+			NnaFadeDuration = TimeSpan.FromMilliseconds(fadeMs),
+		};
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = sample, VolumeEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		return instrumentId;
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void SeekThenOffAtSameDeadlineReleasesTheSelectedChildNote(bool nested)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId instrument = AddReleaseInstrument(document, sample, 200);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({instrument.Value}));
+			Cut(1.5, 0);
+			Note(2, 0, _O({instrument.Value}), volume: 0.5);
+			Note(2.25, 0, _O({instrument.Value}));
+			""", rows: 6);
+		if (nested) child = AddPattern(document, child, rows: 6, mixdown: true);
+		ObjectId parent = AddScript(document, $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			note.SourceFrame(0.5, 240);
+			note.Off(0.5);
+			""", rows: 5);
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono()).Create(document, parent);
+		float[] pcm = new float[320];
+		plan.Source.Render(pcm.Length, pcm);
+		const float scale = 20f / 32768;
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm[59], Is.EqualTo(59 * scale).Within(1e-6f));
+			Assert.That(pcm[61], Is.EqualTo(scale * 0.5 * 0.995).Within(1e-6f));
+			Assert.That(pcm[100], Is.EqualTo(40 * scale * 0.5 * 0.8).Within(1e-6f));
+			Assert.That(pcm[259], Is.EqualTo(199 * scale * 0.5 * 0.005).Within(1e-6f));
+			Assert.That(pcm.AsSpan(261).ToArray(), Is.All.EqualTo(0f).Within(1e-6f));
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void SeekToLongerReleaseCannotExtendOriginalDeadlineOrAlterSibling(bool nested)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId a = AddReleaseInstrument(document, sample, 200);
+		ObjectId b = AddReleaseInstrument(document, sample, 800);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({a.Value}));
+			Cut(1.5, 0);
+			Note(2, 0, _O({b.Value}), volume: 0.5);
+			""", rows: 8);
+		if (nested) child = AddPattern(document, child, rows: 8, mixdown: true);
+		ObjectId parent = AddScript(document, $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			using var sibling = NoteVirtual(0, _O({sample.Value}), volume: 0.25);
+			note.Off(0.5);
+			note.SourceFrame(1, 240);
+			note.SourceFrame(2.5, 0);
+			""", rows: 5);
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono()).Create(document, parent);
+		float[] pcm = new float[350];
+		plan.Source.Render(pcm.Length, pcm);
+		const float scale = 20f / 32768;
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm[121], Is.EqualTo(scale * (121 * 0.25 + 0.5 * (1 - 61.0 / 800))).Within(1e-6f));
+			Assert.That(pcm[259], Is.GreaterThan(259 * scale * 0.25 + 0.01f));
+			for (int i = 261; i < pcm.Length; i++)
+				Assert.That(pcm[i], Is.EqualTo(i * scale * 0.25).Within(1e-6f), $"sibling frame {i}");
+			Assert.That(plan.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(1));
+		});
+	}
+
+	[TestCase(false, false)]
+	[TestCase(true, false)]
+	[TestCase(false, true)]
+	[TestCase(true, true)]
+	public void BoundPrivateFadeSeekPreservesFadeAndOptionalOffClock(bool nested, bool withOff)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId instrument = AddReleaseInstrument(document, sample, 200);
+		ObjectId child = AddScript(document, $"""
+			Note(0, 0, _O({instrument.Value}));
+			Cut(1.5, 0);
+			Note(2, 0, _O({instrument.Value}), volume: 0.5);
+			Note(2.25, 0, _O({instrument.Value}));
+			""", rows: 6);
+		if (nested) child = AddPattern(document, child, rows: 6, mixdown: true);
+		string off = withOff ? "Off(0.75, 0);" : "";
+		ObjectId parent = AddScript(document, $"""
+			Note(0, 0, _O({child.Value}), mixdown: true);
+			{off}
+			SourceFrame(1, 0, 240);
+			SourceFrame(1.5, 0, 0);
+			""", rows: 5);
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono()).Create(document, parent);
+		float[] pcm = new float[320];
+		plan.Source.Render(60, pcm.AsSpan(0, 60));
+		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
+		// The public script Fade action only addresses displaced voices,
+		// which are not seek targets. Exercise the bound lifecycle capability
+		// directly rather than broaden authored targeting semantics.
+		((IInheritedLifecycleSound)outer.Sound).InheritFade(60, 0,
+			newNoteDisplacement: true, includeTargetEvents: false);
+		for (int i = 60; i < pcm.Length;)
+		{
+			int n = Math.Min(17, pcm.Length - i);
+			plan.Source.Render(n, pcm.AsSpan(i, n));
+			i += n;
+		}
+		const float scale = 20f / 32768;
+		double Gain(int frame) => (1 - (frame - 60) / 200.0)
+			* (withOff ? 1 - Math.Max(0, frame - 90) / 200.0 : 1);
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm[59], Is.EqualTo(59 * scale).Within(1e-6f));
+			Assert.That(pcm[100], Is.EqualTo(100 * scale * Gain(100)).Within(1e-6f));
+			Assert.That(pcm[121], Is.EqualTo(scale * 0.5 * Gain(121)).Within(1e-6f));
+			Assert.That(pcm[151], Is.EqualTo(31 * scale * 0.5 * Gain(151)).Within(1e-6f));
+			Assert.That(pcm[181], Is.EqualTo(scale * Gain(181)).Within(1e-6f));
+			Assert.That(pcm[259], Is.EqualTo(79 * scale * Gain(259)).Within(1e-6f));
+			Assert.That(pcm.AsSpan(260).ToArray(), Is.All.EqualTo(0f).Within(1e-6f));
+			Assert.That(plan.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(2));
+		});
+	}
+
 	[Test]
 	public void PrivateSeekAfterExplicitReleaseCannotRestartProducer()
 	{
