@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
+using System.Threading.Tasks;
 
 using Avalonia;
 using Avalonia.Controls;
@@ -16,6 +18,7 @@ using Heresy.Core.Patterns;
 using Heresy.Playback;
 using Heresy.Core.Sequences;
 using Heresy.Scripting.Analysis;
+using Heresy.Scripting.Compilation;
 using Heresy.UserInterface.Documents;
 
 namespace Heresy.UserInterface.Views;
@@ -37,6 +40,10 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 	private readonly Action? _documentSaveRequested;
 
 	private readonly TextEditor _source;
+	private readonly Control _sourceView;
+	private readonly Grid _editorViews = new();
+	private PatternGenerationTraceView? _generationTrace;
+	private IReadOnlyList<ScriptSyntaxHighlightSpan> _sourceSyntaxSpans = [];
 	private string _appliedSource = string.Empty;
 	private readonly Button _saveSource = new()
 	{
@@ -227,7 +234,10 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			_majorHighlight = NumberBox(pattern.MajorHighlightRows);
 		}
 
-		Content = BuildContent();
+		_sourceView = BuildContent();
+		_editorViews.Children.Add(_sourceView);
+		Content = _editorViews;
+		DetachedFromVisualTree += (_, _) => ReturnFromGenerationTrace(focusSource: false);
 		RefreshAnalysis();
 	}
 
@@ -417,6 +427,14 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			FontWeight = FontWeight.SemiBold,
 			VerticalAlignment = VerticalAlignment.Center,
 		});
+		if (_pattern is not null)
+		{
+			Button trace = new() { Content = "Generation Trace", Margin = new Thickness(8, 0) };
+			trace.Click += async (_, _) => await StartGenerationTraceAsync();
+			ToolTip.SetTip(trace, "Inspect generated events from the current draft without saving or playing audio.");
+			DockPanel.SetDock(trace, Dock.Right);
+			sourceHeader.Children.Insert(1, trace);
+		}
 		body.Children.Add(sourceHeader);
 		body.Children.Add(_source);
 
@@ -459,6 +477,69 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 				Content = body,
 			});
 		return root;
+	}
+
+	internal bool IsGenerationTraceVisible => _generationTrace?.IsVisible == true;
+
+	internal async Task StartGenerationTraceAsync()
+	{
+		if (_pattern is null) return;
+		// Copy only the applied layout and the current canonical draft, not
+		// the live song or editable TextDocument. No save/transport call.
+		var snapshot = new ScriptPatternDefinition(_pattern.Id, _pattern.Name)
+		{
+			Source = _source.Text ?? string.Empty,
+			RowCount = _pattern.RowCount,
+			ChannelCount = _pattern.ChannelCount,
+		};
+		if (_generationTrace is null)
+		{
+			_generationTrace = new PatternGenerationTraceView(
+				() => ReturnFromGenerationTrace(focusSource: true), NavigateFromGenerationTrace);
+			_editorViews.Children.Add(_generationTrace);
+		}
+		_sourceView.IsVisible = false;
+		_generationTrace.IsVisible = true;
+		await _generationTrace.RunAsync(snapshot, _referenceTokens, _sourceSyntaxSpans);
+	}
+
+	private void ReturnFromGenerationTrace(bool focusSource)
+	{
+		if (_generationTrace is null || !_generationTrace.IsVisible) return;
+		_generationTrace.Abandon();
+		_generationTrace.IsVisible = false;
+		_sourceView.IsVisible = true;
+		if (focusSource) _source.Focus();
+	}
+
+	private void NavigateFromGenerationTrace(int offset)
+	{
+		if (_generationTrace is not { } view) return;
+		string live = _source.Text ?? string.Empty;
+		PatternTraceNavigation? target = null;
+		if (string.Equals(view.CapturedSource, live, StringComparison.Ordinal))
+		{
+			if (view.Model is { } model)
+				target = model.Navigate(live, offset);
+			else
+			{
+				// Still compiling or compile failed: authored syntax is
+				// sufficient for navigation, without running the script.
+				var span = ScriptCompiler.GetPatternInvocationSpans(live)
+					.Where(s => offset >= s.Start && offset - s.Start < s.Length)
+					.OrderBy(s => s.Length).ThenByDescending(s => s.Start).FirstOrDefault();
+				target = span.Length > 0 ? new(span.Start, span.Length) : new(offset, 0);
+			}
+		}
+		ReturnFromGenerationTrace(focusSource: true);
+		if (target is null)
+		{
+			_message.Text = "Trace source is stale. Run Generation Trace again for the current draft.";
+			return;
+		}
+		_source.Select(target.Start, target.Length);
+		var location = _source.Document.GetLocation(target.Start);
+		_source.ScrollTo(location.Line, location.Column);
 	}
 
 	private Control BuildPatternLayout()
@@ -598,10 +679,9 @@ public sealed class ScriptEditorControl : UserControl, IScriptSourceEditor, IScr
 			_referenceTokens = referenceTokens;
 			_referenceGenerator.SetTokens(
 				referenceTokens);
-			_syntaxColorizer.SetSpans(
-				ScriptSyntaxHighlightCatalog.Create(
-					analysis.SyntaxSnapshot,
-					referenceTokens));
+			_sourceSyntaxSpans = ScriptSyntaxHighlightCatalog.Create(
+				analysis.SyntaxSnapshot, referenceTokens);
+			_syntaxColorizer.SetSpans(_sourceSyntaxSpans);
 			_diagnosticMarkers =
 				ScriptDiagnosticVisualMarkerCatalog.Create(
 					_source.Document.TextLength,
