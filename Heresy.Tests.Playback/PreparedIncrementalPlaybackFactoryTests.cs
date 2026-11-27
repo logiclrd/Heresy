@@ -3437,6 +3437,48 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void FlattenedReplacementDisplacesPrivateMixdownForLaterPast()
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Sustain", "sustain.wav",
+			LongWave(16384, frames: 1200)));
+		ObjectId child = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(child, "Recursive child")
+		{
+			RowCount = 5, ChannelCount = 2,
+			Source = $"Note(0, 0, _O({sample.Value})); Note(3, 1, _O({sample.Value}));",
+		});
+		ObjectId root = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(root, "Mixed replacement")
+		{
+			RowCount = 7, ChannelCount = 1, Source = $$"""
+				Note(0, 0, _O({{child.Value}}), mixdown: true);
+				Displacement(0.5, 0, NoteDisplacementAction.Continue);
+				Note(1, 0, _O({{child.Value}}));
+				Past(2, 0, TrackerPastNoteAction.Cut);
+				""",
+		});
+		using var plan = new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(doc, root);
+		float[] pcm = new float[700];
+		plan.Source.Render(200, pcm.AsSpan(0, 200));
+		Assert.That(plan.Session.VirtualVoices.Count, Is.EqualTo(1));
+		Assert.That(PreparedRegistrationCount(plan), Is.EqualTo(1));
+		plan.Source.Render(500, pcm.AsSpan(200));
+		Assert.Multiple(() =>
+		{
+			Assert.That(pcm[180], Is.EqualTo(1f).Within(1e-6f));
+			Assert.That(pcm[300], Is.EqualTo(0.5f).Within(1e-6f));
+			Assert.That(pcm[400], Is.EqualTo(0.5f).Within(1e-6f),
+				"The old private producer cannot start its later note.");
+			Assert.That(pcm[520], Is.EqualTo(1f).Within(1e-6f),
+				"The replacement flattened producer still starts its later note.");
+			Assert.That(PreparedRegistrationCount(plan), Is.Zero);
+			Assert.That(plan.Session.VirtualVoices, Is.Empty);
+		});
+	}
+
+	[Test]
 	public void DataPatternS70CutsFormerFlattenedSourceButNotCurrentFlattenedSource()
 	{
 		SongDocument doc = new();
