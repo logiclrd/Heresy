@@ -33,6 +33,16 @@ public sealed record PatternGenerationTraceGroup(long Id, SequenceCallsite? Crea
 public sealed record PatternGenerationTraceTransfer(SequenceCallsite SourceSpan,
     long GroupId, VirtualChannelIdentity? Channel, bool Succeeded, long? EnclosingScopeId, long AtTraceOrdinal);
 
+/// <summary>For a failure caught by a diagnostic invocation adapter,
+/// IsInvocationFailure identifies the invocation that threw, not necessarily
+/// the exact failing expression. Otherwise this is only the last known context.</summary>
+public sealed record PatternGenerationTraceLocation(SequenceCallsite SourceSpan,
+    long? EnclosingScopeId, long? InvocationId, bool IsInvocationFailure);
+
+public sealed record PatternGenerationTraceVirtualOrigin(VirtualChannelIdentity Channel,
+    long FirstOccurrenceId, SequenceCallsite? CreationSpan, long? EnclosingScopeId,
+    long? InvocationId);
+
 public enum PatternGenerationTraceMarkerKind
 {
     LoopEnter,
@@ -58,7 +68,33 @@ public sealed record PatternGenerationTraceResult(
     IReadOnlyList<PatternGenerationTraceGroup> Groups,
     IReadOnlyList<PatternGenerationTraceTransfer> Transfers,
     PatternGenerationTraceStatus Status, string? Detail,
-    IReadOnlyList<SequencingDiagnostic> Diagnostics);
+    IReadOnlyList<SequencingDiagnostic> Diagnostics,
+    PatternGenerationTraceLocation? FailureContext)
+{
+    /// <summary>Derived from the actual first raw emission for each full
+    /// identity, not sorted playback order or later retriggers. No extra
+    /// allocator or musical-runtime instrumentation.</summary>
+    public IReadOnlyList<PatternGenerationTraceVirtualOrigin> GetVirtualOrigins()
+    {
+        List<PatternGenerationTraceVirtualOrigin> origins = [];
+        HashSet<VirtualChannelIdentity> seen = [];
+        foreach (var entry in Events)
+        {
+            if (entry.Note.Target.Kind != ChannelTargetKind.Virtual
+                || !seen.Add(entry.Note.Target.VirtualIdentity)) continue;
+            SequenceCallsite? span = entry.Note.EditorCallsite;
+            if (entry.InvocationId is long id && id >= 0 && id < Invocations.Count)
+            {
+                var invocation = Invocations[(int)id];
+                if (invocation.Method == "NoteVirtual" && invocation.SourceSpan.Length > 0)
+                    span = invocation.SourceSpan;
+            }
+            origins.Add(new(entry.Note.Target.VirtualIdentity, entry.OccurrenceId,
+                span is { Length: > 0 } ? span : null, entry.EnclosingScopeId, entry.InvocationId));
+        }
+        return origins.AsReadOnly();
+    }
+}
 
 internal sealed class PatternGenerationTraceLimitException(string message) : Exception(message);
 
@@ -89,6 +125,29 @@ public sealed class PatternGenerationTraceBudget
     internal IReadOnlyList<PatternGenerationTraceTransfer> Transfers => _transfers.AsReadOnly();
     internal long? CurrentInvocationId => _invocation?.Record.Id;
     internal long? CurrentGroupId => _invocation?.Record.GroupId;
+    private PatternGenerationTraceLocation? _lastContext;
+    private PatternGenerationTraceLocation? _invocationFailure;
+    internal PatternGenerationTraceLocation? FailureContext => _invocationFailure ?? _lastContext;
+
+    private void ObserveContext(SequenceCallsite span)
+    {
+        if (span.Length > 0)
+            _lastContext = new(span, CurrentScopeId, CurrentInvocationId, false);
+    }
+
+    internal void RecordInvocationFailure()
+    {
+        if (_invocationFailure is null && _invocation?.Record is { SourceSpan.Length: > 0 } invocation)
+            _invocationFailure = new(invocation.SourceSpan, CurrentScopeId, invocation.Id, true);
+    }
+
+    internal void ObserveEmission(NoteEvent note)
+    {
+        if (_invocation?.Record is { SourceSpan.Length: > 0 } invocation)
+            ObserveContext(invocation.SourceSpan);
+        else if (note.EditorCallsite is { } span)
+            ObserveContext(span);
+    }
 
     internal long RegisterGroup(NoteGroup group, SequenceCallsite? span)
     {
@@ -109,6 +168,7 @@ public sealed class PatternGenerationTraceBudget
         _invocations.Add(record);
         var scope = new InvocationScope(this, _invocation, record);
         _invocation = scope;
+        ObserveContext(span);
         return scope;
     }
 
@@ -178,6 +238,7 @@ public sealed class PatternGenerationTraceBudget
         ReserveRecords(2);
         TraceScope scope = new(this, _scope, _nextOrdinal++, source, iterationIndex);
         _scope = scope;
+        ObserveContext(source);
         _markers.Add(new(scope.Id, scope.Id, scope.Parent?.Id,
             iterationIndex.HasValue ? PatternGenerationTraceMarkerKind.IterationBegin
                 : PatternGenerationTraceMarkerKind.LoopEnter, source, iterationIndex));
@@ -237,6 +298,8 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
         return _traceBudget.EnterInvocation(span, name, group);
     }
 
+    protected void __HeresyRecordTraceFailure() => _traceBudget.RecordInvocationFailure();
+
     protected void __HeresyBeginTraceInvocation(SequenceCallsite span, string method, NoteGroup? group)
     {
         if (_pendingInvocation is not null)
@@ -253,9 +316,13 @@ public abstract class DiagnosticPatternScriptProgram : PatternScriptProgram
     protected NoteGroup __HeresyTraceNewGroup(SequenceCallsite span)
     {
         using var invocation = _traceBudget.EnterInvocation(span, "NewNoteGroup", null);
-        NoteGroup group = NewNoteGroup();
-        _traceBudget.RegisterGroup(group, span);
-        return group;
+        try
+        {
+            NoteGroup group = NewNoteGroup();
+            _traceBudget.RegisterGroup(group, span.Length > 0 ? span : null);
+            return group;
+        }
+        catch { _traceBudget.RecordInvocationFailure(); throw; }
     }
 
     protected void __HeresyTraceTransfer(SequenceCallsite span, NoteGroup group, VirtualNote note)
@@ -340,6 +407,7 @@ public sealed class CompiledPatternGenerationTrace
                     if (iterator.Current is RawPatternStep.Emit emission)
                     {
                         bool dropped = emission.Row < lastRow;
+                        budget.ObserveEmission(emission.Note);
                         long ordinal = budget.ReserveEvent();
                         events.Add(new(emission.Note.WithEmissionOrder(events.Count), dropped,
                             ordinal, budget.CurrentScopeId, budget.CurrentInvocationId, budget.CurrentGroupId));
@@ -381,7 +449,8 @@ public sealed class CompiledPatternGenerationTrace
         if (detail is { Length: > 2048 }) detail = detail[..2048];
         return new(_patternId, _source, _rowCount, _channelCount, _relaxed,
             events.AsReadOnly(), budget.Markers, budget.Invocations, budget.Groups, budget.Transfers,
-            status, detail, Array.AsReadOnly(context.Diagnostics.Drain()));
+            status, detail, Array.AsReadOnly(context.Diagnostics.Drain()),
+            status == PatternGenerationTraceStatus.Completed ? null : budget.FailureContext);
     }
 
     private PatternScriptProgram CreateProgram(SequencingContext context, INoteReceiver receiver,
@@ -396,6 +465,7 @@ public sealed class CompiledPatternGenerationTrace
         public void Append(NoteEvent noteEvent)
         {
             ArgumentNullException.ThrowIfNull(noteEvent);
+            budget.ObserveEmission(noteEvent);
             long ordinal = budget.ReserveEvent();
             events.Add(new(noteEvent.WithEmissionOrder(events.Count), false,
                 ordinal, budget.CurrentScopeId, budget.CurrentInvocationId, budget.CurrentGroupId));
