@@ -20,6 +20,7 @@ internal static class ScriptPatternEmissionPolicy
             or "Off" or "Cut"
             or "OffVirtualInScope" or "CutVirtualInScope"
             or "OffAllVirtual" or "CutAllVirtual"
+            or "Volume" or "SourceFrame" or "Displacement" or "Past"
             or "Tempo" or "Speed" or "Seek" or "Pan" or "Surround"
             or "Filter" or "FilterCutoff" or "FilterResonance";
 
