@@ -379,3 +379,49 @@ adds seven regression cases covering first allocation versus retrigger, slot
 reuse, exact-vs-last-known failure, multicast equality/removal and per-group
 attribution, and relaxed allocation/group factory method groups. Exact-head
 full CI remains pending.
+
+
+## Slice 4: headless presentation model
+
+`Heresy.UserInterface/Views/PatternGenerationTracePresentation.cs` owns
+snapshot-local projection and selection state, with no Avalonia controls or
+playback dependencies beyond the captured command vocabulary. Its three
+lazily cached read-only row lists share event occurrence IDs. Original order
+shows loop markers, group creation/transfer records, and group-operation
+headers with indented member events. Sorted modes omit structural markers
+but retain event metadata. Playback order sorts row then emission ordinal,
+not wall-clock offset. Playback order by channel partitions that ordering
+by complete ChannelTarget, including generation-qualified virtual identity,
+global controls and distinct broadcast groups. Physical headers use zero-based
+authored numbers; virtual headers use allocation line or an explicitly
+labeled reference fallback, with column/iteration/trace-local occurrence
+suffix only when needed. Unknown origin remains unknown. Group labels use
+the same scheme; no virtual slot numbers appear in labels.
+
+Group-operation header selection expands to its member occurrence IDs.
+Selection and primary occurrence persist across mode switches. Selected
+events provide deduplicated canonical source spans; structural rows and
+virtual headers carry their own source anchor. Status rows explicitly
+distinguish completed, failed, canceled and truncated captures; strict
+dropped events remain in every projection with an explicit dropped label.
+For a strict direct += NoteVirtual call, the collector observes transfer
+before the pending start is drained. The Original order presentation
+positions the matching successful transfer after that start; it does not
+change the captured event or transfer identity. Other metadata records are
+positioned at their recorded trace boundaries.
+
+Source navigation uses Roslyn's invocation syntax spans in the original
+snapshot, before any lowering, including calls that did not execute.
+Innermost invocation wins when spans overlap; outside calls the result is
+a zero-length caret selection. An exact text comparison rejects stale
+navigation. UI conversion from projected AvalonEdit coordinates to canonical
+offsets, scroll/focus restoration, header click behavior, worker lifecycle
+and actual control integration belong to Slice 5.
+
+Nine model regression cases cover sort ties, all projections, stable
+multiselection, group operation selection, same-source recycled identities,
+strict dropped/failed status, direct transfer display, global and broadcast
+headers, source anchors, unexecuted and nested invocation navigation,
+CRLF and stale/invalid selection. Slice 3c scripting passed 541/541
+(#46084603761); Core/File/Render and ARM64 passed, Release superseded before
+full completion. Exact-head full CI including the new model tests is pending.
