@@ -111,14 +111,44 @@ internal voice/automation/filter histories as needed; outer note age
 and outer state remain intact.
 
 Propose signed relative deltas, clamping targets before frame zero to
-zero, while absolute negative inputs remain invalid. Decide loop-relative
-coordinates explicitly: unwrapped accumulated traversal (consistent with
-existing loop mapping and ping-pong direction) versus mapped sample
-address. Recommend unwrapped traversal for relative operations, and an
-absolute frame always selects the requested source coordinate before
-normal loop mapping. Confirm behavior for absolute frame addresses past
-loop end, large signed deltas, finite end and private seek during release.
-For zero relative delta recommend a no-op without replay or reanchoring.
+zero, while absolute negative inputs remain invalid. For zero relative
+delta recommend a no-op without replay or reanchoring.
+
+### Loop-coordinate contract (owner clarified)
+
+The owner explicitly confirmed a left-bounded, unwrapped playhead space:
+lead-in concatenated with indefinitely repeated loop traversals. Let x
+be the nonnegative (possibly fractional) unwrapped playhead, L the
+loop start and N the loop length (exclusive end minus start). For a
+forward loop, map to the actual Sample coordinate as:
+
+    sampleFrame = x < L ? x : L + (x - L) % N
+
+All four seek operations calculate their target in unwrapped coordinates
+before normal loop mapping. Relative seeks originate at x, never at
+the mapped sample address; crossing a loop boundary backwards returns
+to the preceding iteration if one exists, otherwise to the lead-in.
+A sufficiently large negative delta can return to the lead-in even
+after many iterations. The left boundary is zero (proposed clamp).
+Retain the fractional component of x. No separate loop counter or
+history is needed. At L=1000, N=500:
+
+| Playhead | Frame delta | New playhead | Actual sample frame |
+| ---: | ---: | ---: | ---: |
+| 1050 | -200 | 850 | 850 |
+| 1550 | -200 | 1350 | 1350 |
+| 2050 | -200 | 1850 | 1350 |
+| 1550 | +500 | 2050 | 1050 |
+| 100 | -200 | 0 | 0 |
+
+For ping-pong loops propose the same unwrapped coordinate system with
+the existing reflected mapping (period 2*(N-1), special case N=1).
+This retains traversal direction across seeks and does not change the
+existing endpoint interpolation policy. Owner's explicit formula
+describes forward loops; the ping-pong extension is proposed, not
+separately approved. Absolute targets beyond the loop endpoint map
+through the normal loop traversal rather than bypassing it. Confirm
+large signed deltas, finite end and private seek during release.
 
 Preserve outer StartFrame, voice identity, NoteOffTime, release disposition,
 envelopes, fades, pitch operator phase, volume, spatial state, NNA policy,
@@ -206,7 +236,9 @@ state only.
    PCM with independent oracle, at different native/output rates,
    nonunit pitch/speed, varying pitch curves, repeated forward/backward
    absolute and relative seeks, fractional positions, mixed units, signed
-   deltas and clamp-to-zero, zero delta, exact finite end, loop mapping, silent
+   deltas and clamp-to-zero, zero delta, exact finite end, loop mapping (first
+   traversal versus later traversals, multiple backward wraps, lead-in,
+   fractional interpolation, one-frame and ping-pong loops), silent
    channel, deferred deadline on replacement, no effects on displaced/
    sibling voices, cancellation. Test exact target sample and progression,
    note-age/envelope preservation and block invariance. Preserve
