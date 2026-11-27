@@ -479,7 +479,9 @@ Do not reintroduce completed-task checklists here.
   deadline. [PR #74](https://github.com/logiclrd/Heresy/pull/74) implements
   absolute and relative native/time seeks, unwrapped loops, independent
   Sample and private recursive anchors and legacy tracker compatibility.
-  Integration and desktop acceptance pending.
+  Original implementation CI and four desktop auditions passed; owner
+  requested lifecycle-preserving Off/Fade reconstruction (Slice 4).
+  Final integration and exact-head CI pending.
   See [discovery and proposed design](script-absolute-seek-design.md)
   and [issue #73](https://github.com/logiclrd/Heresy/issues/73).
 
