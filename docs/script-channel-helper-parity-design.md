@@ -269,7 +269,35 @@ ancestry, or use the NNA-specific fade duration in place of ordinary Past
 Fade without an explicit semantic decision/test. Preserve raw tracker S7x
 compatibility for ordinary voices; resolved physical Past should consistently
 use logical-note semantics, with regression coverage for Data Patterns too.
-The exact internal protocol remains to be designed in a dedicated slice.
+Slice 2b implementation: the incremental recursive timeline retains only
+displaced scopes whose producer tree remains registered, keyed by scope ID
+and parent (physical playback owner, mapped host). Continue registers an
+active old producer; scope retirement/cancellation removes the entry. A
+resolved Past stops the matching producer trees using existing recursive
+cancellation (non-audible stop), retaining the semantic Past command for
+renderer dispatch. One-event lookahead can resolve the stop before its
+PCM boundary, but no intervening scheduled events are skipped.
+
+PlaybackSession separately records former current source controllers
+when a physical direct or flattened replacement takes over. Cut removes
+the current pointer and does not create a displaced record. The records
+survive producer retirement only while a descendant voice references the
+scope; detached DSP/anti-click residue is not an independently controllable
+note. Renderer Past first handles ordinary displaced voice origins, then
+the matching old logical scope controllers. Scope ancestry avoids matching
+child voice origins to the parent's logical channel; private recursive
+renderers receive the same lifecycle action at the same frame through
+FlattenedPastApplied. Past Fade uses the ordinary note fade duration,
+while displacement Fade continues to use the new-note fade duration.
+The existing render traversal marks surviving descendant scopes using
+reusable scratch state, without per-sample scans or historical tombstones;
+natural producer retirement and event-side scope changes also reclaim
+dead entries. A flattened start replacing a private mixdown now uses the
+same private displacement tracking as a direct start.
+
+Implementation and regressions are committed; exact-head CI verification
+is required. This is the production incremental arrangement contract,
+not a redesign of the old eager/raw scheduling APIs.
 
 Test two or more displaced flattened invocations, a current replacement,
 same host in a sibling owner, a child-owned displaced voice, delayed
