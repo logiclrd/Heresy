@@ -100,6 +100,110 @@ public sealed class ScriptVirtualControlPlaybackTests
         });
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void PhysicalControlsMatchOwnedVoiceAndDeferredSeekTargetsReplacement(bool relaxed)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: true);
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        string lookup = $"_O({sample.Value})";
+        ObjectId physical = AddPattern(document, prefix + $$"""
+            Note(0, 0, {{lookup}});
+            using var sibling = NoteVirtual(0, {{lookup}});
+            Volume(0.25, 0, 0.5);
+            Displacement(0.5, 0, NoteDisplacementAction.Continue);
+            SourceFrame(0.5, 0, 300, timeOffsetSeconds: 0.04);
+            Note(0.75, 0, {{lookup}});
+            Past(1.25, 0, TrackerPastNoteAction.Cut);
+            Volume(1.5, 0, 0.25);
+            Cut(3, 0);
+            """);
+        ObjectId virtualPattern = AddPattern(document, prefix + $$"""
+            using var note = NoteVirtual(0, {{lookup}});
+            using var sibling = NoteVirtual(0, {{lookup}});
+            note.Volume(0.25, 0.5);
+            note.Displacement(0.5, NoteDisplacementAction.Continue);
+            note.SourceFrame(0.5, 300, timeOffsetSeconds: 0.04);
+            note.Note(0.75, {{lookup}});
+            note.Past(1.25, TrackerPastNoteAction.Cut);
+            note.Volume(1.5, 0.25);
+            note.Cut(3);
+            """);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var reference = factory.Create(document, virtualPattern);
+        using var actual = factory.Create(document, physical);
+        float[] expected = new float[480], pcm = new float[480];
+        reference.Source.Render(expected.Length, expected);
+        actual.Source.Render(130, pcm.AsSpan(0, 130));
+        Assert.That(actual.Session.VirtualVoices.Count, Is.EqualTo(1));
+        for (int pos = 130; pos < pcm.Length;)
+        {
+            int count = Math.Min(17, pcm.Length - pos);
+            actual.Source.Render(count, pcm.AsSpan(pos, count));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(pcm, Is.EqualTo(expected).Within(1e-6f));
+            Assert.That(pcm[114], Is.GreaterThan(pcm[95] + 0.15f),
+                "Deferred native seek affects the replacement voice.");
+            Assert.That(pcm[175], Is.LessThan(pcm[140] - 0.04f),
+                "Past cuts the old voice but leaves the current one and sibling.");
+            Assert.That(pcm[390], Is.EqualTo(16000f / 32768f).Within(1e-6f));
+            Assert.That(actual.Session.VirtualVoices, Is.Empty);
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void PhysicalVolumeAndDisplacementControlFlattenedLogicalNote(bool relaxed)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: false);
+        string lookup = $"_O({sample.Value})";
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        ObjectId child = document.AllocateObjectId();
+        document.Add(new ScriptPatternDefinition(child, "Flattened child")
+        {
+            RowCount = 4, ChannelCount = 2, Source = prefix + $$"""
+                Note(0, 0, {{lookup}});
+                using var guest = NoteVirtual(0, {{lookup}});
+                Note(2, 1, {{lookup}});
+                """
+        });
+        ObjectId root = AddPattern(document, prefix + $$"""
+            Note(0, 0, _O({{child.Value}}));
+            using var sibling = NoteVirtual(0, {{lookup}});
+            Volume(0.5, 0, 0.25);
+            Displacement(0.75, 0, NoteDisplacementAction.Continue);
+            Note(1, 0, {{lookup}}, volume: 0.5);
+            """);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using var plan = factory.Create(document, root);
+        using var chunked = factory.Create(document, root);
+        float[] pcm = new float[360], chunks = new float[360];
+        plan.Source.Render(pcm.Length, pcm);
+        for (int pos = 0; pos < chunks.Length;)
+        {
+            int count = Math.Min(19, chunks.Length - pos);
+            chunked.Source.Render(count, chunks.AsSpan(pos, count));
+            pos += count;
+        }
+        const float amplitude = 16000f / 32768f;
+        Assert.Multiple(() =>
+        {
+            Assert.That(chunks, Is.EqualTo(pcm).Within(1e-6f));
+            Assert.That(pcm[30], Is.EqualTo(3 * amplitude).Within(1e-6f));
+            Assert.That(pcm[90], Is.EqualTo(1.5f * amplitude).Within(1e-6f),
+                "Logical gain reaches physical and virtual descendants once, not the sibling.");
+            Assert.That(pcm[150], Is.EqualTo(2 * amplitude).Within(1e-6f),
+                "The displaced flattened invocation continues beside its replacement.");
+            Assert.That(pcm[270], Is.EqualTo(2.25f * amplitude).Within(1e-6f),
+                "Continue permits the old producer's later note.");
+        });
+    }
+
     [Test]
     public void DeferredVirtualControlOfCanceledCursorCannotTouchSiblingId()
     {
