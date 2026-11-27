@@ -968,16 +968,23 @@ public sealed class PlaybackSession
 	/// No sequencing work is performed here.
 	/// </summary>
 	public void RequestFadeOfActiveVoices(bool newNoteDisplacement = false)
+		=> RequestFadeOfActiveVoices(newNoteDisplacement, elapsedFadeFrames: 0);
+
+	/// <summary>Apply an inherited, already-progressing fade at the current
+	/// boundary, without moving the child's note onset or source playhead.
+	/// The fade duration is still selected from each bound voice's policy.</summary>
+	public void RequestFadeOfActiveVoices(bool newNoteDisplacement, long elapsedFadeFrames)
 	{
+		if (elapsedFadeFrames < 0)
+			throw new ArgumentOutOfRangeException(nameof(elapsedFadeFrames));
 		void Fade(PlaybackVoice? voice)
 		{
 			if (voice is null)
 				return;
-			if (newNoteDisplacement)
-				voice.RequestNoteFade(_nextFrame, SampleRate,
-					voice.Configuration.NewNoteFadeDuration);
-			else
-				voice.RequestNoteFade(_nextFrame, SampleRate);
+			voice.RequestNoteFade(_nextFrame, SampleRate,
+				newNoteDisplacement ? voice.Configuration.NewNoteFadeDuration
+					: voice.Configuration.NoteFadeDuration,
+				elapsedFadeFrames);
 		}
 		foreach (PlaybackChannelState channel in _channels.Values)
 			Fade(channel.CurrentVoice);
