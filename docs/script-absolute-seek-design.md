@@ -331,3 +331,7 @@ implementation. Sample coordinates remain double precision (including
 fractional interpolation); extreme long-range coordinates cannot represent
 every integer exactly. No claim of arbitrary precision or unlimited
 private replay. CI and desktop acceptance required before merge.
+
+Absolute private replay also checks the shared cancellation signal before
+reconstruction and once per preroll scratch block, including while a
+long already-started voice renders without more sequencing events.

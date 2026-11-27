@@ -191,6 +191,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 		long current = ChildFrameAt(state, invocationFrame);
 		long target = ClampFrame(relative ? (Int128)current + amount : amount);
 		if (target == current) return;
+		_playback.Source.CheckCancellation();
 		double prerollPitch = state.PitchTrajectory.GetMultiplier(invocationFrame);
 		PrivateRecursivePlayback fresh = _reconstruct(_pitchMultiplier, _playbackSpeedMultiplier);
 		_playback.Dispose();
@@ -207,7 +208,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 		// following Off/Cut at the same frame must see the sought state.
 		// No retained PCM, event history or obsolete descendant registry.
 		float[] scratch = ArrayPool<float>.Shared.Rent(ScratchFrames * _channels);
-		try { RenderUntil(target, Span<float>.Empty, target, scratch); }
+		try { RenderUntil(target, Span<float>.Empty, target, scratch, checkCancellation: true); }
 		finally { ArrayPool<float>.Shared.Return(scratch); }
 	}
 
@@ -337,10 +338,11 @@ internal sealed class PreparedRecursiveMixdownSound :
 			: _cutFrame >= _renderOriginFrame ? _cutFrame - _renderOriginFrame : -1;
 
 	private void RenderUntil(long exclusiveEnd,
-		Span<float> destination, long outputStart, float[] scratch)
+		Span<float> destination, long outputStart, float[] scratch, bool checkCancellation = false)
 	{
 		while (_playback.Source.NextFrame < exclusiveEnd)
 		{
+			if (checkCancellation) _playback.Source.CheckCancellation();
 			long now = _playback.Source.NextFrame;
 			long cut = ChildCutFrame();
 			if (cut >= 0 && now >= cut)

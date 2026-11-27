@@ -83,6 +83,8 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 
 	public void RequestStop() => _cancellation?.RequestStop();
 
+	internal void CheckCancellation() => _cancellation?.ThrowIfCancellationRequested();
+
 	public AudioOutputFormat Format { get; }
 	public long NextFrame => _session.NextFrame;
 	public PlaybackSession Session => _session;
