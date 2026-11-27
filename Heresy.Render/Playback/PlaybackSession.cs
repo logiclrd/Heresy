@@ -436,6 +436,9 @@ public sealed class PlaybackSession
 		bool Include(PlaybackVoice? voice)
 		{
 			if (voice is null) return true;
+			// A displaced voice can feed a separately owned output filter
+			// whose tail outlasts the underlying sound's completion.
+			if (voice.DisplacedOutputFilterState is not null) return false;
 			long? bound = GetEffectiveVoiceEndFrameExclusive(voice, _nextFrame,
 				projectStoppedChildren: true);
 			if (!bound.HasValue) return false;
