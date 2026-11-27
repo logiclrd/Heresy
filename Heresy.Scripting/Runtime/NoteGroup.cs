@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 using System.Collections.Generic;
 
 using Heresy.Core.Objects;
@@ -62,6 +63,87 @@ public sealed class NoteGroup : IDisposable
         if (!CheckOwned()) return;
         if (!double.IsFinite(volume) || volume < 0 || volume > 1) throw new ArgumentOutOfRangeException(nameof(volume));
         _owner.ControlVirtualGroup(_leases, row, new SetNoteVolumeCommand(volume), timeOffsetSeconds, callsite);
+    }
+
+    public void Seek(double row, double playbackSeconds, double timeOffsetSeconds = 0.0)
+        => SeekCore(null, row, playbackSeconds, timeOffsetSeconds);
+
+    public void Seek(SequenceCallsite callsite, double row, double playbackSeconds, double timeOffsetSeconds = 0.0)
+        => SeekCore(callsite, row, playbackSeconds, timeOffsetSeconds);
+
+    private void SeekCore(SequenceCallsite? callsite, double row, double playbackSeconds, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        if (!double.IsFinite(playbackSeconds) || playbackSeconds < 0 || playbackSeconds > TimeSpan.MaxValue.TotalSeconds)
+            throw new ArgumentOutOfRangeException(nameof(playbackSeconds));
+        _owner.ControlVirtualGroup(_leases, row, new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(playbackSeconds)), timeOffsetSeconds, callsite);
+    }
+
+    public void Pan(double row, double x, double y = 0, double z = 0, double timeOffsetSeconds = 0.0)
+        => PanCore(null, row, x, y, z, timeOffsetSeconds);
+
+    public void Pan(SequenceCallsite callsite, double row, double x, double y = 0, double z = 0, double timeOffsetSeconds = 0.0)
+        => PanCore(callsite, row, x, y, z, timeOffsetSeconds);
+
+    private void PanCore(SequenceCallsite? callsite, double row, double x, double y, double z, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        if (!double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z)
+            || Math.Abs(x) > float.MaxValue || Math.Abs(y) > float.MaxValue || Math.Abs(z) > float.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(x));
+        _owner.ControlVirtualGroup(_leases, row, new SetSpatialPositionCommand(new Vector3((float)x, (float)y, (float)z)), timeOffsetSeconds, callsite);
+    }
+
+    public void Surround(double row, bool enabled, double timeOffsetSeconds = 0.0)
+        => SurroundCore(null, row, enabled, timeOffsetSeconds);
+
+    public void Surround(SequenceCallsite callsite, double row, bool enabled, double timeOffsetSeconds = 0.0)
+        => SurroundCore(callsite, row, enabled, timeOffsetSeconds);
+
+    private void SurroundCore(SequenceCallsite? callsite, double row, bool enabled, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        _owner.ControlVirtualGroup(_leases, row, new SetSurroundCommand(enabled), timeOffsetSeconds, callsite);
+    }
+
+    public void Filter(double row, double cutoff, double resonance, double timeOffsetSeconds = 0.0)
+        => FilterCore(null, row, cutoff, resonance, timeOffsetSeconds);
+
+    public void Filter(SequenceCallsite callsite, double row, double cutoff, double resonance, double timeOffsetSeconds = 0.0)
+        => FilterCore(callsite, row, cutoff, resonance, timeOffsetSeconds);
+
+    private void FilterCore(SequenceCallsite? callsite, double row, double cutoff, double resonance, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        if (!double.IsFinite(cutoff) || cutoff < 0 || cutoff > 1) throw new ArgumentOutOfRangeException(nameof(cutoff));
+        if (!double.IsFinite(resonance) || resonance < 0 || resonance > 1) throw new ArgumentOutOfRangeException(nameof(resonance));
+        _owner.ControlVirtualGroup(_leases, row, new SetResonantFilterCommand(cutoff, resonance), timeOffsetSeconds, callsite);
+    }
+
+    public void FilterCutoff(double row, double cutoff, double timeOffsetSeconds = 0.0)
+        => FilterCutoffCore(null, row, cutoff, timeOffsetSeconds);
+
+    public void FilterCutoff(SequenceCallsite callsite, double row, double cutoff, double timeOffsetSeconds = 0.0)
+        => FilterCutoffCore(callsite, row, cutoff, timeOffsetSeconds);
+
+    private void FilterCutoffCore(SequenceCallsite? callsite, double row, double cutoff, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        if (!double.IsFinite(cutoff) || cutoff < 0 || cutoff > 1) throw new ArgumentOutOfRangeException(nameof(cutoff));
+        _owner.ControlVirtualGroup(_leases, row, new SetResonantFilterCutoffCommand(cutoff), timeOffsetSeconds, callsite);
+    }
+
+    public void FilterResonance(double row, double resonance, double timeOffsetSeconds = 0.0)
+        => FilterResonanceCore(null, row, resonance, timeOffsetSeconds);
+
+    public void FilterResonance(SequenceCallsite callsite, double row, double resonance, double timeOffsetSeconds = 0.0)
+        => FilterResonanceCore(callsite, row, resonance, timeOffsetSeconds);
+
+    private void FilterResonanceCore(SequenceCallsite? callsite, double row, double resonance, double timeOffsetSeconds)
+    {
+        if (!CheckOwned()) return;
+        if (!double.IsFinite(resonance) || resonance < 0 || resonance > 1) throw new ArgumentOutOfRangeException(nameof(resonance));
+        _owner.ControlVirtualGroup(_leases, row, new SetResonantFilterResonanceCommand(resonance), timeOffsetSeconds, callsite);
     }
 
     public void Off(double row, double timeOffsetSeconds = 0.0)

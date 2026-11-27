@@ -391,6 +391,63 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void VirtualSpatialFilterMemoryAndSeekStayWithCurrentGenerationNotPastVoice()
+	{
+		ObjectId source = (ObjectId)10U;
+		float[] waveform = new float[512];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false, Sample(waveform, 1000))));
+		VirtualChannelIdentity id = new(7, 1), next = new(7, 2);
+		ChannelTarget target = ChannelTarget.Virtual(id);
+		Vector3 position = new(-0.75f, 0.25f, 0.5f);
+		session.ApplyScopedEvent(101, target,
+			[new SetSpatialPositionCommand(position),
+			 new SetResonantFilterCommand(0.4, 0.2)]);
+		session.Render(0, 20, new float[20]);
+		Assert.That(session.RetainedScopedVirtualChannelCount, Is.Zero);
+		session.ApplyScopedEvent(101, target, [new SetResonantFilterCutoffCommand(0.6)]);
+		session.Render(20, 20, new float[20]);
+		session.ApplyScopedEvent(101, target, [new StartNoteCommand(source),
+			new SetCurrentVoiceDisplacementActionCommand(NoteDisplacementAction.Continue)]);
+		session.Render(40, 1, new float[1]);
+		session.ApplyScopedEvent(101, target, [new StartNoteCommand(source)]);
+		PlaybackVoice past = session.VirtualVoices[0];
+		Assert.That(past.SoundState.Position, Is.EqualTo(position));
+		Assert.That(past.FilterState.Parameters, Is.EqualTo(new ResonantFilterParameters(0.6, 0.2)));
+		TimeSpan pastOffset = past.SoundState.PlaybackOffset;
+		session.ApplyScopedEvent(101, target,
+			[new SetSurroundCommand(true), new SetResonantFilterResonanceCommand(0.1),
+			 new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(0.2)),
+			 new SetCurrentVoiceDisplacementActionCommand(NoteDisplacementAction.Continue)]);
+		session.ApplyScopedEvent(101, target, [new StartNoteCommand(source)]);
+		PlaybackVoice changed = session.VirtualVoices[1];
+		Assert.Multiple(() =>
+		{
+			Assert.That(past.SoundState.Position, Is.EqualTo(position));
+			Assert.That(past.Surround, Is.False);
+			Assert.That(past.FilterState.Parameters, Is.EqualTo(new ResonantFilterParameters(0.6, 0.2)));
+			Assert.That(past.SoundState.PlaybackOffset, Is.EqualTo(pastOffset));
+			Assert.That(changed.SoundState.Position, Is.EqualTo(Vector3.Zero));
+			Assert.That(changed.Surround, Is.True);
+			Assert.That(changed.FilterState.Parameters, Is.EqualTo(new ResonantFilterParameters(0.6, 0.1)));
+			Assert.That(changed.SoundState.PlaybackOffset, Is.EqualTo(TimeSpan.FromSeconds(0.2)));
+		});
+		session.RetireScopedVirtualChannel(101, id);
+		ChannelTarget replacement = ChannelTarget.Virtual(next);
+		session.ApplyScopedEvent(101, replacement, [new StartNoteCommand(source),
+			new SetCurrentVoiceDisplacementActionCommand(NoteDisplacementAction.Continue)]);
+		session.ApplyScopedEvent(101, replacement, [new StartNoteCommand(source)]);
+		PlaybackVoice recycled = session.VirtualVoices[2];
+		Assert.That(recycled.SoundState.Position, Is.EqualTo(Vector3.Zero));
+		Assert.That(recycled.Surround, Is.False);
+		Assert.That(recycled.FilterState.Parameters, Is.EqualTo(ResonantFilterParameters.Disabled));
+		Assert.That(recycled.SoundState.PlaybackOffset, Is.EqualTo(TimeSpan.Zero));
+		session.RetireScopedVirtualChannel(101, next);
+		Assert.That(session.RetainedScopedVirtualMemoryCount, Is.Zero);
+	}
+
+	[Test]
 	public void ScopedVirtualRepeatedStartsHonorNnaContinueAndBroadcastBoundaries()
 	{
 		ObjectId source = (ObjectId)10U;

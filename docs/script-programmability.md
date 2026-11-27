@@ -376,6 +376,12 @@ The owned handle exposes typed instance controls; successful calls emit one raw 
 ```csharp
 note.Volume(row, volume, timeOffsetSeconds: 0.0);
 note.SourceFrame(row, sourceFrameOffset, timeOffsetSeconds: 0.0);
+note.Seek(row, playbackSeconds, timeOffsetSeconds: 0.0);
+note.Pan(row, x, y: 0, z: 0, timeOffsetSeconds: 0.0);
+note.Surround(row, enabled, timeOffsetSeconds: 0.0);
+note.Filter(row, cutoff, resonance, timeOffsetSeconds: 0.0);
+note.FilterCutoff(row, cutoff, timeOffsetSeconds: 0.0);
+note.FilterResonance(row, resonance, timeOffsetSeconds: 0.0);
 note.Displacement(row, NoteDisplacementAction.Continue,
     timeOffsetSeconds: 0.0);
 note.Past(row, TrackerPastNoteAction.Cut,
@@ -388,7 +394,7 @@ note.Past(row, TrackerPastNoteAction.Cut,
   invocation's channel or a later generation of a recycled slot.
 - **Native offset:** `note.SourceFrame` takes a nonnegative `long`
   in **source frames**, not the wall seconds used by the existing
-  physical-script `Seek` helper. At the actual event deadline it seeks
+  `Seek` helper. At the actual event deadline it seeks
   the voice then current *only when that bound sound implements*
   `ISourceFrameSeekableSound`; otherwise it does nothing, as does
   physical Oxx. Direct and replay-required capabilities retain
@@ -396,6 +402,20 @@ note.Past(row, TrackerPastNoteAction.Cut,
   emit the existing rate-limited cost warning under
   `Script virtual native offset`. No decoded buffers or journal are
   cached to emulate seeking.
+- **Seconds seek:** `Seek` uses the existing physical seconds-based offset,
+  evaluated against the current bound voice at the actual deadline. It does
+  not remember an offset for a future note. Native SourceFrame remains distinct.
+- **Spatial:** Pan sets finite float-representable absolute scene coordinates
+  and disables surround. Surround true resets position to center, false
+  merely disables surround. Both update the current voice and remembered state.
+- **Legacy resonant filter:** Filter sets normalized cutoff and resonance;
+  FilterCutoff and FilterResonance preserve the other remembered parameter.
+  This is the tracker-style resonant low-pass, not NoteFilter or ChannelFilter.
+  Position, surround, volume and these two scalar filter parameters survive
+  silent PCM-channel eviction until the generated identity's final scheduled
+  use. They initialize retriggers without copying DSP histories. Already
+  displaced voices keep their captured state. Private recursive sources
+  receive these controls on the outer bound voice, not on individual descendants.
 - **Displacement:** The strongly typed `NoteDisplacementAction`
   accepts `Cut`, `Continue`, `Off`, or `Fade`. It overrides
   the **current** voice's behavior on the next start for the same
@@ -417,8 +437,8 @@ at the actual deadline, not when the script merely yields the event.
 These controls target the handle's generated identity only. The existing playback
 broadcast surface supports Note Off/Cut and note volume on eligible
 earlier-started voices. **It does not support** native offsets,
-displacement policy, past-note actions, tracker channel memory, or
-source starts on `AllVirtualInScope` or `AllVirtual`. The
+displacement policy, past-note actions, spatial or legacy-filter controls,
+tracker channel memory, or source starts on `AllVirtualInScope` or `AllVirtual`. The
 incremental validation layer rejects those raw broadcast commands
 instead of deferring a renderer exception; no extra broadcast script
 helpers are introduced.

@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
@@ -150,9 +151,23 @@ public sealed class PlaybackSession
 	// final-use barrier, independently of audible channels and DSP tails.
 	// Presence also distinguishes a still-referenceable identity from a
 	// retired one whose old voices may need a temporary anti-click host.
-	private readonly Dictionary<(long Owner, VirtualChannelIdentity Id), double>
-		_scopedVirtualRememberedVolumes = [];
-	internal int RetainedScopedVirtualMemoryCount => _scopedVirtualRememberedVolumes.Count;
+	private readonly record struct VirtualChannelMemory(
+		double Volume, Vector3 Position, bool Surround, ResonantFilterParameters Filter)
+	{
+		public static VirtualChannelMemory Capture(PlaybackChannelState channel)
+			=> new(channel.NoteVolume, channel.Position, channel.Surround, channel.FilterParameters);
+
+		public void Restore(PlaybackChannelState channel, long frame)
+		{
+			channel.CaptureCurrentNoteVolume(Volume);
+			channel.SetPosition(frame, Position);
+			channel.SetSurround(frame, Surround);
+			channel.SetFilterParameters(frame, Filter);
+		}
+	}
+	private readonly Dictionary<(long Owner, VirtualChannelIdentity Id), VirtualChannelMemory>
+		_scopedVirtualMemory = [];
+	internal int RetainedScopedVirtualMemoryCount => _scopedVirtualMemory.Count;
 	internal int RetainedScopedVirtualChannelCount => _scopedVirtualChannels.Count;
 	internal int RetainedScopedVirtualFilterCount => _scopedVirtualOutputFilters.Count;
 	internal int RetiringVirtualFilterCount => _retiringVirtualFilters.Count;
@@ -1110,8 +1125,8 @@ public sealed class PlaybackSession
 					virtualChannelId: target.VirtualIdentity,
 					scopedOwner: invocationId);
 				if (target.VirtualIdentity.Generation != 0)
-					_scopedVirtualRememberedVolumes[(invocationId, target.VirtualIdentity)] =
-						channel.NoteVolume;
+					_scopedVirtualMemory[(invocationId, target.VirtualIdentity)] =
+						VirtualChannelMemory.Capture(channel);
 				return;
 			}
 			case ChannelTargetKind.AllVirtualInScope:
@@ -1229,7 +1244,7 @@ public sealed class PlaybackSession
 		if (owner < 0 || id.Generation == 0)
 			throw new ArgumentOutOfRangeException(owner < 0 ? nameof(owner) : nameof(id));
 		var key = (owner, id);
-		_scopedVirtualRememberedVolumes.Remove(key);
+		_scopedVirtualMemory.Remove(key);
 		if (_scopedVirtualOutputFilters.ContainsKey(key))
 		{
 			_retiringVirtualFilters.Add(key);
@@ -1282,8 +1297,8 @@ public sealed class PlaybackSession
 				+ (ulong)id.Slot * 0x9E3779B97F4A7C15UL
 				+ id.Generation * 0xD1B54A32D192ED03UL
 				+ (ulong)owner));
-		if (_scopedVirtualRememberedVolumes.TryGetValue((owner, id), out double volume))
-			channel.CaptureCurrentNoteVolume(volume);
+		if (_scopedVirtualMemory.TryGetValue((owner, id), out VirtualChannelMemory memory))
+			memory.Restore(channel, _nextFrame);
 		_scopedVirtualChannels.Add((owner, id), channel);
 		return channel;
 	}
@@ -1325,8 +1340,8 @@ public sealed class PlaybackSession
 						channel.SetNoteVolume(volume.Volume);
 						// A broadcast cannot materialize memory for a retired
 						// identity or for a channel that has never been targeted.
-						if (key.HasValue && _scopedVirtualRememberedVolumes.ContainsKey(key.Value))
-							_scopedVirtualRememberedVolumes[key.Value] = channel.NoteVolume;
+						if (key.HasValue && _scopedVirtualMemory.ContainsKey(key.Value))
+							_scopedVirtualMemory[key.Value] = VirtualChannelMemory.Capture(channel);
 						break;
 					default:
 						throw new NotSupportedException(
@@ -1868,6 +1883,32 @@ public sealed class PlaybackSession
                     ApplyHostFilterEnvelopeCommand(envelope,
                         null, virtualChannelId, scopedOwner, eventFrame, channel);
                     break;
+
+				case SetPlaybackOffsetCommand offsetSeconds:
+					if (channel.CurrentVoice is not null)
+						channel.CurrentVoice.SoundState.PlaybackOffset = offsetSeconds.Offset;
+					break;
+
+				case SetSpatialPositionCommand position:
+					channel.SetPosition(eventFrame, position.Position);
+					break;
+
+				case SetSurroundCommand surround:
+					channel.SetSurround(eventFrame, surround.Enabled);
+					break;
+
+				case SetResonantFilterCommand filter:
+					channel.SetFilterParameters(eventFrame,
+						new ResonantFilterParameters(filter.Cutoff, filter.Resonance));
+					break;
+
+				case SetResonantFilterCutoffCommand cutoff:
+					channel.SetFilterCutoff(eventFrame, cutoff.Cutoff);
+					break;
+
+				case SetResonantFilterResonanceCommand resonance:
+					channel.SetFilterResonance(eventFrame, resonance.Resonance);
+					break;
 
 				case SetSourceFrameOffsetCommand offset:
 					ApplyNativeSourceFrameOffset(

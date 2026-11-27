@@ -295,6 +295,133 @@ public sealed class ScriptVirtualControlPlaybackTests
     [TestCase(false, true)]
     [TestCase(true, false)]
     [TestCase(true, true)]
+    public void VirtualSpatialAndFilterMemoryMatchesPhysicalAcrossSilentGap(bool relaxed, bool privateSource)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: true);
+        ObjectId source = privateSource ? AddPattern(document, $"Note(0, 0, _O({sample.Value}));") : sample;
+        string lookup = $"_O({source.Value})";
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        string mix = privateSource ? ", mixdown: true" : "";
+        // Physical channels retain their state throughout silence. The
+        // generated virtual channel must reconstruct it after eviction.
+        ObjectId physical = AddPattern(document, prefix + $$"""
+            Note(0, 0, {{lookup}}{{mix}});
+            Pan(0, 0, -0.7, 0.2);
+            Filter(0, 0, 0.4, 0.2);
+            Surround(0.25, 0, true);
+            Cut(0.5, 0);
+            FilterCutoff(1, 0, 0.65);
+            Pan(1, 0, 0.65, -0.1, 0.3);
+            FilterResonance(1.25, 0, 0.1);
+            Seek(1.25, 0, 0.2);
+            Note(2, 0, {{lookup}}{{mix}});
+            Seek(2, 0, 0.25, timeOffsetSeconds: 0.02);
+            Surround(2.5, 0, true);
+            Surround(2.75, 0, false);
+            Pan(3, 0, -0.5);
+            Cut(3.5, 0);
+            """);
+        ObjectId virtualId = AddPattern(document, prefix + $$"""
+            using var note = NoteVirtual(0, {{lookup}});
+            note.Pan(0, -0.7, 0.2);
+            note.Filter(0, 0.4, 0.2);
+            note.Surround(0.25, true);
+            note.Cut(0.5);
+            note.FilterCutoff(1, 0.65);
+            note.Pan(1, 0.65, -0.1, 0.3);
+            note.FilterResonance(1.25, 0.1);
+            note.Seek(1.25, 0.2);
+            note.Note(2, {{lookup}});
+            note.Seek(2, 0.25, timeOffsetSeconds: 0.02);
+            note.Surround(2.5, true);
+            note.Surround(2.75, false);
+            note.Pan(3, -0.5);
+            note.Cut(3.5);
+            """);
+        var factory = new PreparedIncrementalPlaybackFactory(new RenderConfiguration(1000,
+            [new OutputChannelConfiguration(new Vector3(-1, 0, 0)),
+             new OutputChannelConfiguration(new Vector3(1, 0, 0))]));
+        using var reference = factory.Create(document, physical);
+        using var actual = factory.Create(document, virtualId);
+        using var chunks = factory.Create(document, virtualId);
+        float[] expected = new float[960], rendered = new float[960], chunked = new float[960];
+        reference.Source.Render(480, expected);
+        actual.Source.Render(180, rendered.AsSpan(0, 360));
+        Assert.That(actual.Session.RetainedScopedVirtualChannelCount, Is.Zero);
+        Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.EqualTo(1));
+        actual.Source.Render(300, rendered.AsSpan(360));
+        for (int pos = 0; pos < 480;)
+        {
+            int count = Math.Min(17, 480 - pos);
+            chunks.Source.Render(count, chunked.AsSpan(2 * pos, 2 * count));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(rendered, Is.EqualTo(expected).Within(1e-5f));
+            Assert.That(chunked, Is.EqualTo(expected).Within(1e-5f));
+            Assert.That(Math.Abs(expected[540] - expected[541]), Is.GreaterThan(1e-4f),
+                "The remembered off-center position is audible after retrigger.");
+            Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
+            Assert.That(chunks.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ReverseParityGroupMatchesExplicitControlsAndPreservesDisplacedVoices(bool relaxed)
+    {
+        SongDocument document = new();
+        ObjectId sample = AddSample(document, stepped: true);
+        string lookup = $"_O({sample.Value})";
+        string prefix = relaxed ? "#order relaxed\n" : "";
+        string starts = $$"""
+            using var other = NoteVirtual(0, {{lookup}});
+            using var a = NoteVirtual(0, {{lookup}});
+            using var b = NoteVirtual(0, {{lookup}});
+            a.Pan(0, -0.5);
+            a.Displacement(0, NoteDisplacementAction.Continue);
+            a.Note(0.25, {{lookup}});
+            """;
+        string[] controls =
+        [
+            "Seek(0.5, 0.3, timeOffsetSeconds: 0.02)", "Pan(0.75, 0.75)",
+            "Filter(1, 0.4, 0.2)", "FilterCutoff(1.25, 0.65)",
+            "FilterResonance(1.5, 0.1)", "Surround(1.75, true)",
+            "Surround(2, false)", "Past(2.25, TrackerPastNoteAction.Cut)", "Cut(3)",
+        ];
+        ObjectId groupId = AddPattern(document, prefix + starts + "\n" +
+            "using var group = NewNoteGroup(); group += a; group += b;\n"
+            + string.Join(";\n", Array.ConvertAll(controls, call => "group." + call)) + ";");
+        ObjectId explicitId = AddPattern(document, prefix + starts + "\n"
+            + string.Join(";\n", Array.ConvertAll(controls, call => "a." + call + "; b." + call)) + ";");
+        var factory = new PreparedIncrementalPlaybackFactory(new RenderConfiguration(1000,
+            [new OutputChannelConfiguration(new Vector3(-1, 0, 0)),
+             new OutputChannelConfiguration(new Vector3(1, 0, 0))]));
+        using var reference = factory.Create(document, explicitId);
+        using var actual = factory.Create(document, groupId);
+        float[] expected = new float[960], rendered = new float[960];
+        reference.Source.Render(480, expected);
+        for (int pos = 0; pos < 480;)
+        {
+            int count = Math.Min(19, 480 - pos);
+            actual.Source.Render(count, rendered.AsSpan(pos * 2, count * 2));
+            pos += count;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(rendered, Is.EqualTo(expected).Within(1e-5f));
+            Assert.That(actual.Session.VirtualVoices, Is.Empty);
+            Assert.That(actual.Session.RetainedScopedVirtualMemoryCount, Is.Zero);
+            Assert.That(actual.SequencingContext.Diagnostics.VirtualOwnershipWarnings, Is.Zero);
+        });
+    }
+
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
     public void VirtualVolumeSurvivesSilentGap(bool relaxed, bool changeWhileSilent)
     {
         SongDocument document = new();

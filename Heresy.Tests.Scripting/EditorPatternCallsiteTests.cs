@@ -139,6 +139,12 @@ public sealed class EditorPatternCallsiteTests
     [TestCase("using var note = NoteVirtual(0, _O(17)); note.SourceFrame(default(SequenceCallsite), 0, 256);")]
     [TestCase("using var note = NoteVirtual(0, _O(17)); note.Displacement(default(SequenceCallsite), 0, NoteDisplacementAction.Cut);")]
     [TestCase("using var note = NoteVirtual(0, _O(17)); note.Past(default(SequenceCallsite), 0, TrackerPastNoteAction.Cut);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Seek(default(SequenceCallsite), 0, .25);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.Pan(default(SequenceCallsite), 0, .25);")]
+    [TestCase("using var group = NewNoteGroup(); group.Surround(default(SequenceCallsite), 0, true);")]
+    [TestCase("using var group = NewNoteGroup(); group.Filter(default(SequenceCallsite), 0, .25, .5);")]
+    [TestCase("using var note = NoteVirtual(0, _O(17)); note.FilterCutoff(default(SequenceCallsite), 0, .25);")]
+    [TestCase("using var group = NewNoteGroup(); group.FilterResonance(default(SequenceCallsite), 0, .25);")]
     public void AuthoredSourceCannotSpoofVirtualControlCallsites(string source)
     {
         ScriptPatternDefinition pattern = new((ObjectId)13U, "Restricted")

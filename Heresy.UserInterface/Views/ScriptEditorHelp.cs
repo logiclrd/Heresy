@@ -169,6 +169,20 @@ VirtualNote instance methods (shown on a local named note):
   note.SourceFrame(double row, long sourceFrameOffset,
                    double timeOffsetSeconds = 0.0)
     Seek in native source frames (nonnegative); non-seekable sounds ignore it.
+  note.Seek(double row, double playbackSeconds, double timeOffsetSeconds = 0.0)
+    Seek playback in seconds on the current voice only.
+  note.Pan(double row, double x, double y = 0, double z = 0,
+           double timeOffsetSeconds = 0.0)
+  note.Surround(double row, bool enabled, double timeOffsetSeconds = 0.0)
+    Absolute 3D position and discrete surround; Pan disables surround.
+    Enabling surround centers position; disabling it does not restore old pan.
+  note.Filter(double row, double cutoff, double resonance,
+              double timeOffsetSeconds = 0.0)
+  note.FilterCutoff(double row, double cutoff, double timeOffsetSeconds = 0.0)
+  note.FilterResonance(double row, double resonance, double timeOffsetSeconds = 0.0)
+    Legacy tracker resonant low-pass, normalized [0,1]; not a Filter object.
+    Volume, position, surround and legacy filter settings survive silent gaps
+    and retriggers on the same logical channel, but not recycled generations.
   note.Displacement(double row, NoteDisplacementAction action,
                     double timeOffsetSeconds = 0.0)
     Next displacement: Cut, Continue, Off, Fade.
@@ -199,7 +213,8 @@ OWNING NOTE GROUPS
   The original handle and all its aliases become unusable; disposing
   that old handle is harmless. The group retains the same logical channel.
   Group controls: Volume, Off, Cut, NoteFilter, ChannelFilter, SourceFrame,
-  Displacement and Past, with the same arguments as VirtualNote.
+  Displacement, Past, Seek, Pan, Surround, Filter, FilterCutoff and
+  FilterResonance, with the same arguments as VirtualNote.
   There is no group Note method. Group actions affect members only.
   Strict mode yields once per member before continuing the script.
   Group Dispose() releases all owned leases without changing scheduled music.

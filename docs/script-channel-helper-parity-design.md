@@ -349,6 +349,17 @@ tombstones or historical map; no scan of idle scalar records in PCM,
 no synthetic musical events. Alternative compact implementation is
 acceptable if it meets the same bounds and behavior.
 
+Slice 3 implementation extends the existing volume-memory dictionary to
+a compact value-type snapshot (volume, Vector3 position, surround,
+ResonantFilterParameters). Explicit accepted scoped events capture it;
+new PCM channel construction restores it; raw volume broadcasts only
+update a record already present. The existing retirement barrier removes
+the entire snapshot. No per-sample work, new allocation per capture,
+or retained DSP state is introduced. New typed command admission is
+limited to explicit virtual targets, not broadcasts, and uses the same
+channel-state operations as physical playback. The six new methods
+on both wrappers use the existing F6 and lazy group fanout machinery.
+
 Do not alter generation-zero/legacy numeric engine lifetime semantics.
 Cancel, stop-producing, abandoned prefetch, natural completion, private
 rewind and delayed deadlines must all observe the existing final-use

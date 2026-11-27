@@ -21,6 +21,7 @@ public sealed class ScriptEditorHelpTests
             "_O", "Random", "Checkpoint", "Note", "NoteVirtual",
             "NoteFilter", "ChannelFilter", "note.Note", "note.NoteFilter", "note.ChannelFilter",
             "note.Volume", "note.SourceFrame", "note.Displacement", "note.Past",
+            "note.Seek", "note.Pan", "note.Surround", "note.Filter", "note.FilterCutoff", "note.FilterResonance",
             "note.Off", "note.Cut", "Dispose",
             "OffVirtualInScope", "CutVirtualInScope", "OffAllVirtual",
             "CutAllVirtual", "Off", "Cut", "Tempo", "Speed", "Seek",
@@ -86,7 +87,10 @@ public sealed class ScriptEditorHelpTests
         Assert.That(reference, Does.Contain("disposed or transferred handle"));
         Assert.That(reference, Does.Contain("Strict mode yields once per member"));
         Assert.That(reference, Does.Contain("Group controls: Volume, Off, Cut, NoteFilter, ChannelFilter, SourceFrame,"));
-        Assert.That(reference, Does.Contain("Displacement and Past"));
+        Assert.That(reference, Does.Contain("Displacement, Past, Seek, Pan, Surround, Filter, FilterCutoff and"));
+        Assert.That(reference, Does.Contain("FilterResonance, with the same arguments as VirtualNote"));
+        Assert.That(reference, Does.Contain("Legacy tracker resonant low-pass"));
+        Assert.That(reference, Does.Contain("survive silent gaps"));
         Assert.That(reference, Does.Contain("Ambiguous reference sites retain normal delegate equality"));
     }
 
