@@ -70,6 +70,10 @@ public interface IStreamingFiniteSound : ISound { }
 /// lifecycle at an exact source boundary. Not an authored script API.</summary>
 public interface IInheritedLifecycleSound : ISound
 {
+	/// <summary>At a control boundary only, project a stopped child's
+	/// known audio end (including descendants), in invocation coordinates.
+	/// Unknown DSP tails must remain unknown.</summary>
+	long? GetKnownStoppedEndFrameExclusive();
 	void InheritRelease(long invocationFrame, long elapsedReleaseFrames, bool includeTargetEvents);
 	void InheritFade(long invocationFrame, long elapsedFadeFrames, bool newNoteDisplacement, bool includeTargetEvents);
 }
