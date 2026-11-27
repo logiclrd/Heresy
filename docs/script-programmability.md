@@ -349,11 +349,15 @@ controls the live source gain for a flattened Pattern/Sequence.
 SourceFrame uses a nonnegative native frame index on the current
 seekable sound, distinct from seconds-based Seek. Displacement
 overrides the current logical note's next-note action, including the
-existing flattened-source displacement policy. Past presently addresses
-displaced rendered voices by physical origin and playback owner, never
-the current replacement or explicitly virtual origins. The owner-approved
-extension to former flattened logical invocations is a separate,
-pending slice; it is not yet part of the implementation.
+existing flattened-source displacement policy. Past addresses displaced
+logical notes by physical origin and playback owner, never the current
+replacement or unrelated logical owners. For a former flattened invocation,
+all three actions stop its future event production and control its surviving
+physical, virtual, displaced and private recursive descendants, even after
+natural producer completion. Past Fade uses ordinary note-fade duration,
+not the new-note-action fade duration. Detached DSP/anti-click residue
+retains its normal independent lifetime. Raw tracker S70/S71/S72 in the
+incremental arrangement follow the same logical-source behavior.
 Positive fixed-wall offsets are evaluated at their resolved deadline.
 Generated-only F6 overloads are not authored entrypoints.
 
