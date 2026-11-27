@@ -224,6 +224,19 @@ GLOBAL TIMING
     Set positive global tempo/speed values.
 
 PHYSICAL-CHANNEL CONTROLS
+  Volume(double row, int channel, double volume, double timeOffsetSeconds = 0.0)
+    Set normalized [0,1] note volume, remembered for later starts.
+    For a flattened source, controls the logical source's live gain.
+  SourceFrame(double row, int channel, long sourceFrameOffset,
+              double timeOffsetSeconds = 0.0)
+    Seek the current seekable sound in native source frames (nonnegative).
+  Displacement(double row, int channel, NoteDisplacementAction action,
+               double timeOffsetSeconds = 0.0)
+    Cut, Continue, Off or Fade on the next displacement of the current note.
+  Past(double row, int channel, TrackerPastNoteAction action,
+       double timeOffsetSeconds = 0.0)
+    Cut, Off or Fade displaced voices of this channel, excluding its current note.
+    Logical Past for displaced flattened invocations is pending.
   Seek(double row, int channel, double playbackSeconds,
        double timeOffsetSeconds = 0.0)
     Seek physical playback in seconds, not source frames.
