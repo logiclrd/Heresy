@@ -49,26 +49,26 @@ public sealed class VirtualNote : IDisposable
     }
 
     public void Note(double row, ObjectId sourceId, double pitchMultiplier = 1.0,
-        double playbackSpeedMultiplier = 1.0, bool mixdown = false,
+        double playbackSpeedMultiplier = 1.0,
         double? volume = null, double timeOffsetSeconds = 0.0,
         ObjectId? eventFilterDefinitionId = null)
         => NoteCore(null, row, sourceId, pitchMultiplier, playbackSpeedMultiplier,
-            mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId);
+            volume, timeOffsetSeconds, eventFilterDefinitionId);
 
     public void Note(SequenceCallsite callsite, double row, ObjectId sourceId,
         double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0,
-        bool mixdown = false, double? volume = null, double timeOffsetSeconds = 0.0,
+        double? volume = null, double timeOffsetSeconds = 0.0,
         ObjectId? eventFilterDefinitionId = null)
         => NoteCore(callsite, row, sourceId, pitchMultiplier, playbackSpeedMultiplier,
-            mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId);
+            volume, timeOffsetSeconds, eventFilterDefinitionId);
 
     private void NoteCore(SequenceCallsite? callsite, double row, ObjectId sourceId,
-        double pitchMultiplier, double playbackSpeedMultiplier, bool mixdown,
+        double pitchMultiplier, double playbackSpeedMultiplier,
         double? volume, double timeOffsetSeconds, ObjectId? eventFilterDefinitionId)
     {
         if (!CheckOwned()) return;
         _owner.StartVirtualLease(_identity, row, sourceId, pitchMultiplier,
-            playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds,
+            playbackSpeedMultiplier, volume, timeOffsetSeconds,
             eventFilterDefinitionId, callsite);
     }
 

@@ -14,7 +14,10 @@ Replace the caller-selected virtual ID, not the underlying virtual-channel
 capability. `NoteVirtual(row, sourceId, pitchMultiplier = 1.0, ...)` returns
 an exclusive `VirtualNote`. Its remaining parameters/defaults match the
 existing helper: playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds,
-eventFilterDefinitionId. `VirtualNote.Note(row, sourceId, ...)` retriggers
+eventFilterDefinitionId. **Subsequent #71 / PR #72 slice 2c supersedes this
+original signature:** the virtual mixdown parameter is removed; Pattern and
+Sequence sources infer private mixdown at recursive resolution. Physical
+Note retains its mixdown choice. `VirtualNote.Note(row, sourceId, ...)` retriggers
 on the same logical channel. It is not named Replace. The wrapper is a
 reference object so ownership changes invalidate all aliases at once.
 
@@ -182,8 +185,8 @@ identity. The older numeric helpers were temporarily callable during fixture mig
 Cut, SourceFrame, Displacement, Past, NoteFilter and ChannelFilter.
 No ambiguous Filter alias or virtual resonant-filter capability is added.
 
-A Pattern or Sequence used as the source of a virtual note must specify
-`mixdown: true`, both for the initial NoteVirtual and any subsequent Note
+At the #54 milestone (superseded by #71 slice 2c), a Pattern or Sequence
+used as the source of a virtual note had to specify `mixdown: true`, both for the initial NoteVirtual and any subsequent Note
 that selects such a source. Flattened children require a physical parent
 channel under the existing recursive timeline contract; the handle redesign
 does not implicitly change the requested mixdown mode. Direct Sample,

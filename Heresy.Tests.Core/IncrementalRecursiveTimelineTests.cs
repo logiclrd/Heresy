@@ -567,6 +567,45 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
+	public void GeneratedVirtualStartsInferOnlyResolvedRecursiveSources()
+	{
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		DataSequenceDefinition sequence = new((ObjectId)3U, "Nested order");
+		sequence.Entries.Add(new SequenceEntry(child.Id));
+		ChannelTarget target = ChannelTarget.Virtual(new VirtualChannelIdentity(7, 1));
+		StreamingPattern parent = new((ObjectId)1U, 3,
+			new NoteEvent(MusicalTime.Zero, target, [new StartNoteCommand(child.Id)]),
+			new NoteEvent(new MusicalTime(TimeSpan.Zero, 1), target,
+				[new StartNoteCommand(sequence.Id)]),
+			new NoteEvent(new MusicalTime(TimeSpan.Zero, 2), target,
+				[new StartNoteCommand((ObjectId)90U)]));
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child, sequence));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = DrainRaw(timeline);
+		Assert.That(notes, Has.Length.EqualTo(3));
+		Assert.That(notes.Select(n => n.Target), Is.All.EqualTo(target));
+		var starts = notes.Select(n => (StartNoteCommand)n.Commands.Single()).ToArray();
+		Assert.That(starts.Select(s => s.SourceId),
+			Is.EqualTo(new[] { child.Id, sequence.Id, (ObjectId)90U }));
+		Assert.That(starts.Select(s => s.Mixdown), Is.EqualTo(new[] { true, true, false }));
+	}
+
+	[Test]
+	public void LegacyNumericVirtualStartStillRequiresExplicitRecursiveMixdown()
+	{
+		DataPatternDefinition child = Pattern(2, 1);
+		StreamingPattern parent = new((ObjectId)1U, 1,
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Virtual(7),
+				[new StartNoteCommand(child.Id)]));
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		Assert.Throws<NotSupportedException>(() => DrainRaw(timeline));
+	}
+
+	[Test]
 	public void ADataSequenceRootUsesOneSharedTimelineAndFollowsBxx()
 	{
 		DataSequenceDefinition root = new((ObjectId)10U, "Root");

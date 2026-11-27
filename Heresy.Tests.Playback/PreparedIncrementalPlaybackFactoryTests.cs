@@ -3327,7 +3327,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		{
 			RowCount = 6, ChannelCount = 2, Source = prefix + $$"""
 				Note(0, 0, _O({{sample.Value}}));
-				using var nested = NoteVirtual(0, _O({{privateChild.Value}}), mixdown: true);
+				using var nested = NoteVirtual(0, _O({{privateChild.Value}}));
 				Displacement(0, 0, NoteDisplacementAction.Continue);
 				Note(0.25, 0, _O({{sample.Value}}));
 				Note(3, 1, _O({{sample.Value}}));
@@ -3523,8 +3523,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			RowCount = 4, ChannelCount = 1,
 		});
 		ObjectId parent = doc.AllocateObjectId();
-		string source = $"using var note = NoteVirtual(0, _O({child.Value}), mixdown: true); "
-			+ $"note.Cut(1); note.Note(2, _O({child.Value}), mixdown: true); note.Cut(3);";
+		string source = $"using var note = NoteVirtual(0, _O({child.Value})); "
+			+ $"note.Cut(1); note.Note(2, _O({child.Value})); note.Cut(3);";
 		doc.Add(new ScriptPatternDefinition(parent, "Virtual parent")
 		{
 			Source = relaxed ? "#order relaxed\n" + source : source,
@@ -3596,16 +3596,16 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		// position differs, and disposal is deliberately non-musical.
 		string Middle(bool recycle) => $"""
 			using var old = NewNoteGroup();
-			using var lead = NoteVirtual(0, _O({leaf.Value}), mixdown: true);
+			using var lead = NoteVirtual(0, _O({leaf.Value}));
 			lead.Displacement(0, NoteDisplacementAction.Continue);
-			lead.Note(0.25, _O({leaf.Value}), mixdown: true);
+			lead.Note(0.25, _O({leaf.Value}));
 			old += lead;
 			old.ChannelFilter(0.25, _O({filter.Value}));
 			old.Past(0.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.09);
 			old.Cut(0.75, timeOffsetSeconds: 0.09);
 			{(recycle ? "old.Dispose();" : "")}
 			using var replacement = NewNoteGroup();
-			replacement += NoteVirtual(1, _O({leaf.Value}), mixdown: true);
+			replacement += NoteVirtual(1, _O({leaf.Value}));
 			{(recycle ? "" : "old.Dispose();")}
 			replacement.Cut(2.5);
 			""";
@@ -3732,7 +3732,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		{
 			Source = $"""
 				using var group = NewNoteGroup();
-				group += NoteVirtual(0, _O({child.Value}), mixdown: true);
+				group += NoteVirtual(0, _O({child.Value}));
 				group.Cut(5);
 				""",
 			RowCount = 6, ChannelCount = 1,

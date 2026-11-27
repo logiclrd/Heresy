@@ -73,9 +73,13 @@ in source resolution and OriginSourceId/live Synth preparation. Resolve the
 source in the recursive preparation path before deciding whether to flatten;
 only Pattern/Sequence on an owned virtual target is automatically private.
 Keep direct sound IDs, snapshot/dependency resolution, Instrument tone
-preparation and legacy/live engine commands unchanged. Decide the exact
-internal representation during implementation (explicit typed intent or
-source-aware normalization); no authored command escape hatch. Remove both
+preparation and legacy/live engine commands unchanged. Implementation chooses source-aware normalization at the recursive timeline:
+a generated nonzero virtual identity implies the owned-channel contract.
+Only a resolved Pattern/Sequence source gains Mixdown=true, and raw
+generation-zero engine targets preserve the existing explicit semantics.
+No new serialized command field, author-facing flag or command escape hatch.
+Raw script emission stays source-type agnostic with Mixdown=false; source
+resolution is the production scheduler's responsibility. Remove both
 public and generated callsite overload parameters and update every bound
 compiler signature/allow-list and test, including optional/named/positional
 argument binding and delegate references. Existing scripts that pass mixdown

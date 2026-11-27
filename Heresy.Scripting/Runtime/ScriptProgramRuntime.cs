@@ -319,7 +319,7 @@ public abstract class PatternScriptProgram
 	/// <summary>Allocate an exclusive logical channel and schedule its first note.</summary>
 	protected VirtualNote NoteVirtual(double row, ObjectId sourceId,
 		double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0,
-		bool mixdown = false, double? volume = null,
+		double? volume = null,
 		double timeOffsetSeconds = 0.0, ObjectId? eventFilterDefinitionId = null)
 	{
 		ValidateRow(row);
@@ -327,7 +327,7 @@ public abstract class PatternScriptProgram
 		try
 		{
 			AppendNoteStart(row, ChannelTarget.Virtual(identity), sourceId,
-				pitchMultiplier, playbackSpeedMultiplier, mixdown, volume,
+				pitchMultiplier, playbackSpeedMultiplier, false, volume,
 				timeOffsetSeconds, eventFilterDefinitionId);
 			return new VirtualNote(this, identity);
 		}
@@ -340,27 +340,27 @@ public abstract class PatternScriptProgram
 
 	protected VirtualNote NoteVirtual(SequenceCallsite callsite, double row,
 		ObjectId sourceId, double pitchMultiplier = 1.0,
-		double playbackSpeedMultiplier = 1.0, bool mixdown = false,
+		double playbackSpeedMultiplier = 1.0,
 		double? volume = null, double timeOffsetSeconds = 0.0,
 		ObjectId? eventFilterDefinitionId = null)
 	{
 		SequenceCallsite? previous = _editorActionCallsite;
 		_editorActionCallsite = previous ?? callsite;
 		try { return NoteVirtual(row, sourceId, pitchMultiplier,
-			playbackSpeedMultiplier, mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId); }
+			playbackSpeedMultiplier, volume, timeOffsetSeconds, eventFilterDefinitionId); }
 		finally { _editorActionCallsite = previous; }
 	}
 
 	internal void StartVirtualLease(VirtualChannelIdentity identity, double row,
 		ObjectId sourceId, double pitchMultiplier, double playbackSpeedMultiplier,
-		bool mixdown, double? volume, double timeOffsetSeconds,
+		double? volume, double timeOffsetSeconds,
 		ObjectId? eventFilterDefinitionId, SequenceCallsite? callsite)
 	{
 		ValidateRow(row);
 		SequenceCallsite? previous = _editorActionCallsite;
 		_editorActionCallsite = previous ?? callsite;
 		try { AppendNoteStart(row, ChannelTarget.Virtual(identity), sourceId,
-			pitchMultiplier, playbackSpeedMultiplier, mixdown, volume,
+			pitchMultiplier, playbackSpeedMultiplier, false, volume,
 			timeOffsetSeconds, eventFilterDefinitionId); }
 		finally { _editorActionCallsite = previous; }
 	}

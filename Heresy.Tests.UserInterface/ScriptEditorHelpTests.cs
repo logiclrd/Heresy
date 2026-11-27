@@ -74,6 +74,14 @@ public sealed class ScriptEditorHelpTests
         Assert.That(reference, Does.Not.Contain("virtualId"));
         Assert.That(reference, Does.Contain("VirtualNote NoteVirtual(double row, ObjectId sourceId,"));
         Assert.That(reference, Does.Contain("both on the first start and on each retrigger"));
+        Assert.That(reference, Does.Contain("Pattern/Sequence sources automatically use private mixdown"));
+        int virtualStart = reference.IndexOf("VIRTUAL NOTE OWNERSHIP", StringComparison.Ordinal);
+        int virtualEnd = reference.IndexOf("PHYSICAL FILTERS AND RELEASE/CUT", StringComparison.Ordinal);
+        Assert.That(virtualStart, Is.GreaterThanOrEqualTo(0));
+        Assert.That(virtualEnd, Is.GreaterThan(virtualStart));
+        Assert.That(reference[virtualStart..virtualEnd], Does.Not.Contain("mixdown:"));
+        Assert.That(reference[virtualStart..virtualEnd], Does.Not.Contain("bool mixdown"));
+        Assert.That(reference[..virtualStart], Does.Contain("bool mixdown = false"));
         Assert.That(reference, Does.Contain("Unproven ownership termination produces a compiler warning"));
         Assert.That(reference, Does.Contain("disposed or transferred handle"));
         Assert.That(reference, Does.Contain("Strict mode yields once per member"));

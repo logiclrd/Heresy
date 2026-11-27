@@ -468,8 +468,9 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								authoredRow,
 								emit.Time, callsite);
 						List<NoteCommand> retained = [];
-						foreach (NoteCommand command in emit.Note.Commands)
+						foreach (NoteCommand authored in emit.Note.Commands)
 						{
+							NoteCommand command = authored;
 							SequencingChannelState? logical = emit.Note.Target.Kind
 								== ChannelTargetKind.Physical
 									? frame.Context.GetPhysicalChannelState(
@@ -537,6 +538,17 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								frame.Context.GetPhysicalChannelState(
 									emit.Note.Target.PhysicalChannel -
 									frame.Context.PhysicalChannelBase).NoteVolume = noteVolume.Volume;
+							// A generated virtual identity is an owned logical
+							// channel, never a flattened subtree. Infer private
+							// recursion from the frozen source catalog here, at
+							// resolution, not by setting Mixdown on direct sounds.
+							// Generation zero retains legacy explicit semantics.
+							if (command is StartNoteCommand candidate
+								&& !candidate.Mixdown
+								&& emit.Note.Target.Kind == ChannelTargetKind.Virtual
+								&& emit.Note.Target.VirtualIdentity.Generation != 0
+								&& _root.IsFlattenedSource!(candidate.SourceId))
+								command = candidate with { Mixdown = true };
 							if (command is not StartNoteCommand start || start.Mixdown
 								|| !_resolver.TryResolve(start.SourceId, out SongObject? source)
 								|| source is not (PatternDefinition or SequenceDefinition))
@@ -594,7 +606,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							}
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new NotSupportedException(
-									"Flattened Pattern/Sequence sources require a physical parent channel. For a virtual note, specify mixdown: true.");
+									"Flattened Pattern/Sequence sources require a physical parent channel. Legacy numeric virtual targets must use explicit mixdown.");
 							// Starting a flattened source is a *real start*
 							// for the caller's remembered volume, but does not
 							// create or control one individual playback voice.

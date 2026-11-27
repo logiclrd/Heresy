@@ -147,12 +147,13 @@ VIRTUAL NOTE OWNERSHIP
   VirtualNote NoteVirtual(double row, ObjectId sourceId,
               double pitchMultiplier = 1.0,
               double playbackSpeedMultiplier = 1.0,
-              bool mixdown = false, double? volume = null,
+              double? volume = null,
               double timeOffsetSeconds = 0.0,
               ObjectId? eventFilterDefinitionId = null)
     Allocate a logical virtual channel and start its first note.
-    Pattern/Sequence sources require mixdown: true on virtual channels,
+    Pattern/Sequence sources automatically use private mixdown,
     both on the first start and on each retrigger of such a source.
+    Samples, Synths and Instruments keep ordinary direct playback.
     Use using var or a using block, or explicitly Dispose the handle.
     Dispose() releases ownership; it does not stop or cancel scheduled audio.
     Unproven ownership termination produces a compiler warning.
@@ -160,7 +161,7 @@ VIRTUAL NOTE OWNERSHIP
 
 VirtualNote instance methods (shown on a local named note):
   note.Note(row, sourceId, pitchMultiplier: 1.0,
-            playbackSpeedMultiplier: 1.0, mixdown: false, volume: null,
+            playbackSpeedMultiplier: 1.0, volume: null,
             timeOffsetSeconds: 0.0, eventFilterDefinitionId: null)
     Start/retrigger on the same logical channel.
   note.Volume(double row, double volume, double timeOffsetSeconds = 0.0)

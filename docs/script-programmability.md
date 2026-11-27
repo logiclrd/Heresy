@@ -252,7 +252,7 @@ returns a disposable `VirtualNote`:
 ```csharp
 using var note = NoteVirtual(0, _O(17),
     pitchMultiplier: 1.0, playbackSpeedMultiplier: 1.0,
-    mixdown: false, volume: null, timeOffsetSeconds: 0.0);
+    volume: null, timeOffsetSeconds: 0.0);
 note.Note(4, _O(17), Semitone(7));
 note.Off(8);
 note.Cut(12);
@@ -265,8 +265,16 @@ scheduled events. A recycled slot gets a distinct generation. Aliases
 of a disposed handle cannot emit commands, and misuse is warned.
 Use a using declaration or block to guarantee cleanup. Unproven
 ownership termination produces a compiler warning; invocation-end
-cleanup is a safeguard. Nested Pattern/Sequence sources require
-`mixdown: true` on each virtual start/retrigger.
+cleanup is a safeguard. Pattern/Sequence sources on owned virtual channels
+automatically use a private recursive mixdown on each start or retrigger.
+The recursive timeline infers this from the resolved frozen source type;
+Samples, Synths and Instruments retain direct playback semantics and their
+originating source IDs. There is no virtual `mixdown` parameter. Existing
+scripts must remove that argument (including the old fifth positional
+Boolean); the physical Note helper still offers the explicit choice.
+Generation-zero legacy numeric engine targets retain their explicit
+recursive mixdown requirement. Raw script commands do not resolve source
+types themselves; production recursive scheduling performs inference.
 
 ### Owning note groups
 

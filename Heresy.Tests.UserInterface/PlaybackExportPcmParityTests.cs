@@ -400,19 +400,19 @@ public sealed class PlaybackExportPcmParityTests
 		parent = document.AllocateObjectId();
 		string parentSource = $"""
 			using var old = NewNoteGroup();
-			using var lead = NoteVirtual(0, _O({privateSequence.Value}), mixdown: true);
+			using var lead = NoteVirtual(0, _O({privateSequence.Value}));
 			lead.SourceFrame(0.5, 100);
 			lead.SourceFrame(0.75, 0);
 			lead.Displacement(1, NoteDisplacementAction.Continue);
-			lead.Note(1.25, _O({privateSequence.Value}), mixdown: true);
+			lead.Note(1.25, _O({privateSequence.Value}));
 			old += lead;
 			old.Volume(1.5, 0.5);
 			old.Past(1.75, TrackerPastNoteAction.Cut, timeOffsetSeconds: 0.09);
 			old.Cut(1.75, timeOffsetSeconds: 0.09);
 			old.Dispose();
 			using var replacement = NewNoteGroup();
-			replacement += NoteVirtual(2, _O({privateSequence.Value}), mixdown: true);
-			replacement += NoteVirtual(2, _O({privateSequence.Value}), mixdown: true, volume: 0.25);
+			replacement += NoteVirtual(2, _O({privateSequence.Value}));
+			replacement += NoteVirtual(2, _O({privateSequence.Value}), volume: 0.25);
 			replacement.Cut(4);
 			""";
 		document.Add(new ScriptPatternDefinition(parent, "Seeking virtual mixdowns")
