@@ -270,7 +270,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 		AdvanceToParentFrame(parentFrame);
 		long outerFrame = parentFrame - ParentStartFrame;
 		if (_releaseFrame < 0) _releaseFrame = outerFrame;
-		_playback.Source.EndInput();
+		_playback.Source.EndInput(0, reconstructing: true, includeTargetEvents: false);
 	}
 
 	public void ScheduleCut(long parentFrame)
@@ -288,34 +288,36 @@ internal sealed class PreparedRecursiveMixdownSound :
 		_fadeElapsedAtStart = 0;
 		_newNoteDisplacement = newNoteDisplacement;
 		_playback.Source.StopProducing();
-		_playback.Source.Session.RequestFadeOfActiveVoices(newNoteDisplacement);
+		_playback.Source.Session.RequestFadeOfActiveVoices(newNoteDisplacement, 0,
+			reconstructing: true, includeTargetEvents: false);
 	}
 
 	// A rebuilt nested voice can be younger than the ancestor's release.
 	// Anchor its transition at its own selected source boundary and carry
 	// the independent elapsed age, rather than backdating its onset.
-	public void InheritRelease(long invocationFrame, long elapsedReleaseFrames)
+	public void InheritRelease(long invocationFrame, long elapsedReleaseFrames, bool includeTargetEvents)
 	{
 		if (_cutFrame >= 0 || _releaseFrame >= 0) return;
-		PrepareInheritedBoundary(invocationFrame);
+		PrepareInheritedBoundary(invocationFrame, includeTargetEvents);
 		_releaseFrame = invocationFrame;
 		_releaseElapsedAtStart = elapsedReleaseFrames;
-		_playback.Source.EndInput(elapsedReleaseFrames, reconstructing: true);
+		_playback.Source.EndInput(elapsedReleaseFrames, reconstructing: true, includeTargetEvents: includeTargetEvents);
 	}
 
-	public void InheritFade(long invocationFrame, long elapsedFadeFrames, bool newNoteDisplacement)
+	public void InheritFade(long invocationFrame, long elapsedFadeFrames, bool newNoteDisplacement,
+		bool includeTargetEvents)
 	{
 		if (_cutFrame >= 0 || _fadeFrame >= 0) return;
-		PrepareInheritedBoundary(invocationFrame);
+		PrepareInheritedBoundary(invocationFrame, includeTargetEvents);
 		_fadeFrame = invocationFrame;
 		_fadeElapsedAtStart = elapsedFadeFrames;
 		_newNoteDisplacement = newNoteDisplacement;
 		_playback.Source.StopProducing();
 		_playback.Session.RequestFadeOfActiveVoices(newNoteDisplacement, elapsedFadeFrames,
-			reconstructing: true);
+			reconstructing: true, includeTargetEvents: includeTargetEvents);
 	}
 
-	private void PrepareInheritedBoundary(long invocationFrame)
+	private void PrepareInheritedBoundary(long invocationFrame, bool includeTargetEvents)
 	{
 		if (_boundState is not { } state) return;
 		long target = ChildFrameAt(state, invocationFrame);
@@ -325,7 +327,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 			try { RenderUntil(target, Span<float>.Empty, target, scratch, checkCancellation: true); }
 			finally { ArrayPool<float>.Shared.Return(scratch); }
 		}
-		if (_playback.Source.NextFrame == target)
+		if (includeTargetEvents && _playback.Source.NextFrame == target)
 			_playback.Source.ApplyEventsAtCurrentFrame();
 	}
 
