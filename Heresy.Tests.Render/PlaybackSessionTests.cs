@@ -735,6 +735,41 @@ public sealed class PlaybackSessionTests
 		Assert.That(after[expectedEnd], Is.Zero.Within(1e-6f));
 	}
 
+	[TestCase(false, 50L, 150L, 0.75f)]
+	[TestCase(true, 15L, 25L, 0.625f)]
+	[TestCase(true, 50L, 0L, 0f)]
+	public void ReconstructedPrivateFadeConsumesElapsedTimeWithoutChangingVoiceAge(
+		bool newNoteDisplacement, long elapsed, long remaining, float firstGain)
+	{
+		ObjectId id = (ObjectId)52U;
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((id, false, new ConfiguredSustainSound(
+				noteFadeDuration: TimeSpan.FromMilliseconds(200),
+				newNoteFadeDuration: TimeSpan.FromMilliseconds(40)))));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new StartNoteCommand(id)]);
+		session.Render(0, 1, new float[1]);
+		PlaybackVoice voice = session.GetChannelState(0).CurrentVoice!;
+		session.RequestFadeOfActiveVoices(newNoteDisplacement, elapsed);
+		Assert.Multiple(() =>
+		{
+			Assert.That(voice.StartFrame, Is.Zero);
+			Assert.That(voice.SoundState.PlaybackOriginFrame, Is.Zero);
+			Assert.That(voice.FadeStartFrame, Is.EqualTo(1L));
+			Assert.That(voice.FadeEndFrameExclusive, Is.EqualTo(1L + remaining));
+			Assert.That(voice.IsNoteFadeRequested, Is.True);
+			Assert.That(voice.SoundState.NoteOffTime, Is.Null);
+		});
+		float[] pcm = new float[201];
+		session.Render(1, pcm.Length, pcm);
+		Assert.That(pcm[0], Is.EqualTo(firstGain).Within(1e-6f));
+		if (remaining > 0)
+			Assert.That(pcm[(int)remaining - 1],
+				Is.EqualTo(newNoteDisplacement ? 1f / 40 : 1f / 200).Within(1e-6f));
+		Assert.That(pcm[(int)remaining], Is.Zero.Within(1e-6f));
+		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+	}
+
 	[Test]
 	public void ReleasedFlattenedDescendantRetainsLiveAncestryAfterProducerRetirement()
 	{
