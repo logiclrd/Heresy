@@ -116,7 +116,13 @@ internal sealed class PatternGenerationTraceView : UserControl
         split.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(3, GridUnitType.Star)));
         Grid.SetColumn(left, 0);
         Grid.SetColumn(right, 2);
-        GridSplitter splitter = new() { ResizeDirection = GridResizeDirection.Columns };
+        GridSplitter splitter = new()
+        {
+            ResizeDirection = GridResizeDirection.Columns,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Background = Brushes.Gray,
+        };
         Grid.SetColumn(splitter, 1);
         split.Children.Add(left);
         split.Children.Add(splitter);
@@ -143,6 +149,19 @@ internal sealed class PatternGenerationTraceView : UserControl
         _activeRun = null;
         previous?.Cancel();
         _cancel.IsEnabled = false;
+        _model = null;
+        _changingSelection = true;
+        try
+        {
+            _events.ItemsSource = null;
+            _order.IsEnabled = false;
+            _snapshot.Text = string.Empty;
+            _references.SetTokens([]);
+            _colorizer.SetSpans([]);
+            _highlight.SetSpans([], 0);
+            _snapshot.TextArea.TextView.Redraw();
+        }
+        finally { _changingSelection = false; }
     }
 
     internal async Task RunAsync(ScriptPatternDefinition definition,
@@ -246,8 +265,9 @@ internal sealed class PatternGenerationTraceView : UserControl
         var groupIds = rows.Where(r => r.Kind == PatternTraceRowKind.GroupOperation
             && r.InvocationId.HasValue).Select(r => r.InvocationId!.Value).ToHashSet();
         var ids = rows.Where(r => r.OccurrenceId.HasValue).Select(r => r.OccurrenceId!.Value)
-            .Concat(_model.Trace.Events.Where(e => e.InvocationId is long id && groupIds.Contains(id))
-                .Select(e => e.OccurrenceId));
+            .Concat(groupIds.Count == 0 ? Enumerable.Empty<long>()
+                : _model.Trace.Events.Where(e => e.InvocationId is long id && groupIds.Contains(id))
+                    .Select(e => e.OccurrenceId));
         _model.SelectOccurrences(ids, (_events.SelectedItem as PatternTraceRow)?.OccurrenceId);
         var spans = _model.SelectedSourceSpans
             .Concat(rows.Where(r => !r.OccurrenceId.HasValue && r.SourceSpan.HasValue)
