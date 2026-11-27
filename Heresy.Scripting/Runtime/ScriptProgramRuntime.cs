@@ -497,6 +497,26 @@ public abstract class PatternScriptProgram
 		=> EmitWithEditorCallsite(callsite,
 			() => Speed(row, ticksPerRow));
 
+	protected void Volume(SequenceCallsite callsite, double row, int channel,
+		double volume, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Volume(row, channel, volume, timeOffsetSeconds));
+
+	protected void SourceFrame(SequenceCallsite callsite, double row, int channel,
+		long sourceFrameOffset, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => SourceFrame(row, channel, sourceFrameOffset, timeOffsetSeconds));
+
+	protected void Displacement(SequenceCallsite callsite, double row, int channel,
+		NoteDisplacementAction action, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Displacement(row, channel, action, timeOffsetSeconds));
+
+	protected void Past(SequenceCallsite callsite, double row, int channel,
+		TrackerPastNoteAction action, double timeOffsetSeconds = 0.0)
+		=> EmitWithEditorCallsite(callsite,
+			() => Past(row, channel, action, timeOffsetSeconds));
+
 	protected void Seek(SequenceCallsite callsite, double row, int channel,
 		double playbackSeconds, double timeOffsetSeconds = 0.0)
 		=> EmitWithEditorCallsite(callsite,
@@ -666,6 +686,56 @@ public abstract class PatternScriptProgram
 			row,
 			ChannelTarget.Global,
 			new SetSpeedCommand(ticksPerRow));
+	}
+
+	/// <summary>Set the current logical note's base volume and remember
+	/// it for later starts on this physical channel.</summary>
+	protected void Volume(double row, int channel, double volume,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		ValidateUnitInterval(volume, nameof(volume));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetNoteVolumeCommand(volume), timeOffsetSeconds);
+	}
+
+	/// <summary>Seek the current seekable voice in native source frames,
+	/// not output frames or elapsed playback seconds.</summary>
+	protected void SourceFrame(double row, int channel, long sourceFrameOffset,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		if (sourceFrameOffset < 0)
+			throw new ArgumentOutOfRangeException(nameof(sourceFrameOffset));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetSourceFrameOffsetCommand(sourceFrameOffset), timeOffsetSeconds);
+	}
+
+	/// <summary>Override the current logical note's next-note action.</summary>
+	protected void Displacement(double row, int channel, NoteDisplacementAction action,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		if (!Enum.IsDefined(action))
+			throw new ArgumentOutOfRangeException(nameof(action));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetCurrentVoiceDisplacementActionCommand(action), timeOffsetSeconds);
+	}
+
+	/// <summary>Apply a lifecycle action to displaced notes of this
+	/// physical channel, excluding its current note.</summary>
+	protected void Past(double row, int channel, TrackerPastNoteAction action,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		if (!Enum.IsDefined(action))
+			throw new ArgumentOutOfRangeException(nameof(action));
+		Append(row, ChannelTarget.Physical(channel),
+			new ApplyPastNoteActionCommand(action), timeOffsetSeconds);
 	}
 
 	/// <summary>Move the existing physical-channel voice to an explicit
