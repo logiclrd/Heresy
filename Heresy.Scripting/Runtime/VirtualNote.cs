@@ -1,5 +1,4 @@
 using System;
-using System.Numerics;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Sequences;
@@ -95,9 +94,7 @@ public sealed class VirtualNote : IDisposable
     private void SeekCore(SequenceCallsite? callsite, double row, double playbackSeconds, double timeOffsetSeconds)
     {
         if (!CheckOwned()) return;
-        if (!double.IsFinite(playbackSeconds) || playbackSeconds < 0 || playbackSeconds > TimeSpan.MaxValue.TotalSeconds)
-            throw new ArgumentOutOfRangeException(nameof(playbackSeconds));
-        _owner.ControlVirtualLease(_identity, row, new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(playbackSeconds)), timeOffsetSeconds, callsite);
+        _owner.ControlVirtualLease(_identity, row, PatternScriptProgram.CreateSeekCommand(playbackSeconds), timeOffsetSeconds, callsite);
     }
 
     public void Pan(double row, double x, double y = 0, double z = 0, double timeOffsetSeconds = 0.0)
@@ -109,10 +106,7 @@ public sealed class VirtualNote : IDisposable
     private void PanCore(SequenceCallsite? callsite, double row, double x, double y, double z, double timeOffsetSeconds)
     {
         if (!CheckOwned()) return;
-        if (!double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z)
-            || Math.Abs(x) > float.MaxValue || Math.Abs(y) > float.MaxValue || Math.Abs(z) > float.MaxValue)
-            throw new ArgumentOutOfRangeException(nameof(x));
-        _owner.ControlVirtualLease(_identity, row, new SetSpatialPositionCommand(new Vector3((float)x, (float)y, (float)z)), timeOffsetSeconds, callsite);
+        _owner.ControlVirtualLease(_identity, row, PatternScriptProgram.CreatePanCommand(x, y, z), timeOffsetSeconds, callsite);
     }
 
     public void Surround(double row, bool enabled, double timeOffsetSeconds = 0.0)
@@ -136,8 +130,8 @@ public sealed class VirtualNote : IDisposable
     private void FilterCore(SequenceCallsite? callsite, double row, double cutoff, double resonance, double timeOffsetSeconds)
     {
         if (!CheckOwned()) return;
-        if (!double.IsFinite(cutoff) || cutoff < 0 || cutoff > 1) throw new ArgumentOutOfRangeException(nameof(cutoff));
-        if (!double.IsFinite(resonance) || resonance < 0 || resonance > 1) throw new ArgumentOutOfRangeException(nameof(resonance));
+        PatternScriptProgram.ValidateUnitInterval(cutoff, nameof(cutoff));
+        PatternScriptProgram.ValidateUnitInterval(resonance, nameof(resonance));
         _owner.ControlVirtualLease(_identity, row, new SetResonantFilterCommand(cutoff, resonance), timeOffsetSeconds, callsite);
     }
 
@@ -150,7 +144,7 @@ public sealed class VirtualNote : IDisposable
     private void FilterCutoffCore(SequenceCallsite? callsite, double row, double cutoff, double timeOffsetSeconds)
     {
         if (!CheckOwned()) return;
-        if (!double.IsFinite(cutoff) || cutoff < 0 || cutoff > 1) throw new ArgumentOutOfRangeException(nameof(cutoff));
+        PatternScriptProgram.ValidateUnitInterval(cutoff, nameof(cutoff));
         _owner.ControlVirtualLease(_identity, row, new SetResonantFilterCutoffCommand(cutoff), timeOffsetSeconds, callsite);
     }
 
@@ -163,7 +157,7 @@ public sealed class VirtualNote : IDisposable
     private void FilterResonanceCore(SequenceCallsite? callsite, double row, double resonance, double timeOffsetSeconds)
     {
         if (!CheckOwned()) return;
-        if (!double.IsFinite(resonance) || resonance < 0 || resonance > 1) throw new ArgumentOutOfRangeException(nameof(resonance));
+        PatternScriptProgram.ValidateUnitInterval(resonance, nameof(resonance));
         _owner.ControlVirtualLease(_identity, row, new SetResonantFilterResonanceCommand(resonance), timeOffsetSeconds, callsite);
     }
 

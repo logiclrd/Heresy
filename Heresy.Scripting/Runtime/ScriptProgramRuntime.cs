@@ -747,12 +747,8 @@ public abstract class PatternScriptProgram
 	{
 		ValidateRow(row);
 		ValidateChannel(channel);
-		if (!double.IsFinite(playbackSeconds)
-			|| playbackSeconds < 0
-			|| playbackSeconds > TimeSpan.MaxValue.TotalSeconds)
-			throw new ArgumentOutOfRangeException(nameof(playbackSeconds));
 		Append(row, ChannelTarget.Physical(channel),
-			new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(playbackSeconds)),
+			CreateSeekCommand(playbackSeconds),
 			timeOffsetSeconds);
 	}
 
@@ -764,15 +760,8 @@ public abstract class PatternScriptProgram
 	{
 		ValidateRow(row);
 		ValidateChannel(channel);
-		if (!double.IsFinite(x) || !double.IsFinite(y)
-			|| !double.IsFinite(z)
-			|| Math.Abs(x) > float.MaxValue
-			|| Math.Abs(y) > float.MaxValue
-			|| Math.Abs(z) > float.MaxValue)
-			throw new ArgumentOutOfRangeException(nameof(x));
 		Append(row, ChannelTarget.Physical(channel),
-			new SetSpatialPositionCommand(
-				new Vector3((float)x, (float)y, (float)z)),
+			CreatePanCommand(x, y, z),
 			timeOffsetSeconds);
 	}
 
@@ -824,7 +813,29 @@ public abstract class PatternScriptProgram
 			timeOffsetSeconds);
 	}
 
-	private static void ValidateUnitInterval(double value, string name)
+	// Shared validation and command construction for physical and owned
+	// virtual controls. These internal factories are not authored APIs.
+	internal static SetPlaybackOffsetCommand CreateSeekCommand(double playbackSeconds)
+	{
+		if (!double.IsFinite(playbackSeconds)
+			|| playbackSeconds < 0
+			|| playbackSeconds > TimeSpan.MaxValue.TotalSeconds)
+			throw new ArgumentOutOfRangeException(nameof(playbackSeconds));
+		return new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(playbackSeconds));
+	}
+
+	internal static SetSpatialPositionCommand CreatePanCommand(double x, double y, double z)
+	{
+		if (!double.IsFinite(x) || !double.IsFinite(y)
+			|| !double.IsFinite(z)
+			|| Math.Abs(x) > float.MaxValue
+			|| Math.Abs(y) > float.MaxValue
+			|| Math.Abs(z) > float.MaxValue)
+			throw new ArgumentOutOfRangeException(nameof(x));
+		return new SetSpatialPositionCommand(new Vector3((float)x, (float)y, (float)z));
+	}
+
+	internal static void ValidateUnitInterval(double value, string name)
 	{
 		if (!double.IsFinite(value) || value < 0 || value > 1)
 			throw new ArgumentOutOfRangeException(name);
