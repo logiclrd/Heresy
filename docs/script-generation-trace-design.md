@@ -284,3 +284,42 @@ failure-span capture, retention accounting and worker lifecycle. These are
 engineering discovery/prototype questions, not permission to add tracing
 checks to production. If any cannot be met, report the specific blocker
 before adopting an alternative.
+
+
+## Slice 3a implementation: loop and iteration structure
+
+Slice 2 is verified green (4,823/4,823 at `5addcaf312eb`,
+[CI #46080448332](https://github.com/logiclrd/Heresy/actions/runs/46080448332)).
+Slice 3a extends only diagnostic compilation and capture:
+
+- Annotate authored for/foreach/while/do syntax with canonical original
+  spans before emitter rewrites. Preserve annotations through diagnostic
+  delegate receiver adaptation; generated fanout drains remain excluded.
+  Wrap the loop and its iteration body in trusted generated disposable
+  scopes. The original checkpoint/cooperation placement remains intact,
+  including strict lambda synchronous checkpoints. Do not lower authored
+  return in strict mode (existing iterator compiler restriction).
+- Every dynamic loop/iteration scope uses its opening trace ordinal as ID;
+  parent IDs preserve nesting. Iteration index is zero-based execution
+  count, not the value of a user variable. Events retain a stable emission
+  ordinal separately from the unified trace ordinal and enclosing scope.
+- Reserve capacity for opening and closing markers together. Scope disposal
+  appends its already-reserved close without a new cancellation or budget
+  check, including exception, stop, break, continue, return or truncated
+  strict iterator disposal. A close denotes unwinding, not successful
+  execution. A limit may leave unused capacity when a new scope needs two
+  records. The 100,000 record limit now includes events and loop markers;
+  CPU-only loops can hit record retention before the time/cancellation
+  limit. Dynamic call/group metadata accounting follows in Slice 3b.
+- Twelve new cases exercise nested spans and IDs, zero iterations,
+  foreach/while/do, break/continue/relaxed return, failure, balanced bounded
+  prefix, group fanout, relaxed callbacks, cancellation unwind, and
+  rejection of authored diagnostic scope calls. The existing generated IL
+  test now checks both new scope calls in addition to diagnostic checkpoint
+  isolation. Full baseline IL equivalence remains a later gate.
+
+This is not yet a full provenance implementation. Dynamic helper call
+identity, allocation/group creation and membership transfers, group-call
+scope across strict drain, and failure location beyond the last known
+context remain open. No changes to shared musical helpers or playback
+runtime. Exact-head Slice 3a CI must pass before the next code slice.
