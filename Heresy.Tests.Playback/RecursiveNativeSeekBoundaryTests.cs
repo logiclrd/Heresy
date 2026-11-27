@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Text;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -520,6 +521,69 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		Assert.That(pcm[^1], Is.Zero.Within(1e-6f));
 		Assert.That(actual.Session.VirtualVoices, Is.Empty);
 		Assert.That(actual.Session.RetainedScopedVirtualChannelCount, Is.Zero);
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void PrivateSeekDuringReleaseReconstructsContentWithoutRestartingRelease(bool relaxed)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId envelopeId = document.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "200 ms release");
+		envelope.ReplaceCurve(
+			[new(TimeSpan.Zero, 1.0), new(TimeSpan.FromMilliseconds(200), 0.0)],
+			0, 0, EnvelopeSustainLoopMode.Forward);
+		document.Add(envelope);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Sustaining ramp");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = sample, VolumeEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		string prefix = relaxed ? "#order relaxed\n" : "";
+		ObjectId child = AddScript(document, prefix + $"""
+			Note(0, 0, _O({instrumentId.Value}));
+			Cut(1.5, 0);
+			Note(2, 0, _O({instrumentId.Value}), volume: 0.5);
+			Note(2.25, 0, _O({instrumentId.Value}));
+			""", rows: 6);
+		ObjectId parent = AddScript(document, prefix + $"""
+			using var note = NoteVirtual(0, _O({child.Value}));
+			note.Off(0.5);
+			note.SourceFrame(1, 240);
+			note.SourceFrame(1.5, 0);
+			""", rows: 5);
+		var factory = new PreparedIncrementalPlaybackFactory(Mono());
+		using var whole = factory.Create(document, parent);
+		using var split = factory.Create(document, parent);
+		float[] pcm = new float[320], chunked = new float[320];
+		whole.Source.Render(pcm.Length, pcm);
+		for (int i = 0; i < chunked.Length;)
+		{
+			int n = Math.Min(17, chunked.Length - i);
+			split.Source.Render(n, chunked.AsSpan(i, n));
+			i += n;
+		}
+		const float scale = 20f / 32768;
+		// Release starts at outer frame 60. Both reconstructions keep
+		// this clock, even when the replacement note is age zero.
+		// B starts exactly at the first target; its later retrigger at
+		// child frame 270 must never be produced after the outer Off.
+		Assert.Multiple(() =>
+		{
+			Assert.That(chunked, Is.EqualTo(pcm).Within(1e-6f));
+			Assert.That(pcm[59], Is.EqualTo(59 * scale).Within(1e-6f));
+			Assert.That(pcm[90], Is.EqualTo(90 * scale * 0.85).Within(1e-6f));
+			Assert.That(pcm[121], Is.EqualTo(scale * 0.5 * 0.695).Within(1e-6f));
+			Assert.That(pcm[151], Is.EqualTo(31 * scale * 0.5 * 0.545).Within(1e-6f));
+			Assert.That(pcm[181], Is.EqualTo(scale * 0.395).Within(1e-6f));
+			Assert.That(pcm[259], Is.EqualTo(79 * scale * 0.005).Within(1e-6f));
+			Assert.That(pcm.AsSpan(261).ToArray(), Is.All.Zero.Within(1e-6f));
+			Assert.That(whole.SequencingContext.Diagnostics.ExpensiveSourceSeeks, Is.EqualTo(2));
+			Assert.That(whole.Session.VirtualVoices, Is.Empty);
+		});
 	}
 
 	[Test]
