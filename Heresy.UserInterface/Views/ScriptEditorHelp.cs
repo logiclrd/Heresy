@@ -168,9 +168,14 @@ VirtualNote instance methods (shown on a local named note):
     Set normalized note volume [0,1].
   note.SourceFrame(double row, long sourceFrameOffset,
                    double timeOffsetSeconds = 0.0)
-    Seek in native source frames (nonnegative); non-seekable sounds ignore it.
+    Absolute Sample playhead in native frames (nonnegative).
+  note.SourceFrameRelative(double row, long deltaFrames,
+                           double timeOffsetSeconds = 0.0)
   note.Seek(double row, double playbackSeconds, double timeOffsetSeconds = 0.0)
-    Seek playback in seconds on the current voice only.
+  note.SeekRelative(double row, double deltaSeconds, double timeOffsetSeconds = 0.0)
+    Sample time converts at the current playback rate; relative deltas are signed.
+    Relative targets clamp to zero; absolute seeks replace the previous target.
+    Private recursive seek semantics are still being migrated; unsupported sources ignore seeks.
   note.Pan(double row, double x, double y = 0, double z = 0,
            double timeOffsetSeconds = 0.0)
   note.Surround(double row, bool enabled, double timeOffsetSeconds = 0.0)
@@ -217,6 +222,7 @@ OWNING NOTE GROUPS
   Group controls: Volume, Off, Cut, NoteFilter, ChannelFilter, SourceFrame,
   Displacement, Past, Seek, Pan, Surround, Filter, FilterCutoff and
   FilterResonance, with the same arguments as VirtualNote.
+  SourceFrameRelative and SeekRelative also apply independently to each member.
   There is no group Note method. Group actions affect members only.
   Strict mode yields once per member before continuing the script.
   Group Dispose() releases all owned leases without changing scheduled music.
@@ -247,7 +253,10 @@ PHYSICAL-CHANNEL CONTROLS
     For a flattened source, controls the logical source's live gain.
   SourceFrame(double row, int channel, long sourceFrameOffset,
               double timeOffsetSeconds = 0.0)
-    Seek the current seekable sound in native source frames (nonnegative).
+    Absolute Sample playhead in native frames (nonnegative).
+  SourceFrameRelative(double row, int channel, long deltaFrames,
+                      double timeOffsetSeconds = 0.0)
+    Move from the current unwrapped playhead; signed delta, clamped at zero.
   Displacement(double row, int channel, NoteDisplacementAction action,
                double timeOffsetSeconds = 0.0)
     Cut, Continue, Off or Fade on the next displacement of the current note.
@@ -257,7 +266,10 @@ PHYSICAL-CHANNEL CONTROLS
     A former flattened source stops producing and its descendants are controlled.
   Seek(double row, int channel, double playbackSeconds,
        double timeOffsetSeconds = 0.0)
-    Seek physical playback in seconds, not source frames.
+    Absolute Sample playback time converted at the instantaneous rate.
+  SeekRelative(double row, int channel, double deltaSeconds,
+               double timeOffsetSeconds = 0.0)
+    Move the playhead by signed time at the instantaneous rate.
   Pan(double row, int channel, double x, double y = 0, double z = 0,
       double timeOffsetSeconds = 0.0)
     Set absolute 3D spatial position.

@@ -759,8 +759,7 @@ public abstract class PatternScriptProgram
 	}
 
 	/// <summary>Move the existing physical-channel voice to an explicit
-	/// source playback-time offset. Unlike tracker Oxx, this is a wall-time
-	/// offset and follows the renderer's established seek semantics.</summary>
+	/// source playback position at the event deadline, using current rate.</summary>
 	protected void Seek(
 		double row, int channel, double playbackSeconds,
 		double timeOffsetSeconds = 0.0)

@@ -171,13 +171,13 @@ public sealed class ScriptVirtualControlTests
         string[] calls =
         [
             "Seek(1, 0.2, timeOffsetSeconds: 0.01)",
-            "SeekRelative(1, -0.1, timeOffsetSeconds: 0.01)",
-            "SourceFrameRelative(1, -13, timeOffsetSeconds: 0.01)",
-            "Pan(1, -0.75, 0.25, 2, timeOffsetSeconds: 0.02)",
-            "Surround(1, true, timeOffsetSeconds: 0.03)",
-            "Filter(1, 0.4, 0.2, timeOffsetSeconds: 0.04)",
-            "FilterCutoff(1, 0.6, timeOffsetSeconds: 0.05)",
-            "FilterResonance(1, 0.3, timeOffsetSeconds: 0.06)",
+            "SeekRelative(1, -0.1, timeOffsetSeconds: 0.02)",
+            "SourceFrameRelative(1, -13, timeOffsetSeconds: 0.03)",
+            "Pan(1, -0.75, 0.25, 2, timeOffsetSeconds: 0.04)",
+            "Surround(1, true, timeOffsetSeconds: 0.05)",
+            "Filter(1, 0.4, 0.2, timeOffsetSeconds: 0.06)",
+            "FilterCutoff(1, 0.6, timeOffsetSeconds: 0.07)",
+            "FilterResonance(1, 0.3, timeOffsetSeconds: 0.08)",
         ];
         NoteCommand[] commands =
         [

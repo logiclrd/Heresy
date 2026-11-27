@@ -257,3 +257,22 @@ state only.
 
 Do not claim red tests have run during this source audit. No local .NET
 execution is available in this workflow.
+
+## Slice 1 — direct Sample implementation
+
+Owner authorized implementation after the unwrapped loop clarification.
+New typed commands and signed relative script helpers route through the
+same deadline/ownership/F6 policy. SampleSound implements a per-state
+anchor of target, deadline and accumulated pitch; end projection uses
+that anchor. Legacy offset assignments clear the anchor; absolute seeks
+clear both additive offsets. Relative zero is a no-op, negative targets
+clamp at zero, extreme coordinates saturate to the native long range.
+No seek changes to note age, outer DSP state or loop mapping. Unsupported
+procedural sounds ignore seeks. Transitional private recursive absolute
+operations retain the old offset behavior; relative private operations
+are no-op until slice 2 implements the capability. Do not merge or accept
+private seek semantics in this state. Editor reference explicitly notes
+the transitional state. New independent ramp tests exercise all four
+operations on physical/handle/group targets in both ordering modes,
+nonunit rate, pitch trajectory, finite end and owner forward-loop examples.
+Raw legacy offset regression remains intact. CI required; no local test run.
