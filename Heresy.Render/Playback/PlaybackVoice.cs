@@ -188,6 +188,7 @@ public sealed class PlaybackVoice
 	private int _outputHistoryFrames;
 
 	private long? _fadeStartFrame;
+	private long _fadeElapsedFramesAtStart;
 	private long? _fadeEndFrameExclusive;
 	private TimeSpan? _fadeDuration;
 	private bool _noteFadeRequested;
@@ -1088,17 +1089,22 @@ public sealed class PlaybackVoice
 				_baseFilterParameters.Resonance));
 	}
 
-	internal void BeginFade(long absoluteFrame, TimeSpan duration, int sampleRate)
+	internal void BeginFade(long absoluteFrame, TimeSpan duration, int sampleRate,
+		long elapsedFadeFrames = 0)
 	{
 		if (absoluteFrame < StartFrame)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 		if (duration <= TimeSpan.Zero)
 			throw new ArgumentOutOfRangeException(nameof(duration));
 
+		if (elapsedFadeFrames < 0)
+			throw new ArgumentOutOfRangeException(nameof(elapsedFadeFrames));
+		long durationFrames = FrameTime.Ceiling(duration, sampleRate);
+		long end = checked(absoluteFrame + Math.Max(0, durationFrames - elapsedFadeFrames));
 		_fadeStartFrame = absoluteFrame;
+		_fadeElapsedFramesAtStart = elapsedFadeFrames;
 		_fadeDuration = duration;
-		_fadeEndFrameExclusive = checked(
-			absoluteFrame + FrameTime.Ceiling(duration, sampleRate));
+		_fadeEndFrameExclusive = end;
 	}
 
 	internal void SetNewNoteActionOverride(
@@ -1121,8 +1127,11 @@ public sealed class PlaybackVoice
 	internal void RequestNoteFade(
 		long absoluteFrame,
 		int sampleRate,
-		TimeSpan? fadeDuration)
+		TimeSpan? fadeDuration,
+		long elapsedFadeFrames = 0)
 	{
+		if (elapsedFadeFrames < 0)
+			throw new ArgumentOutOfRangeException(nameof(elapsedFadeFrames));
 		if (absoluteFrame < StartFrame)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 		if (sampleRate <= 0)
@@ -1140,7 +1149,7 @@ public sealed class PlaybackVoice
 			BeginFade(
 				absoluteFrame,
 				fadeDuration.Value,
-				sampleRate);
+				sampleRate, elapsedFadeFrames);
 		}
 	}
 
@@ -1150,10 +1159,11 @@ public sealed class PlaybackVoice
 			return 1.0;
 
 		long fadeStart = _fadeStartFrame.Value;
-		if (absoluteFrame <= fadeStart)
+		if (absoluteFrame < fadeStart)
 			return 1.0;
 
-		Int128 elapsed = (Int128)(absoluteFrame - fadeStart) * TimeSpan.TicksPerSecond;
+		Int128 elapsed = ((Int128)absoluteFrame - fadeStart + _fadeElapsedFramesAtStart)
+			* TimeSpan.TicksPerSecond;
 		Int128 duration = (Int128)_fadeDuration.Value.Ticks * sampleRate;
 
 		if (elapsed >= duration)
