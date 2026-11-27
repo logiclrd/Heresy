@@ -51,6 +51,7 @@ public sealed class PatternGenerationTracePresentation
     private readonly Dictionary<long, PatternGenerationTraceMarker> _scopes;
     private readonly Dictionary<long, int> _depths = [];
     private readonly Dictionary<ChannelTarget, string> _channelLabels = [];
+    private readonly Dictionary<ChannelTarget, SequenceCallsite> _channelOrigins = [];
     private readonly Dictionary<long, string> _groupLabels = [];
     private readonly Dictionary<PatternTraceOrder, IReadOnlyList<PatternTraceRow>> _projections = [];
     private readonly HashSet<long> _selection = [];
@@ -195,8 +196,13 @@ public sealed class PatternGenerationTracePresentation
         {
             int count = group.Count(), occurrence = 0;
             foreach (var item in group)
-                _channelLabels[ChannelTarget.Virtual(item.Origin.Channel)] = count == 1 ? item.Label
+            {
+                var target = ChannelTarget.Virtual(item.Origin.Channel);
+                _channelLabels[target] = count == 1 ? item.Label
                     : Disambiguate(item.Label, item.Origin.CreationSpan, item.Origin.EnclosingScopeId, ++occurrence);
+                if (IsValidSpan(item.Origin.CreationSpan))
+                    _channelOrigins[target] = item.Origin.CreationSpan!.Value;
+            }
         }
         foreach (var group in _trace.Groups.GroupBy(g => OriginLabel("Note group", g.CreationSpan, g.IsReferenceFallback)))
         {
@@ -238,7 +244,9 @@ public sealed class PatternGenerationTracePresentation
                     .OrderBy(g => g.Key.Kind)
                     .ThenBy(g => g.Key.Kind == ChannelTargetKind.Physical ? g.Key.PhysicalChannel : first[g.Key]))
                 {
-                    rows.Add(new(PatternTraceRowKind.ChannelHeader, ChannelLabel(group.Key), 0, Target: group.Key));
+                    rows.Add(new(PatternTraceRowKind.ChannelHeader, ChannelLabel(group.Key), 0,
+                        SourceSpan: _channelOrigins.TryGetValue(group.Key, out var origin) ? origin : null,
+                        Target: group.Key));
                     foreach (var entry in group) rows.Add(EventRow(entry, 1, includeTarget: false));
                 }
                 break;
@@ -259,11 +267,21 @@ public sealed class PatternGenerationTracePresentation
     private void BuildOriginal(List<PatternTraceRow> rows)
     {
         // AtTraceOrdinal is a boundary, not an independent event ordinal.
-        // At equal boundaries show ownership metadata before the next marker/event.
+        // A strict NoteVirtual directly transferred with += emits its start
+        // before the operator but the collector receives it after the operator.
+        // Display that transfer after the corresponding pending start, matching
+        // the authored operation without changing either event's identity.
+        var pendingStarts = _trace.Events.Where(e => e.Note.Target.Kind == ChannelTargetKind.Virtual
+            && e.Note.Commands.Any(c => c is StartNoteCommand))
+            .ToDictionary(e => e.TraceOrdinal, e => e.Note.Target.VirtualIdentity);
+        long TransferBoundary(PatternGenerationTraceTransfer transfer)
+            => !_trace.Relaxed && transfer.Succeeded && transfer.Channel is { } channel
+                && pendingStarts.TryGetValue(transfer.AtTraceOrdinal, out var pending) && channel == pending
+                ? transfer.AtTraceOrdinal + 1 : transfer.AtTraceOrdinal;
         var metadata = _trace.Groups.Select(g => (Ordinal: g.AtTraceOrdinal,
             Row: new PatternTraceRow(PatternTraceRowKind.GroupCreation, "Create " + GroupLabel(g.Id),
                 Depth(g.EnclosingScopeId), SourceSpan: g.CreationSpan)))
-            .Concat(_trace.Transfers.Select(t => (Ordinal: t.AtTraceOrdinal,
+            .Concat(_trace.Transfers.Select(t => (Ordinal: TransferBoundary(t),
                 Row: new PatternTraceRow(PatternTraceRowKind.Transfer,
                     (t.Succeeded ? "Transfer" : "Ignored transfer") + " → " + GroupLabel(t.GroupId)
                     + (t.Channel is { } channel ? " · " + ChannelLabel(ChannelTarget.Virtual(channel)) : ""),
