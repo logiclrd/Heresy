@@ -38,7 +38,6 @@ internal sealed class PatternGenerationTraceView : UserControl
     private readonly ListBox _events = new()
     {
         SelectionMode = SelectionMode.Multiple,
-        HorizontalContentAlignment = HorizontalAlignment.Stretch,
     };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextEditor _snapshot = new()
