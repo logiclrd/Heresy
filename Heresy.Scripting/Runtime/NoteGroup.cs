@@ -17,6 +17,9 @@ public sealed class NoteGroup : IDisposable
 
     internal NoteGroup(PatternScriptProgram owner) => _owner = owner;
 
+    // Read only by the diagnostic transfer adapter; no normal-path work.
+    internal int DiagnosticLeaseCount => _leases.Count;
+
     // C# 14 instance compound assignment, not binary + followed by
     // reassignment of a readonly using local.
     public void operator +=(VirtualNote note)
